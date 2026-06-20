@@ -1,0 +1,42 @@
+name: Hourly watchlist check
+
+# GitHub cron is UTC and does not shift with daylight saving. This window
+# (13:00-21:00 UTC, Mon-Fri) covers the 9:30-16:00 ET session in both EST and
+# EDT; run_hourly.py does the precise market-open gate, so early/late runs just
+# no-op. Phase 2 sends NO real pushes (ALERTS_ENABLED=false).
+
+on:
+  schedule:
+    - cron: "0 13-21 * * 1-5"
+  workflow_dispatch: {}
+
+# Serialize runs so two never mutate verdict_state at once (design 7.4).
+concurrency:
+  group: hourly-watchlist
+  cancel-in-progress: false
+
+jobs:
+  watchlist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run hourly watchlist check
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          # Non-secret: change the model here without touching code.
+          GEMINI_MODEL: "gemini-2.5-flash"
+          # Phase 2 = dry run. Flip to "true" in Phase 3 once ntfy is wired.
+          ALERTS_ENABLED: "false"
+        run: python scripts/run_hourly.py
