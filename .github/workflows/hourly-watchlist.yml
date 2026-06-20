@@ -8,7 +8,12 @@ name: Hourly watchlist check
 on:
   schedule:
     - cron: "0 13-21 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run even if the market is closed (testing/backfill)"
+        type: boolean
+        default: false
 
 # Serialize runs so two never mutate verdict_state at once (design 7.4).
 concurrency:
@@ -39,4 +44,6 @@ jobs:
           GEMINI_MODEL: "gemini-2.5-flash"
           # Phase 2 = dry run. Flip to "true" in Phase 3 once ntfy is wired.
           ALERTS_ENABLED: "false"
+          # Set by the workflow_dispatch toggle; empty (gated) on the schedule.
+          FORCE_RUN: ${{ inputs.force_run }}
         run: python scripts/run_hourly.py
