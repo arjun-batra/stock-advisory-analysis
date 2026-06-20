@@ -29,6 +29,10 @@ DETAIL_PAGE_BASE = os.environ.get("DETAIL_PAGE_BASE", "")
 # Phase 2 runs the full logic but sends NO real pushes. Phase 3 flips this true.
 ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
 
+# Manual override: run even when the market is closed (weekend / off-hours), for
+# testing or backfill via workflow_dispatch. Leave unset on the scheduled run.
+FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
+
 # --- Tunables (solution design 6.3) ------------------------------------------
 REMINDER_INTERVAL_DAYS = 7
 COOLDOWN_HOURS         = 24
