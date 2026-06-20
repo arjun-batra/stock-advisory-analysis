@@ -35,13 +35,12 @@ except ImportError:
 
 # ----------------------------------------------------------------------------
 # REPLACE THIS with your real watchlist. TSX tickers need the .TO suffix.
-# (These are placeholders just so the script runs out of the box.)
 # ----------------------------------------------------------------------------
 TICKERS = [
     # US
-    "AAPL", "MSFT", "NVDA",
+    "AAPL", "TSLA", "AMZN", "NFLX", "NVDA", "GOOG", "COST", "BB", "SPCX",
     # TSX  -> .TO suffix
-    "SHOP.TO", "RY.TO", "ENB.TO",
+    "L.TO", "DOL.TO", "RY.TO", "TD.TO", "BNS.TO", "SHOP.TO",
 ]
 # ----------------------------------------------------------------------------
 
