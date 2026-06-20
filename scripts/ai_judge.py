@@ -24,7 +24,24 @@ SYSTEM_PROMPT = (
 )
 
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
+RATIONALE_MAX = 140
 _FAIL_SAFE = {"verdict": "Hold", "rationale": "model response could not be parsed; fail-safe Hold"}
+
+
+def _clip(text: str, limit: int = RATIONALE_MAX) -> str:
+    """Trim to <= limit chars on a word boundary, adding an ellipsis if cut.
+
+    The rationale becomes the push-notification body, so the old hard slice
+    (text[:140]) shipped half-words to the user. Clip on whitespace instead and
+    signal the cut with a single-char ellipsis, keeping the result <= limit.
+    """
+    text = " ".join(str(text).split())              # normalize whitespace
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 1]                      # leave room for the ellipsis
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]          # back up to the last whole word
+    return clipped.rstrip(" ,.;:-") + "\u2026"
 
 
 def _build_user_prompt(data: dict, position: dict | None) -> str:
@@ -65,7 +82,7 @@ def _parse(raw: str) -> dict | None:
         return None
     if not obj.get("rationale"):
         return None
-    return {"verdict": obj["verdict"], "rationale": str(obj["rationale"])[:140]}
+    return {"verdict": obj["verdict"], "rationale": _clip(obj["rationale"])}
 
 
 def judge(data: dict, position: dict | None = None) -> dict:
