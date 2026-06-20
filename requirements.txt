@@ -1,0 +1,5 @@
+yfinance
+google-genai
+supabase
+requests
+tzdata
