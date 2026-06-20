@@ -18,9 +18,12 @@ import notify
 
 def main() -> None:
     now_et = datetime.now(config.MARKET_TZ)
-    if not config.is_market_open(now_et):
-        print(f"Market closed at {now_et:%Y-%m-%d %H:%M %Z} - no-op, exit.")
+    if not config.is_market_open(now_et) and not config.FORCE_RUN:
+        print(f"Market closed at {now_et:%Y-%m-%d %H:%M %Z} - no-op, exit. "
+              f"(workflow_dispatch with force_run=true overrides)")
         return
+    if not config.is_market_open(now_et):
+        print("FORCE_RUN: market closed, running anyway against last close (test/backfill).")
 
     config.require_secrets()
     sb = state.client()
