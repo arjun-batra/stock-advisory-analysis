@@ -1,0 +1,52 @@
+name: Phase 0 - Yahoo Finance smoke test
+
+# Runs the Phase 0 data-source smoke test on a GitHub-hosted runner.
+# Trigger it manually from the Actions tab (optionally pass your real tickers),
+# or it runs automatically whenever the script or this workflow changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Space-separated tickers to test (TSX needs .TO, e.g. AAPL NVDA SHOP.TO RY.TO). Leave blank to use the list baked into the script."
+        required: false
+        default: ""
+  push:
+    paths:
+      - "scripts/phase0_smoke_test.py"
+      - ".github/workflows/phase0-smoke-test.yml"
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install yfinance
+
+      - name: Run Phase 0 smoke test
+        env:
+          TICKERS_INPUT: ${{ inputs.tickers }}
+        run: |
+          if [ -n "$TICKERS_INPUT" ]; then
+            python3 scripts/phase0_smoke_test.py $TICKERS_INPUT
+          else
+            python3 scripts/phase0_smoke_test.py
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-results
+          path: |
+            phase0_results.md
+            phase0_results.csv
+          if-no-files-found: warn
