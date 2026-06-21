@@ -1,12 +1,13 @@
 """Hourly watchlist orchestrator (solution design 6.1).
 
-Wakes up, checks the market is actually open (ET), then walks the watchlist:
-ingest -> AI verdict -> change/cooldown/reminder logic -> log. One bad ticker is
+Wakes up, checks the market is actually open (ET), ingests every watchlist
+ticker, then makes ONE batched AI call for the whole list (was one call per
+ticker — cut to stay well under the Gemini free-tier daily request cap), and
+walks the results through the change/cooldown/reminder logic. One bad ticker is
 skipped-with-log and never takes down the run for the others. Writes a heartbeat
 at the end so a missed run is visible (NFR2). Phase 2: no real pushes.
 """
 
-import time
 from datetime import datetime, timezone
 
 import config
@@ -35,6 +36,9 @@ def main() -> None:
     print(f"Hourly run: {len(watchlist)} tickers, alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'}")
 
     outcomes = {}
+
+    # --- Phase 1: ingest everything (yfinance only, no AI/quota cost) ---
+    items = []   # list of (wl_row, data, position)
     for row in watchlist:
         ticker = row["ticker"]
         try:
@@ -43,21 +47,31 @@ def main() -> None:
                 print(f"  skip {ticker}: {'; '.join(data['notes'])}")  # skip-with-log (7.5)
                 outcomes["skip"] = outcomes.get("skip", 0) + 1
                 continue
-
             position = state.build_position(holdings.get(ticker), data)
-            ai = ai_judge.judge(data, position)
-            result = state.process_ticker(sb, notifier, row, data, ai, now)
-
-            tag = "NEW" if data["is_new"] else ""
-            print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
-                  f"[{ai['parse_status']}] {tag}")
-            outcomes[result] = outcomes.get(result, 0) + 1
+            items.append((row, data, position))
         except Exception as e:
-            # one ticker must never kill the run for the rest
-            print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
+            print(f"  ERROR {ticker} (ingest): {type(e).__name__}: {e}")
             outcomes["error"] = outcomes.get("error", 0) + 1
 
-        time.sleep(config.GEMINI_PACING_SECONDS)
+    # --- Phase 2: ONE batched AI call for all tickers ---
+    verdicts = ai_judge.judge_batch([{"data": d, "position": p} for (_, d, p) in items])
+
+    # --- Phase 3: per-ticker change/cooldown/reminder + logging ---
+    for row, data, position in items:
+        ticker = row["ticker"]
+        try:
+            ai = verdicts.get(ticker) or {
+                "verdict": "Hold",
+                "rationale": "No verdict returned for this ticker; fail-safe Hold.",
+                "raw_model_response": "", "parse_status": "failed",
+            }
+            result = state.process_ticker(sb, notifier, row, data, ai, now)
+            tag = "NEW" if data["is_new"] else ""
+            print(f"  {ticker:9} {ai['verdict']:4} -> {result} [{ai['parse_status']}] {tag}")
+            outcomes[result] = outcomes.get(result, 0) + 1
+        except Exception as e:
+            print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
+            outcomes["error"] = outcomes.get("error", 0) + 1
 
     state.write_heartbeat(sb, "hourly-watchlist", "ok")
     print(f"Done. {dict(outcomes)}")

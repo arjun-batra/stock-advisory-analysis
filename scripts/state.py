@@ -111,6 +111,17 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
 
     state = get_verdict_state(sb, ticker)
 
+    # ---- non-reading: rate-limited (api_error) or unparseable (failed). The
+    #      "Hold" here is a fail-safe placeholder, NOT a real verdict, so never
+    #      let it advance current_verdict or fire a (spurious) change alert. Log
+    #      the row for the audit trail (FR15); only touch last_checked_at. ----
+    if ai.get("parse_status") in ("failed", "api_error"):
+        write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                       label="watchlist", alert_type=None, alerted=False, snapshot=snap)
+        if state is not None:
+            _upsert_state(sb, ticker, {"last_checked_at": now.isoformat()})
+        return "no-read"
+
     # ---- cold start ----
     if state is None:
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
