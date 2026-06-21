@@ -43,7 +43,10 @@ jobs:
           # Non-secret: change the model here without touching code.
           GEMINI_MODEL: "gemini-2.5-flash"
           # Phase 2 = dry run. Flip to "true" in Phase 3 once ntfy is wired.
-          ALERTS_ENABLED: "false"
+          ALERTS_ENABLED: "true"
           # Set by the workflow_dispatch toggle; empty (gated) on the schedule.
           FORCE_RUN: ${{ inputs.force_run }}
+          # Phase 3 push wiring. Once these are set, flip ALERTS_ENABLED to "true".
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_hourly.py
