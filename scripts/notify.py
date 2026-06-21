@@ -11,6 +11,18 @@ import requests
 
 import config
 
+NOTIF_BODY_MAX = 150   # keep the push preview tidy; the full reason is on the detail page
+
+
+def _clip_body(text: str, limit: int = NOTIF_BODY_MAX) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,.;:-") + "\u2026"
+
 
 def _title(ticker: str, verdict: str, kind: str) -> str:
     if kind == "change":
@@ -24,7 +36,7 @@ class DryRunNotifier:
     """Logs what it *would* send. Used in Phase 2 (no alerting yet)."""
 
     def push(self, ticker, verdict, rationale, *, kind, log_id):
-        print(f"[DRY RUN] would push [{kind}] {_title(ticker, verdict, kind)} :: {rationale} (log {log_id})")
+        print(f"[DRY RUN] would push [{kind}] {_title(ticker, verdict, kind)} :: {_clip_body(rationale)} (log {log_id})")
 
 
 class NtfyNotifier:
@@ -38,7 +50,7 @@ class NtfyNotifier:
             headers["Click"] = f"{self.detail_base}?log_id={log_id}"
         try:
             requests.post(f"https://ntfy.sh/{self.topic}",
-                          data=rationale.encode("utf-8"), headers=headers, timeout=10)
+                          data=_clip_body(rationale).encode("utf-8"), headers=headers, timeout=10)
         except Exception as e:
             print(f"[notify error] {ticker}: {type(e).__name__}: {e}")
 
