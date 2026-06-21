@@ -38,8 +38,12 @@ REMINDER_INTERVAL_DAYS = 7
 COOLDOWN_HOURS         = 24
 MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 
-# Pace the AI loop under the free-tier RPM cap (~10-15 RPM). 7s ~= 8-9 RPM.
-GEMINI_PACING_SECONDS = float(os.environ.get("GEMINI_PACING_SECONDS", "7"))
+# Pace the AI loop under the free-tier RPM cap. Free Flash is ~10 RPM, and the
+# first live run hit 429s on the last ~5 tickers at 7s spacing, so 12s (~5/min)
+# keeps a safe margin. 15 tickers x 12s ~= 3 min/run.
+GEMINI_PACING_SECONDS = float(os.environ.get("GEMINI_PACING_SECONDS", "12"))
+# On a 429/API error, wait this long before a single retry (rate-limit recovery).
+GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", "20"))
 
 # --- Market hours (NYSE/TSX share the session: 9:30-16:00 ET) ----------------
 # Hours-and-weekday only. Deliberately NO per-exchange holiday calendar
