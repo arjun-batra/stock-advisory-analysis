@@ -7,9 +7,35 @@ data but can't fill the 20-day window, so those fields come back as the explicit
 string "n/a (newly listed)" rather than being omitted or faked.
 """
 
+import time
+
 import yfinance as yf
 
 import config
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    blob = f"{type(exc).__name__} {exc}".lower()
+    return any(s in blob for s in ("ratelimit", "rate limit", "too many requests", "429"))
+
+
+def _fetch_history(tk: "yf.Ticker"):
+    """Fetch 3mo history, retrying ONCE after a backoff on a Yahoo rate-limit.
+
+    Returns (dataframe_or_none, error_note_or_none, was_rate_limited).
+    yfinance has no published rate limit and throttled the back-to-back ingest
+    loop mid-run (issue #1), so this mirrors the AI step's backoff-retry.
+    """
+    for attempt in range(2):
+        try:
+            return tk.history(period="3mo", auto_adjust=False), None, False
+        except Exception as e:
+            if _is_rate_limit(e) and attempt == 0:
+                time.sleep(config.YF_BACKOFF_SECONDS)
+                continue
+            note = f"history error: {type(e).__name__}: {str(e)[:120]}"
+            return None, note, _is_rate_limit(e)
+    return None, "history error: exhausted retries", True
 
 
 def _get(d, *keys):
@@ -64,21 +90,23 @@ def get_market_data(ticker: str) -> dict:
 
     `has_price=False` means skip-with-log (no usable data). `is_new=True` means a
     valid young listing — judged on what's available, 20d fields marked n/a.
+    `rate_limited=True` flags a skip caused by Yahoo throttling vs. genuine
+    no-data (delisted/halted), so the run log and call_log can tell them apart.
     """
     market = "TSX" if ticker.upper().endswith(".TO") else "US"
     out = {
         "ticker": ticker, "market": market,
-        "has_price": False, "is_new": False,
+        "has_price": False, "is_new": False, "rate_limited": False,
         "price": None, "pct_change_1d": None, "pct_change_5d": None,
         "pct_change_20d": None, "volume_vs_avg": None,
         "fundamentals": {}, "headlines": [], "notes": [],
     }
 
     tk = yf.Ticker(ticker)
-    try:
-        h = tk.history(period="3mo", auto_adjust=False)
-    except Exception as e:
-        out["notes"].append(f"history error: {type(e).__name__}: {str(e)[:120]}")
+    h, err, rate_limited = _fetch_history(tk)
+    if err is not None:
+        out["notes"].append(err)
+        out["rate_limited"] = rate_limited
         return out
     if h is None or h.empty:
         out["notes"].append("no price data (delisted/halted/bad ticker)")

@@ -49,6 +49,13 @@ GEMINI_PACING_SECONDS = float(os.environ.get("GEMINI_PACING_SECONDS", "12"))
 # On a 429/API error, wait this long before a single retry (rate-limit recovery).
 GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", "20"))
 
+# Yahoo Finance (yfinance) has no published rate limit and rate-limited the
+# ingest loop mid-run (issue #1). Pace tickers apart and back off once on a
+# rate-limit error, same shape as the Gemini handling above. Ingest is batched
+# into one Gemini call afterward, so a few seconds per ticker here is fine.
+YF_PACING_SECONDS = float(os.environ.get("YF_PACING_SECONDS", "2"))
+YF_BACKOFF_SECONDS = float(os.environ.get("YF_BACKOFF_SECONDS", "10"))
+
 # --- Market hours (NYSE/TSX share the session: 9:30-16:00 ET) ----------------
 # Hours-and-weekday only. Deliberately NO per-exchange holiday calendar
 # (accepted risk, design 2 item 5); a closed market's tickers fall through to

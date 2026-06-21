@@ -9,6 +9,7 @@ at the end so a missed run is visible (NFR2). Phase 2: no real pushes.
 """
 
 from datetime import datetime, timezone
+import time
 
 import config
 import ingest
@@ -38,13 +39,19 @@ def main() -> None:
     outcomes = {}
 
     # --- Phase 1: ingest everything (yfinance only, no AI/quota cost) ---
+    # Paced apart + backoff-retried inside ingest to avoid Yahoo rate-limiting
+    # the back-to-back loop (issue #1).
     items = []   # list of (wl_row, data, position)
-    for row in watchlist:
+    for i, row in enumerate(watchlist):
         ticker = row["ticker"]
+        if i > 0:
+            time.sleep(config.YF_PACING_SECONDS)
         try:
             data = ingest.get_market_data(ticker)
             if not data["has_price"]:
-                print(f"  skip {ticker}: {'; '.join(data['notes'])}")  # skip-with-log (7.5)
+                reason = "rate-limited" if data.get("rate_limited") else "no data"
+                print(f"  skip {ticker} ({reason}): {'; '.join(data['notes'])}")  # skip-with-log (7.5)
+                state.log_skip(sb, ticker, data["notes"], rate_limited=data.get("rate_limited", False))
                 outcomes["skip"] = outcomes.get("skip", 0) + 1
                 continue
             position = state.build_position(holdings.get(ticker), data)
@@ -74,8 +81,12 @@ def main() -> None:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
             outcomes["error"] = outcomes.get("error", 0) + 1
 
-    state.write_heartbeat(sb, "hourly-watchlist", "ok")
-    print(f"Done. {dict(outcomes)}")
+    # Heartbeat reflects whether the run was fully clean (issue #2): "partial"
+    # when any ticker was skipped or errored, "ok" only when all succeeded.
+    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0)
+    status = "partial" if degraded else "ok"
+    state.write_heartbeat(sb, "hourly-watchlist", status)
+    print(f"Done [{status}]. {dict(outcomes)}")
 
 
 if __name__ == "__main__":

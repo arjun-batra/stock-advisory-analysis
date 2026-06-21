@@ -57,6 +57,25 @@ def write_heartbeat(sb: Client, workflow: str, status: str) -> None:
     }).execute()
 
 
+def log_skip(sb, ticker: str, notes: list[str], *, rate_limited: bool = False) -> None:
+    """Write a minimal call_log row for a ticker skipped in ingestion.
+
+    Previously a skip was console-only (issue #1), so a missed ticker left no
+    trace in Supabase. This writes a quiet, non-alerting row (alerted=false,
+    alert_type=null) with parse_status="no_data" so missed cycles are queryable
+    in the track record. verdict_state is deliberately NOT touched — a skip is
+    "no reading this cycle," never a verdict.
+    """
+    snap = {
+        "parse_status": "no_data",
+        "rate_limited": rate_limited,
+        "notes": notes,
+    }
+    write_call_log(sb, ticker=ticker, verdict="Hold",
+                   rationale="; ".join(notes) or "No usable market data; skipped this cycle.",
+                   label="watchlist", alert_type=None, alerted=False, snapshot=snap)
+
+
 # --- helpers -----------------------------------------------------------------
 
 def build_position(holding: dict | None, data: dict) -> dict | None:
