@@ -40,8 +40,14 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          # Non-secret: change the model here without touching code.
-          GEMINI_MODEL: "gemini-2.5-flash"
+          # Repository variables (Settings -> Secrets and variables -> Actions ->
+          # Variables tab), not secrets -- model names aren't sensitive, and this
+          # way you can swap models from the GitHub UI with no commit. Falls back
+          # to the literal on the right if the variable isn't set - so no action
+          # is required for these defaults to take effect; set the repo variables
+          # only if you want UI-driven overrides going forward.
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
           # Phase 2 = dry run. Flip to "true" in Phase 3 once ntfy is wired.
           ALERTS_ENABLED: "true"
           # Set by the workflow_dispatch toggle; empty (gated) on the schedule.
