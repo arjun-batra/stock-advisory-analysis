@@ -6,6 +6,7 @@ parse — so a malformed response can only ever MISS a signal, never fabricate o
 """
 
 import json
+import time
 
 from google import genai
 from google.genai import types
@@ -20,12 +21,15 @@ SYSTEM_PROMPT = (
     "its own context.\n\n"
     "Schema (all fields required):\n"
     '{"verdict": "Buy" | "Sell" | "Hold", '
-    '"rationale": "<one sentence, max 140 chars, plain language>"}'
+    '"rationale": "<a clear, simple, plain-language reason for the verdict, one or two short sentences>"}'
 )
 
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
-RATIONALE_MAX = 140
-_FAIL_SAFE = {"verdict": "Hold", "rationale": "model response could not be parsed; fail-safe Hold"}
+RATIONALE_MAX = 280   # stored + shown in full on the detail page; the push is clipped separately
+_FAIL_SAFE_PARSE = {"verdict": "Hold",
+                    "rationale": "The model reply could not be parsed; showing a fail-safe Hold."}
+_FAIL_SAFE_API = {"verdict": "Hold",
+                  "rationale": "The AI service was rate-limited and didn't respond; showing a fail-safe Hold."}
 
 
 def _clip(text: str, limit: int = RATIONALE_MAX) -> str:
@@ -85,6 +89,15 @@ def _parse(raw: str) -> dict | None:
     return {"verdict": obj["verdict"], "rationale": _clip(obj["rationale"])}
 
 
+def _generate(client, prompt, cfg) -> tuple[str, bool]:
+    """Return (text, is_api_error). Captures 429/quota errors instead of raising."""
+    try:
+        resp = client.models.generate_content(model=config.GEMINI_MODEL, contents=prompt, config=cfg)
+        return (resp.text or "").strip(), False
+    except Exception as e:
+        return f"<api error: {type(e).__name__}: {str(e)[:160]}>", True
+
+
 def judge(data: dict, position: dict | None = None) -> dict:
     """Return {verdict, rationale, raw_model_response, parse_status}."""
     client = genai.Client(api_key=config.GEMINI_API_KEY)
@@ -95,29 +108,25 @@ def judge(data: dict, position: dict | None = None) -> dict:
         temperature=0.2,
     )
 
-    raw = ""
-    try:
-        resp = client.models.generate_content(model=config.GEMINI_MODEL, contents=user, config=cfg)
-        raw = (resp.text or "").strip()
-    except Exception as e:
-        raw = f"<api error: {type(e).__name__}: {str(e)[:120]}>"
+    raw, api_err = _generate(client, user, cfg)
+
+    # API error (e.g. 429 rate limit): a JSON-correction retry is pointless and
+    # just burns more quota, so back off once and then fail safe to Hold.
+    if api_err:
+        time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
+        raw, api_err = _generate(client, user, cfg)
+        if api_err:
+            return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error"}
 
     parsed = _parse(raw)
     if parsed:
         return {**parsed, "raw_model_response": raw, "parse_status": "ok"}
 
-    # one retry with a terse correction appended
-    raw2 = ""
-    try:
-        retry = user + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object."
-        resp = client.models.generate_content(model=config.GEMINI_MODEL, contents=retry, config=cfg)
-        raw2 = (resp.text or "").strip()
-    except Exception as e:
-        raw2 = f"<api error: {type(e).__name__}: {str(e)[:120]}>"
-
+    # Got a reply, but it wasn't valid JSON -> one correction retry.
+    retry = user + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object."
+    raw2, _ = _generate(client, retry, cfg)
     parsed = _parse(raw2)
     if parsed:
         return {**parsed, "raw_model_response": raw2, "parse_status": "retried"}
 
-    # still bad -> fail safe to Hold, keep both raw replies for debugging
-    return {**_FAIL_SAFE, "raw_model_response": f"{raw} || retry: {raw2}", "parse_status": "failed"}
+    return {**_FAIL_SAFE_PARSE, "raw_model_response": f"{raw} || retry: {raw2}", "parse_status": "failed"}
