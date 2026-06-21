@@ -91,8 +91,8 @@
     const pill = pillFor(row);
     const ts = row.timestamp ? new Date(row.timestamp).toLocaleString("en-US",
       {timeZone:"America/New_York", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}) + " ET" : "";
-    const failNote = snap.parse_status === "failed"
-      ? `<div class="note">The model response couldn't be parsed; showing a fail-safe Hold.</div>` : "";
+    const failNote = (snap.parse_status === "failed" || snap.parse_status === "api_error")
+      ? `<div class="note">This is a fail-safe Hold — the AI call didn't return a usable verdict, so treat it as "no signal," not a real call.</div>` : "";
 
     const heads = (snap.headlines || []).slice(0,5)
       .map(h => `<p class="headline-item">${esc(h)}</p>`).join("") ||
