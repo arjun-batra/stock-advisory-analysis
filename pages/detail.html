@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock advisor — call detail</title>
+<style>
+  :root {
+    --bg-page:#faf9f6; --bg-surface:#fff; --bg-subtle:#f1efe8;
+    --text-primary:#1a1a18; --text-secondary:#6b6a64; --text-tertiary:#9a988f;
+    --border:#e5e3da;
+    --buy-bg:#eaf3de; --buy-text:#27500a;
+    --sell-bg:#fcebeb; --sell-text:#791f1f;
+    --hold-bg:#f1efe8; --hold-text:#444441;
+    --info-bg:#e6f1fb; --info-text:#0c447c;
+    --candidate-bg:#eeedfe; --candidate-text:#3c3489;
+    --amber-bg:#faeeda; --amber-text:#854f0b;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--font);background:var(--bg-page);color:var(--text-primary);line-height:1.5;}
+  .wrap{max-width:480px;margin:0 auto;padding:24px 18px 60px;}
+  .page-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;padding:20px;}
+  .pill{font-size:10px;padding:2px 8px;border-radius:9px;font-weight:500;white-space:nowrap;display:inline-block;}
+  .headline{font-size:16px;font-weight:600;margin:0 0 2px;display:flex;align-items:center;gap:5px;}
+  .ticker{font-size:20px;font-weight:600;}
+  .mkt{font-size:10px;padding:2px 7px;border-radius:9px;background:var(--bg-subtle);color:var(--text-secondary);}
+  .rationale{background:var(--bg-subtle);border-radius:8px;padding:12px 14px;font-size:14px;margin:6px 0 18px;}
+  .section-label{font-size:12px;font-weight:600;color:var(--text-secondary);margin:0 0 8px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+  .stat-card{background:var(--bg-subtle);border-radius:6px;padding:10px 12px;}
+  .stat-label{font-size:11px;color:var(--text-secondary);margin:0 0 3px;}
+  .stat-value{font-size:15px;font-weight:600;margin:0;}
+  .pos{color:var(--buy-text);} .neg{color:var(--sell-text);}
+  .headline-item{font-size:13px;margin:0 0 6px;padding-left:14px;position:relative;}
+  .headline-item::before{content:"";position:absolute;left:0;top:7px;width:4px;height:4px;border-radius:50%;background:var(--text-tertiary);}
+  .footer{border-top:1px solid var(--border);padding-top:12px;margin-top:18px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-tertiary);gap:10px;}
+  .note{background:var(--amber-bg);color:var(--amber-text);border-radius:8px;padding:10px 12px;font-size:12.5px;margin:0 0 16px;}
+  .msg{color:var(--text-secondary);font-size:14px;padding:24px 4px;text-align:center;}
+  .meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:11px;color:var(--text-tertiary);}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div id="content"><p class="msg">Loading…</p></div>
+</main>
+<script>
+  // Publishable key is client-safe by design (RLS restricts it to read-only call_log).
+  const SUPABASE_URL = "https://ikghqdtlbwifwnooytmm.supabase.co";
+  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1CNiVwpI_NV7MzOvi_XucA_nQ47FKjG";
+
+  const VERDICT = {
+    Buy:  {bg:"var(--buy-bg)",  text:"var(--buy-text)"},
+    Sell: {bg:"var(--sell-bg)", text:"var(--sell-text)"},
+    Hold: {bg:"var(--hold-bg)", text:"var(--hold-text)"},
+  };
+
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  function headlineText(row){
+    if(row.label === "new-candidate") return row.verdict;
+    if(row.alert_type === "change")   return "Changed to " + row.verdict;
+    if(row.alert_type === "reminder") return "Still " + row.verdict;
+    return row.verdict;
+  }
+  function pillFor(row){
+    if(row.label === "new-candidate") return {t:"new candidate", bg:"var(--candidate-bg)", c:"var(--candidate-text)"};
+    if(row.alert_type === "change")   return {t:"verdict change", bg:"var(--info-bg)",      c:"var(--info-text)"};
+    if(row.alert_type === "reminder") return {t:"weekly reminder", bg:"var(--hold-bg)",     c:"var(--hold-text)"};
+    return {t:"logged", bg:"var(--bg-subtle)", c:"var(--text-secondary)"};
+  }
+  const pct = v => (typeof v === "number")
+    ? `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${v}%</span>`
+    : (typeof v === "string" ? esc(v) : "—");
+  function mcap(v){
+    if(typeof v !== "number") return "—";
+    if(v >= 1e12) return "$"+(v/1e12).toFixed(1)+"T";
+    if(v >= 1e9)  return "$"+(v/1e9).toFixed(1)+"B";
+    if(v >= 1e6)  return "$"+(v/1e6).toFixed(1)+"M";
+    return "$"+v.toFixed(0);
+  }
+  const range52 = r => (Array.isArray(r) && r.length===2) ? `${r[0]} – ${r[1]}` : "—";
+  const num = v => (v ?? "—");
+
+  function render(row){
+    const snap = row.data_snapshot || {};
+    const f = snap.fundamentals || {};
+    const v = VERDICT[row.verdict] || VERDICT.Hold;
+    const pill = pillFor(row);
+    const ts = row.timestamp ? new Date(row.timestamp).toLocaleString("en-US",
+      {timeZone:"America/New_York", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}) + " ET" : "";
+    const failNote = snap.parse_status === "failed"
+      ? `<div class="note">The model response couldn't be parsed; showing a fail-safe Hold.</div>` : "";
+
+    const heads = (snap.headlines || []).slice(0,5)
+      .map(h => `<p class="headline-item">${esc(h)}</p>`).join("") ||
+      `<p class="stat-label">No headlines captured.</p>`;
+
+    document.getElementById("content").innerHTML = `
+      <div class="page-card">
+        <div class="meta">
+          <span class="pill" style="background:${pill.bg};color:${pill.c}">${pill.t}</span>
+          <span>${esc(ts)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin:2px 0 14px">
+          <span class="ticker">${esc(row.ticker)}</span>
+          <span class="mkt">${esc(snap.market || (String(row.ticker).endsWith(".TO") ? "TSX" : "US"))}</span>
+        </div>
+        ${failNote}
+        <p class="headline" style="color:${v.text}">${esc(headlineText(row))}</p>
+        <div class="rationale">${esc(row.rationale)}</div>
+
+        <p class="section-label">Price &amp; volume</p>
+        <div class="grid2">
+          <div class="stat-card"><p class="stat-label">Last close</p><p class="stat-value">${num(snap.price)} ${esc(f.currency||"")}</p></div>
+          <div class="stat-card"><p class="stat-label">1d change</p><p class="stat-value">${pct(snap.pct_change_1d)}</p></div>
+          <div class="stat-card"><p class="stat-label">5d change</p><p class="stat-value">${pct(snap.pct_change_5d)}</p></div>
+          <div class="stat-card"><p class="stat-label">20d change</p><p class="stat-value">${pct(snap.pct_change_20d)}</p></div>
+          <div class="stat-card"><p class="stat-label">Vol vs 20d avg</p><p class="stat-value">${typeof snap.volume_vs_avg==="number"?snap.volume_vs_avg+"x":esc(snap.volume_vs_avg||"—")}</p></div>
+        </div>
+
+        <p class="section-label">Fundamentals</p>
+        <div class="grid2">
+          <div class="stat-card"><p class="stat-label">P/E</p><p class="stat-value">${num(typeof f.pe==="number"?f.pe.toFixed(1):f.pe)}</p></div>
+          <div class="stat-card"><p class="stat-label">Market cap</p><p class="stat-value">${mcap(f.market_cap)}</p></div>
+          <div class="stat-card" style="grid-column:1/-1"><p class="stat-label">52 week range</p><p class="stat-value">${range52(f.range_52w)}</p></div>
+        </div>
+
+        <p class="section-label">Headlines considered</p>
+        ${heads}
+
+        <div class="footer">
+          <span>Informational only — not financial advice</span>
+          <span>Log ${esc(row.id).slice(0,8)}</span>
+        </div>
+      </div>`;
+  }
+
+  async function load(){
+    const logId = new URLSearchParams(location.search).get("log_id");
+    const box = document.getElementById("content");
+    if(!logId){ box.innerHTML = `<p class="msg">No log id in the URL.</p>`; return; }
+    try{
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/call_log?id=eq.${encodeURIComponent(logId)}&select=*`,
+        {headers:{apikey:SUPABASE_PUBLISHABLE_KEY, Authorization:"Bearer "+SUPABASE_PUBLISHABLE_KEY}});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const rows = await res.json();
+      if(!rows.length){ box.innerHTML = `<p class="msg">No entry found for this id.</p>`; return; }
+      render(rows[0]);
+    }catch(e){
+      box.innerHTML = `<p class="msg">Couldn't load this entry (${esc(e.message)}).</p>`;
+    }
+  }
+  load();
+</script>
+</body>
+</html>
