@@ -17,10 +17,14 @@ SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
 # Non-secret, but kept in env so you can change the model without a code edit.
-# Verify the current free-tier model name in Google AI Studio. As of mid-2026
-# the free tier is Flash / Flash-Lite only (Pro is paid). Flash-Lite gives more
-# RPM if you ever need the headroom.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Primary: 3.5 Flash (GA May 2026, strongest reasoning in the Flash line).
+# Backup: 3.1 Flash-Lite (confirmed free tier, ~500 RPD on this project per
+# AI Studio) — tried automatically if the primary errors on every attempt,
+# whether that's a true rate limit, an outage, or the primary simply not being
+# free-tier-enabled on this project. Leave GEMINI_MODEL_BACKUP empty to disable
+# the fallback and run primary-only.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-3.1-flash-lite")
 
 # Phase 3 (not used yet in Phase 2):
 NTFY_TOPIC       = os.environ.get("NTFY_TOPIC", "")

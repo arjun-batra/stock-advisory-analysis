@@ -67,7 +67,8 @@ def main() -> None:
             }
             result = state.process_ticker(sb, notifier, row, data, ai, now)
             tag = "NEW" if data["is_new"] else ""
-            print(f"  {ticker:9} {ai['verdict']:4} -> {result} [{ai['parse_status']}] {tag}")
+            print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
+                  f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {tag}")
             outcomes[result] = outcomes.get(result, 0) + 1
         except Exception as e:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")

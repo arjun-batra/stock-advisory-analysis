@@ -104,17 +104,45 @@ def _parse(raw: str) -> dict | None:
     return {"verdict": obj["verdict"], "rationale": _clip(obj["rationale"])}
 
 
-def _generate(client, prompt, cfg) -> tuple[str, bool]:
+def _generate(client, model: str, prompt, cfg) -> tuple[str, bool]:
     """Return (text, is_api_error). Captures 429/quota errors instead of raising."""
     try:
-        resp = client.models.generate_content(model=config.GEMINI_MODEL, contents=prompt, config=cfg)
+        resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
         return (resp.text or "").strip(), False
     except Exception as e:
         return f"<api error: {type(e).__name__}: {str(e)[:160]}>", True
 
 
+def _models_to_try() -> list[str]:
+    """Primary model, then the backup (if set and different), in order."""
+    models = [config.GEMINI_MODEL]
+    if config.GEMINI_MODEL_BACKUP and config.GEMINI_MODEL_BACKUP != config.GEMINI_MODEL:
+        models.append(config.GEMINI_MODEL_BACKUP)
+    return models
+
+
+def _try_models(client, prompt, cfg) -> tuple[str, bool, str]:
+    """Try each model in order; one backoff-retry per model before falling
+    through to the next. Returns (raw, success, model_used) - falls through on
+    ANY failure mode (true rate limit, outage, or the model simply not being
+    available on this project's free tier), not just 429s specifically.
+    """
+    models = _models_to_try()
+    raw, model = "", models[0]
+    for i, model in enumerate(models):
+        raw, api_err = _generate(client, model, prompt, cfg)
+        if api_err:
+            time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
+            raw, api_err = _generate(client, model, prompt, cfg)
+        if not api_err:
+            return raw, True, model
+        nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
+        print(f"  [ai_judge] {model}: failed after retry{nxt}")
+    return raw, False, model
+
+
 def judge(data: dict, position: dict | None = None) -> dict:
-    """Return {verdict, rationale, raw_model_response, parse_status}."""
+    """Return {verdict, rationale, raw_model_response, parse_status, model_used}."""
     client = genai.Client(api_key=config.GEMINI_API_KEY)
     user = _build_user_prompt(data, position)
     cfg = types.GenerateContentConfig(
@@ -123,31 +151,26 @@ def judge(data: dict, position: dict | None = None) -> dict:
         temperature=0.2,
     )
 
-    raw, api_err = _generate(client, user, cfg)
-
-    # API error (e.g. 429 rate limit): a JSON-correction retry is pointless and
-    # just burns more quota, so back off once and then fail safe to Hold.
-    if api_err:
-        time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-        raw, api_err = _generate(client, user, cfg)
-        if api_err:
-            return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error"}
+    raw, ok, model = _try_models(client, user, cfg)
+    if not ok:
+        return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error", "model_used": model}
 
     parsed = _parse(raw)
     if parsed:
-        return {**parsed, "raw_model_response": raw, "parse_status": "ok"}
+        return {**parsed, "raw_model_response": raw, "parse_status": "ok", "model_used": model}
 
-    # Got a reply, but it wasn't valid JSON -> one correction retry.
+    # Got a reply, but it wasn't valid JSON -> one correction retry on the same model.
     retry = user + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object."
-    raw2, _ = _generate(client, retry, cfg)
+    raw2, _ = _generate(client, model, retry, cfg)
     parsed = _parse(raw2)
     if parsed:
-        return {**parsed, "raw_model_response": raw2, "parse_status": "retried"}
+        return {**parsed, "raw_model_response": raw2, "parse_status": "retried", "model_used": model}
 
-    return {**_FAIL_SAFE_PARSE, "raw_model_response": f"{raw} || retry: {raw2}", "parse_status": "failed"}
+    return {**_FAIL_SAFE_PARSE, "raw_model_response": f"{raw} || retry: {raw2}",
+            "parse_status": "failed", "model_used": model}
 
 
-def _parse_batch(raw: str, tickers: list[str]) -> dict | None:
+def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     """Parse a JSON array of verdicts into {ticker: result}.
 
     Returns None only if no array could be extracted at all (caller retries).
@@ -180,9 +203,10 @@ def _parse_batch(raw: str, tickers: list[str]) -> dict | None:
             o = arr[i]                           # positional fallback (same order requested)
         if isinstance(o, dict) and o.get("verdict") in VALID_VERDICTS and o.get("rationale"):
             out[t] = {"verdict": o["verdict"], "rationale": _clip(o["rationale"]),
-                      "raw_model_response": raw, "parse_status": "ok"}
+                      "raw_model_response": raw, "parse_status": "ok", "model_used": model}
         else:
-            out[t] = {**_FAIL_SAFE_PARSE, "raw_model_response": raw, "parse_status": "failed"}
+            out[t] = {**_FAIL_SAFE_PARSE, "raw_model_response": raw,
+                      "parse_status": "failed", "model_used": model}
     return out
 
 
@@ -190,9 +214,12 @@ def judge_batch(items: list[dict]) -> dict:
     """Judge every ticker in ONE Gemini call (cuts requests from N to 1 per run).
 
     items: list of {"data": <market data>, "position": <position|None>}.
-    Returns {ticker: {verdict, rationale, raw_model_response, parse_status}}.
-    On a hard failure every ticker fails safe to Hold, so a bad batch can only
-    ever MISS signals that run, never fabricate one.
+    Returns {ticker: {verdict, rationale, raw_model_response, parse_status, model_used}}.
+    Tries config.GEMINI_MODEL first; only if it fails completely (every attempt
+    rate-limited/unavailable, or never returns a parseable array even after the
+    correction retry) does it fall through to config.GEMINI_MODEL_BACKUP. On a
+    hard failure of every model every ticker fails safe to Hold, so a bad batch
+    can only ever MISS signals that run, never fabricate one.
     """
     tickers = [it["data"]["ticker"] for it in items]
     if not items:
@@ -210,24 +237,39 @@ def judge_batch(items: list[dict]) -> dict:
         temperature=0.2,
     )
 
-    raw, api_err = _generate(client, user, cfg)
-    if api_err:
-        time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-        raw, api_err = _generate(client, user, cfg)
+    last_raw = ""
+    last_model = config.GEMINI_MODEL
+    any_response = False   # did ANY model return text at all (vs pure API/quota errors)?
+    models = _models_to_try()
+
+    for i, model in enumerate(models):
+        last_model = model
+        raw, api_err = _generate(client, model, user, cfg)
         if api_err:
-            return {t: {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error"}
-                    for t in tickers}
+            time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
+            raw, api_err = _generate(client, model, user, cfg)
+        if api_err:
+            last_raw = raw
+            nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
+            print(f"  [ai_judge] {model}: rate-limited/unavailable after retry{nxt}")
+            continue   # this model is exhausted; move to the backup, if any
 
-    parsed = _parse_batch(raw, tickers)
-    if parsed is not None:
-        return parsed
+        any_response = True
+        parsed = _parse_batch(raw, tickers, model)
+        if parsed is not None:
+            return parsed
 
-    retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
-    raw2, _ = _generate(client, retry, cfg)
-    parsed = _parse_batch(raw2, tickers)
-    if parsed is not None:
-        return parsed
+        retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
+        raw2, _ = _generate(client, model, retry, cfg)
+        parsed = _parse_batch(raw2, tickers, model)
+        if parsed is not None:
+            return parsed
 
-    combined = f"{raw} || retry: {raw2}"
-    return {t: {**_FAIL_SAFE_PARSE, "raw_model_response": combined, "parse_status": "failed"}
-            for t in tickers}
+        last_raw = f"{raw} || retry: {raw2}"
+        print(f"  [ai_judge] {model}: replied but never returned a parseable verdict array")
+
+    # Every model in the list failed -> fail safe to Hold for all tickers.
+    fail = _FAIL_SAFE_PARSE if any_response else _FAIL_SAFE_API
+    status = "failed" if any_response else "api_error"
+    return {t: {**fail, "raw_model_response": last_raw, "parse_status": status,
+               "model_used": last_model} for t in tickers}

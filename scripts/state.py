@@ -84,6 +84,7 @@ def _snapshot(data: dict, ai: dict) -> dict:
         "headlines": data.get("headlines", []),
         "raw_model_response": ai.get("raw_model_response"),
         "parse_status": ai.get("parse_status"),
+        "model_used": ai.get("model_used"),
     }
 
 
