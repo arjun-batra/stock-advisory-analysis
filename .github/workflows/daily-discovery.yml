@@ -29,6 +29,6 @@ jobs:
           DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
           DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
           # Dry run until you've watched a clean discovery run; then flip to "true".
-          ALERTS_ENABLED: "false"
+          ALERTS_ENABLED: "true"
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
