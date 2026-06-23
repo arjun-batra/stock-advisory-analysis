@@ -45,8 +45,21 @@ def write_call_log(sb, *, ticker, verdict, rationale, label, alert_type, alerted
     return (res.data or [{}])[0].get("id", "")
 
 
-def _upsert_state(sb: Client, ticker: str, fields: dict) -> None:
+def _insert_state(sb: Client, ticker: str, fields: dict) -> None:
+    """Cold-start only — INSERT a fresh verdict_state row (all fields supplied)."""
     sb.table("verdict_state").upsert({"ticker": ticker, **fields}).execute()
+
+
+def _update_state(sb: Client, ticker: str, fields: dict) -> None:
+    """Partial UPDATE on an existing row (issue #3).
+
+    The old single _upsert_state was used for both INSERT and partial UPDATE.
+    On a partial field set, PostgREST's upsert emits ON CONFLICT DO UPDATE SET
+    across ALL columns, nulling any column not supplied — which violated the
+    NOT NULL on current_verdict and broke every quiet/no-read row. A real UPDATE
+    touches only the supplied columns, leaving current_verdict intact.
+    """
+    sb.table("verdict_state").update(fields).eq("ticker", ticker).execute()
 
 
 def write_heartbeat(sb: Client, workflow: str, status: str) -> None:
@@ -186,20 +199,54 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="watchlist", alert_type=None, alerted=False, snapshot=snap)
         if state is not None:
-            _upsert_state(sb, ticker, {"last_checked_at": now.isoformat()})
+            _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
         return "no-read"
 
     # ---- cold start ----
+    # Silent by design (avoids a go-live notification dump). bootstrapped=False
+    # marks that this ticker has NOT yet had a real evaluation that could alert;
+    # the next scheduled run picks that up below (issue #5).
     if state is None:
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-        _upsert_state(sb, ticker, {
+        _insert_state(sb, ticker, {
             "current_verdict": verdict, "last_alert_verdict": None,
             "last_alert_at": None,
             "reminder_due_at": (now + interval).isoformat(),
             "last_checked_at": now.isoformat(),
+            "bootstrapped": False,
         })
         return "cold-start"
+
+    # ---- first real evaluation after cold-start (issue #5) ----
+    # The cold-start run is silent, but the FIRST real run must be able to
+    # surface a standing Buy/Sell — otherwise an actionable verdict that never
+    # *changes* is swallowed until the 7-day reminder (observed live: SPCX Sell,
+    # TD.TO Buy). Alert on Buy/Sell, stay quiet on Hold, then flip bootstrapped
+    # so every later run uses ordinary change detection. Only the actionable
+    # verdicts alert here, so this never becomes a Hold dump.
+    if not state.get("bootstrapped"):
+        if verdict in ("Buy", "Sell"):
+            log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                                    label="watchlist", alert_type="change", alerted=True, snapshot=snap)
+            notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
+            _update_state(sb, ticker, {
+                "current_verdict": verdict, "last_alert_verdict": verdict,
+                "last_alert_at": now.isoformat(),
+                "reminder_due_at": (now + interval).isoformat(),
+                "last_checked_at": now.isoformat(),
+                "bootstrapped": True,
+            })
+            return "bootstrap-alert"
+        # Hold: establish the baseline quietly, no alert.
+        write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                       label="watchlist", alert_type=None, alerted=False, snapshot=snap)
+        _update_state(sb, ticker, {
+            "current_verdict": verdict,
+            "last_checked_at": now.isoformat(),
+            "bootstrapped": True,
+        })
+        return "bootstrap-quiet"
 
     last_alert_at = _parse_dt(state.get("last_alert_at"))
     reminder_due_at = _parse_dt(state.get("reminder_due_at"))
@@ -211,13 +258,13 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
             # suppressed: log but don't push; still advance current_verdict
             write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                            label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-            _upsert_state(sb, ticker, {"current_verdict": verdict, "last_checked_at": now.isoformat()})
+            _update_state(sb, ticker, {"current_verdict": verdict, "last_checked_at": now.isoformat()})
             return "change-suppressed"
 
         log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                                 label="watchlist", alert_type="change", alerted=True, snapshot=snap)
         notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
-        _upsert_state(sb, ticker, {
+        _update_state(sb, ticker, {
             "current_verdict": verdict, "last_alert_verdict": verdict,
             "last_alert_at": now.isoformat(),
             "reminder_due_at": (now + interval).isoformat(),
@@ -230,7 +277,7 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
         log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                                 label="watchlist", alert_type="reminder", alerted=True, snapshot=snap)
         notifier.push(ticker, verdict, rationale, kind="reminder", log_id=log_id)
-        _upsert_state(sb, ticker, {
+        _update_state(sb, ticker, {
             "last_alert_at": now.isoformat(),
             "reminder_due_at": (now + interval).isoformat(),
             "last_checked_at": now.isoformat(),
@@ -240,5 +287,5 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
     # ---- unchanged Hold, or not-yet-due: log quietly ----
     write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                    label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-    _upsert_state(sb, ticker, {"last_checked_at": now.isoformat()})
+    _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
     return "quiet"
