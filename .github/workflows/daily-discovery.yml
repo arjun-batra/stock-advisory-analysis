@@ -1,0 +1,34 @@
+name: Daily discovery
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"     # 22:00 UTC weekdays = ~6pm EDT / 5pm EST, after close
+  workflow_dispatch:            # manual run for testing
+
+concurrency:
+  group: daily-discovery
+  cancel-in-progress: false
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python scripts/run_discovery.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          # Discovery's OWN models — separate per-model free-tier quota bucket,
+          # so discovery can't eat into the watchlist's 3.5 allowance. Override
+          # via repo Variables (Settings > Secrets and variables > Actions >
+          # Variables); falls back to these if unset.
+          DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
+          DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
+          # Dry run until you've watched a clean discovery run; then flip to "true".
+          ALERTS_ENABLED: "false"
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
