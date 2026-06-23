@@ -113,12 +113,16 @@ def _generate(client, model: str, prompt, cfg) -> tuple[str, bool]:
         return f"<api error: {type(e).__name__}: {str(e)[:160]}>", True
 
 
-def _models_to_try() -> list[str]:
-    """Primary model, then the backup (if set and different), in order."""
-    models = [config.GEMINI_MODEL]
+def _models_to_try(models: list[str] | None = None) -> list[str]:
+    """Resolve the model try-order. Pass an explicit list (e.g. the discovery
+    models) to override; otherwise default to the watchlist primary + backup.
+    """
+    if models:
+        return [m for m in models if m]
+    out = [config.GEMINI_MODEL]
     if config.GEMINI_MODEL_BACKUP and config.GEMINI_MODEL_BACKUP != config.GEMINI_MODEL:
-        models.append(config.GEMINI_MODEL_BACKUP)
-    return models
+        out.append(config.GEMINI_MODEL_BACKUP)
+    return out
 
 
 def _try_models(client, prompt, cfg) -> tuple[str, bool, str]:
@@ -210,16 +214,17 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     return out
 
 
-def judge_batch(items: list[dict]) -> dict:
+def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
     """Judge every ticker in ONE Gemini call (cuts requests from N to 1 per run).
 
     items: list of {"data": <market data>, "position": <position|None>}.
+    models: optional explicit model try-order (primary, backup...). Discovery
+    passes its own 2.5 models here so it draws from separate free-tier quota
+    buckets and can't eat into the watchlist's allowance; the watchlist call
+    passes nothing and uses config.GEMINI_MODEL / _BACKUP.
     Returns {ticker: {verdict, rationale, raw_model_response, parse_status, model_used}}.
-    Tries config.GEMINI_MODEL first; only if it fails completely (every attempt
-    rate-limited/unavailable, or never returns a parseable array even after the
-    correction retry) does it fall through to config.GEMINI_MODEL_BACKUP. On a
-    hard failure of every model every ticker fails safe to Hold, so a bad batch
-    can only ever MISS signals that run, never fabricate one.
+    On a hard failure of every model every ticker fails safe to Hold, so a bad
+    batch can only ever MISS signals that run, never fabricate one.
     """
     tickers = [it["data"]["ticker"] for it in items]
     if not items:
@@ -238,9 +243,9 @@ def judge_batch(items: list[dict]) -> dict:
     )
 
     last_raw = ""
-    last_model = config.GEMINI_MODEL
     any_response = False   # did ANY model return text at all (vs pure API/quota errors)?
-    models = _models_to_try()
+    models = _models_to_try(models)
+    last_model = models[0]
 
     for i, model in enumerate(models):
         last_model = model

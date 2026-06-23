@@ -76,6 +76,52 @@ def log_skip(sb, ticker: str, notes: list[str], *, rate_limited: bool = False) -
                    label="watchlist", alert_type=None, alerted=False, snapshot=snap)
 
 
+# --- discovery (Phase 4) -----------------------------------------------------
+
+def get_watchlist_tickers(sb: Client) -> set[str]:
+    """Uppercased set of watchlist tickers, to exclude from discovery up front."""
+    return {r["ticker"].upper() for r in get_watchlist(sb)}
+
+
+def recently_pushed_candidates(sb: Client, days: int) -> set[str]:
+    """Tickers pushed as a new-candidate within the last `days` (7-day dedup).
+
+    'log always, push conditionally' (design 4.3): a candidate logged again
+    within the window is still written, but the push is suppressed.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = (sb.table("call_log").select("ticker")
+            .eq("label", "new-candidate").eq("alerted", True)
+            .gte("timestamp", since).execute().data or [])
+    return {r["ticker"].upper() for r in rows}
+
+
+def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
+    """Log a discovered candidate and push it (Buys only) if not deduped.
+
+    Discovery never touches verdict_state — candidates aren't watchlist members
+    and have no change/cooldown/reminder lifecycle. A non-reading (rate-limited
+    or unparseable) is logged but never pushed.
+    """
+    ticker = data["ticker"]
+    verdict = ai["verdict"]
+    rationale = ai["rationale"]
+    snap = _snapshot(data, ai)
+
+    if ai.get("parse_status") in ("failed", "api_error"):
+        write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                       label="new-candidate", alert_type=None, alerted=False, snapshot=snap)
+        return "no-read"
+
+    do_push = push and verdict == "Buy"
+    log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                            label="new-candidate", alert_type=None, alerted=do_push, snapshot=snap)
+    if do_push:
+        notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id)
+        return "candidate-pushed"
+    return "candidate-logged"
+
+
 # --- helpers -----------------------------------------------------------------
 
 def build_position(holding: dict | None, data: dict) -> dict | None:
@@ -104,6 +150,7 @@ def _snapshot(data: dict, ai: dict) -> dict:
         "raw_model_response": ai.get("raw_model_response"),
         "parse_status": ai.get("parse_status"),
         "model_used": ai.get("model_used"),
+        "discovery_signals": data.get("discovery_signals"),
     }
 
 

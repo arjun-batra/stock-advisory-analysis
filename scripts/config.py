@@ -56,6 +56,39 @@ GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", 
 YF_PACING_SECONDS = float(os.environ.get("YF_PACING_SECONDS", "2"))
 YF_BACKOFF_SECONDS = float(os.environ.get("YF_BACKOFF_SECONDS", "10"))
 
+# --- Phase 4: daily discovery (reactive movers) ------------------------------
+# Discovery uses DIFFERENT models from the watchlist on purpose: Gemini free-tier
+# quotas are per-model, so a separate model pair gives discovery its own daily
+# bucket and it can't eat into the watchlist's allowance. Discovery is one
+# batched call/day, so even a throttled 2.5 Flash (20 RPD) is ample.
+DISCOVERY_GEMINI_MODEL = os.environ.get("DISCOVERY_GEMINI_MODEL", "gemini-2.5-flash")
+DISCOVERY_GEMINI_MODEL_BACKUP = os.environ.get("DISCOVERY_GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")
+
+# Prefilter quality gates (all tunable). A candidate must clear ALL of these to
+# reach the AI. Defaults set with Arjun after the screener smoke test.
+DISCOVERY_MIN_MARKET_CAP = float(os.environ.get("DISCOVERY_MIN_MARKET_CAP", "2000000000"))   # $2B
+DISCOVERY_MIN_PRICE      = float(os.environ.get("DISCOVERY_MIN_PRICE", "5"))                 # $5
+DISCOVERY_MIN_VOLUME     = float(os.environ.get("DISCOVERY_MIN_VOLUME", "500000"))           # 500k shares/day
+# Only real primary exchanges — excludes Cboe CA secondary listings, OTC, pink sheets.
+DISCOVERY_ALLOWED_EXCHANGES = {"NYSE", "NYSEArca", "NasdaqGS", "NasdaqGM", "NasdaqCM", "Nasdaq", "Toronto"}
+# Movement thresholds for the gainers/losers screens (abs % move to qualify).
+DISCOVERY_GAINER_PCT = float(os.environ.get("DISCOVERY_GAINER_PCT", "5"))
+DISCOVERY_LOSER_PCT  = float(os.environ.get("DISCOVERY_LOSER_PCT", "-5"))
+# Volume-spike signal: today's volume >= this multiple of the 3-month average.
+DISCOVERY_VOL_SPIKE = float(os.environ.get("DISCOVERY_VOL_SPIKE", "2.0"))
+# 52-week-extreme signal: price within this fraction of the 52w high/low.
+DISCOVERY_52W_PROXIMITY = float(os.environ.get("DISCOVERY_52W_PROXIMITY", "0.02"))
+# Max candidates sent to the AI in the single daily batched call.
+DISCOVERY_SHORTLIST_MAX = int(os.environ.get("DISCOVERY_SHORTLIST_MAX", "15"))
+# Per-candidate push cooldown: a name flagged within this many days is logged
+# but not re-pushed (design 4.3 — "log always, push conditionally").
+DISCOVERY_PUSH_COOLDOWN_DAYS = int(os.environ.get("DISCOVERY_PUSH_COOLDOWN_DAYS", "7"))
+
+
+def discovery_models() -> list[str]:
+    return [m for m in (DISCOVERY_GEMINI_MODEL, DISCOVERY_GEMINI_MODEL_BACKUP) if m]
+
+
 # --- Market hours (NYSE/TSX share the session: 9:30-16:00 ET) ----------------
 # Hours-and-weekday only. Deliberately NO per-exchange holiday calendar
 # (accepted risk, design 2 item 5); a closed market's tickers fall through to

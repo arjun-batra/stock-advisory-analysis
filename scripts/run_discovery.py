@@ -1,0 +1,94 @@
+"""Daily discovery orchestrator (Phase 4, solution design 6.2).
+
+Reactive movers: screen the market for the day's movers/volume (US + Canada),
+shortlist the quality-gated survivors, run the SAME full ingest + ONE batched AI
+call as the watchlist — but on discovery's own 2.5 models, which draw from a
+separate Gemini free-tier quota bucket so discovery can't eat into the
+watchlist's allowance. Push Buys only, labeled "new candidate", with a 7-day
+per-ticker push cooldown ("log always, push conditionally", design 4.3).
+
+Runs once daily after close — deliberately NOT gated on market-open (it uses the
+last close). Writes its own run_heartbeat row ("daily-discovery"). Phase 2-style
+dry run until ALERTS_ENABLED is flipped on.
+"""
+
+from datetime import datetime, timezone
+import time
+
+import config
+import ingest
+import ai_judge
+import prefilter
+import state
+import notify
+
+
+def main() -> None:
+    config.require_secrets()
+    sb = state.client()
+    notifier = notify.get_notifier()
+    now = datetime.now(timezone.utc)
+
+    watchlist = state.get_watchlist_tickers(sb)
+    candidates = prefilter.find_candidates(exclude=watchlist)
+    print(f"Discovery: {len(candidates)} candidates after screen+gate "
+          f"(alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
+
+    if not candidates:
+        state.write_heartbeat(sb, "daily-discovery", "ok")
+        print("Done [ok]. No candidates today.")
+        return
+
+    recently = state.recently_pushed_candidates(sb, config.DISCOVERY_PUSH_COOLDOWN_DAYS)
+    outcomes = {}
+
+    # --- ingest the shortlist (full per-ticker data, paced like the hourly loop) ---
+    items = []   # list of (candidate, data)
+    for i, c in enumerate(candidates):
+        if i > 0:
+            time.sleep(config.YF_PACING_SECONDS)
+        try:
+            data = ingest.get_market_data(c["ticker"])
+            if not data["has_price"]:
+                reason = "rate-limited" if data.get("rate_limited") else "no data"
+                print(f"  skip {c['ticker']} ({reason})")
+                outcomes["skip"] = outcomes.get("skip", 0) + 1
+                continue
+            data["discovery_signals"] = c["signals"]   # carried into the stored snapshot
+            items.append((c, data))
+        except Exception as e:
+            print(f"  ERROR {c['ticker']} (ingest): {type(e).__name__}: {e}")
+            outcomes["error"] = outcomes.get("error", 0) + 1
+
+    # --- ONE batched AI call, on discovery's own models ---
+    verdicts = ai_judge.judge_batch(
+        [{"data": d, "position": None} for (_, d) in items],
+        models=config.discovery_models(),
+    )
+
+    # --- log every candidate; push Buys that aren't within the 7-day cooldown ---
+    for c, data in items:
+        ticker = c["ticker"]
+        try:
+            ai = verdicts.get(ticker) or {
+                "verdict": "Hold",
+                "rationale": "No verdict returned for this candidate; fail-safe Hold.",
+                "raw_model_response": "", "parse_status": "failed",
+            }
+            push = ticker not in recently
+            result = state.process_candidate(sb, notifier, data, ai, push=push)
+            print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
+                  f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
+            outcomes[result] = outcomes.get(result, 0) + 1
+        except Exception as e:
+            print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
+            outcomes["error"] = outcomes.get("error", 0) + 1
+
+    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0)
+    status = "partial" if degraded else "ok"
+    state.write_heartbeat(sb, "daily-discovery", status)
+    print(f"Done [{status}]. {dict(outcomes)}")
+
+
+if __name__ == "__main__":
+    main()
