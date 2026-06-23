@@ -163,6 +163,13 @@ def _snapshot(data: dict, ai: dict) -> dict:
         "raw_model_response": ai.get("raw_model_response"),
         "parse_status": ai.get("parse_status"),
         "model_used": ai.get("model_used"),
+        # Token counts for THIS Gemini call. For the watchlist/discovery batch
+        # it's one API call, so this total is the batch total and is identical on
+        # every row of the run — aggregate it once per run, not summed per row.
+        "tokens": ai.get("usage"),
+        # Real error of any model we fell back from (e.g. a 3.5-flash timeout
+        # before lite answered); null on a clean primary success.
+        "fallback_from": ai.get("fallback_from"),
         "discovery_signals": data.get("discovery_signals"),
     }
 

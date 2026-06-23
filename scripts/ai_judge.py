@@ -104,13 +104,48 @@ def _parse(raw: str) -> dict | None:
     return {"verdict": obj["verdict"], "rationale": _clip(obj["rationale"])}
 
 
-def _generate(client, model: str, prompt, cfg) -> tuple[str, bool]:
-    """Return (text, is_api_error). Captures 429/quota errors instead of raising."""
+def _client():
+    """Gemini client with an explicit, generous request timeout.
+
+    Root cause of the 3.5-flash -> lite fallbacks (observed live): 3.5-flash
+    *did* respond (tokens were billed on Google's dashboard) but slowly, and the
+    SDK's default client timeout fired first — so we discarded a completed,
+    token-charged response and fell back to lite. A high explicit timeout lets a
+    slow-but-valid response land instead of being thrown away.
+    """
+    return genai.Client(
+        api_key=config.GEMINI_API_KEY,
+        http_options=types.HttpOptions(timeout=config.GEMINI_TIMEOUT_MS),
+    )
+
+
+def _usage(resp) -> dict | None:
+    """Pull token counts off a response's usage_metadata, if present."""
+    um = getattr(resp, "usage_metadata", None)
+    if um is None:
+        return None
+    return {
+        "prompt": getattr(um, "prompt_token_count", None),
+        "output": getattr(um, "candidates_token_count", None),
+        "thoughts": getattr(um, "thoughts_token_count", None),
+        "total": getattr(um, "total_token_count", None),
+    }
+
+
+def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, dict | None]:
+    """Return (text, is_api_error, error_detail, usage).
+
+    error_detail is the real exception (type + message) on failure — previously
+    the caller logged a hardcoded "rate-limited/unavailable" guess, which hid
+    whether the failure was a 429 (ResourceExhausted), a timeout (Deadline
+    Exceeded / read timeout), or a bad model name (NotFound). usage carries the
+    token counts on success.
+    """
     try:
         resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
-        return (resp.text or "").strip(), False
+        return (resp.text or "").strip(), False, None, _usage(resp)
     except Exception as e:
-        return f"<api error: {type(e).__name__}: {str(e)[:160]}>", True
+        return "", True, f"{type(e).__name__}: {str(e)[:200]}", None
 
 
 def _models_to_try(models: list[str] | None = None) -> list[str]:
@@ -125,29 +160,31 @@ def _models_to_try(models: list[str] | None = None) -> list[str]:
     return out
 
 
-def _try_models(client, prompt, cfg) -> tuple[str, bool, str]:
+def _try_models(client, prompt, cfg) -> tuple[str, bool, str, dict | None, str | None]:
     """Try each model in order; one backoff-retry per model before falling
-    through to the next. Returns (raw, success, model_used) - falls through on
-    ANY failure mode (true rate limit, outage, or the model simply not being
-    available on this project's free tier), not just 429s specifically.
+    through to the next. Returns (raw, success, model_used, usage, fallback_from).
+    fallback_from records the real error(s) of any earlier model that failed, so
+    a fallback is traceable in the log and the snapshot instead of guessed at.
     """
     models = _models_to_try()
-    raw, model = "", models[0]
+    raw, model, usage, notes = "", models[0], None, []
     for i, model in enumerate(models):
-        raw, api_err = _generate(client, model, prompt, cfg)
+        raw, api_err, err, usage = _generate(client, model, prompt, cfg)
         if api_err:
             time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-            raw, api_err = _generate(client, model, prompt, cfg)
+            raw, api_err, err, usage = _generate(client, model, prompt, cfg)
         if not api_err:
-            return raw, True, model
+            return raw, True, model, usage, ("; ".join(notes) or None)
+        notes.append(f"{model}: {err}")
         nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
-        print(f"  [ai_judge] {model}: failed after retry{nxt}")
-    return raw, False, model
+        print(f"  [ai_judge] {model} failed after retry ({err}){nxt}")
+    return raw, False, model, None, ("; ".join(notes) or None)
 
 
 def judge(data: dict, position: dict | None = None) -> dict:
-    """Return {verdict, rationale, raw_model_response, parse_status, model_used}."""
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
+    """Return {verdict, rationale, raw_model_response, parse_status, model_used,
+    usage, fallback_from}."""
+    client = _client()
     user = _build_user_prompt(data, position)
     cfg = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
@@ -155,23 +192,26 @@ def judge(data: dict, position: dict | None = None) -> dict:
         temperature=0.2,
     )
 
-    raw, ok, model = _try_models(client, user, cfg)
+    raw, ok, model, usage, fb = _try_models(client, user, cfg)
     if not ok:
-        return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error", "model_used": model}
+        return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error",
+                "model_used": model, "usage": None, "fallback_from": fb}
 
     parsed = _parse(raw)
     if parsed:
-        return {**parsed, "raw_model_response": raw, "parse_status": "ok", "model_used": model}
+        return {**parsed, "raw_model_response": raw, "parse_status": "ok",
+                "model_used": model, "usage": usage, "fallback_from": fb}
 
     # Got a reply, but it wasn't valid JSON -> one correction retry on the same model.
     retry = user + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object."
-    raw2, _ = _generate(client, model, retry, cfg)
+    raw2, _, _, usage2 = _generate(client, model, retry, cfg)
     parsed = _parse(raw2)
     if parsed:
-        return {**parsed, "raw_model_response": raw2, "parse_status": "retried", "model_used": model}
+        return {**parsed, "raw_model_response": raw2, "parse_status": "retried",
+                "model_used": model, "usage": usage2 or usage, "fallback_from": fb}
 
     return {**_FAIL_SAFE_PARSE, "raw_model_response": f"{raw} || retry: {raw2}",
-            "parse_status": "failed", "model_used": model}
+            "parse_status": "failed", "model_used": model, "usage": None, "fallback_from": fb}
 
 
 def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
@@ -222,15 +262,16 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
     passes its own 2.5 models here so it draws from separate free-tier quota
     buckets and can't eat into the watchlist's allowance; the watchlist call
     passes nothing and uses config.GEMINI_MODEL / _BACKUP.
-    Returns {ticker: {verdict, rationale, raw_model_response, parse_status, model_used}}.
-    On a hard failure of every model every ticker fails safe to Hold, so a bad
-    batch can only ever MISS signals that run, never fabricate one.
+    Returns {ticker: {verdict, rationale, raw_model_response, parse_status,
+    model_used, usage, fallback_from}}. On a hard failure of every model every
+    ticker fails safe to Hold, so a bad batch can only ever MISS signals, never
+    fabricate one.
     """
     tickers = [it["data"]["ticker"] for it in items]
     if not items:
         return {}
 
-    client = genai.Client(api_key=config.GEMINI_API_KEY)
+    client = _client()
     blocks = [f"--- Stock {i} ---\n{_ticker_block(it['data'], it['position'])}"
               for i, it in enumerate(items, 1)]
     user = ("\n\n".join(blocks) +
@@ -242,39 +283,53 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
         temperature=0.2,
     )
 
+    def _enrich(parsed, usage, fallback_from):
+        # Stamp token usage + the (real) fallback error onto every ticker's
+        # result. usage is the BATCH total for this one API call — identical
+        # across the rows of a run, so sum it once per run, not per ticker.
+        for v in parsed.values():
+            v["usage"] = usage
+            v["fallback_from"] = fallback_from
+        return parsed
+
     last_raw = ""
     any_response = False   # did ANY model return text at all (vs pure API/quota errors)?
+    notes: list[str] = []  # real errors of any model we fell back from
     models = _models_to_try(models)
     last_model = models[0]
 
     for i, model in enumerate(models):
         last_model = model
-        raw, api_err = _generate(client, model, user, cfg)
+        raw, api_err, err, usage = _generate(client, model, user, cfg)
         if api_err:
             time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-            raw, api_err = _generate(client, model, user, cfg)
+            raw, api_err, err, usage = _generate(client, model, user, cfg)
         if api_err:
-            last_raw = raw
+            last_raw = err or raw
+            notes.append(f"{model}: {err}")
             nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
-            print(f"  [ai_judge] {model}: rate-limited/unavailable after retry{nxt}")
+            print(f"  [ai_judge] {model} failed after retry ({err}){nxt}")
             continue   # this model is exhausted; move to the backup, if any
 
         any_response = True
+        fb = "; ".join(notes) or None
         parsed = _parse_batch(raw, tickers, model)
         if parsed is not None:
-            return parsed
+            return _enrich(parsed, usage, fb)
 
         retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
-        raw2, _ = _generate(client, model, retry, cfg)
+        raw2, _, _, usage2 = _generate(client, model, retry, cfg)
         parsed = _parse_batch(raw2, tickers, model)
         if parsed is not None:
-            return parsed
+            return _enrich(parsed, usage2 or usage, fb)
 
         last_raw = f"{raw} || retry: {raw2}"
+        notes.append(f"{model}: replied but unparseable")
         print(f"  [ai_judge] {model}: replied but never returned a parseable verdict array")
 
     # Every model in the list failed -> fail safe to Hold for all tickers.
     fail = _FAIL_SAFE_PARSE if any_response else _FAIL_SAFE_API
     status = "failed" if any_response else "api_error"
+    fb = "; ".join(notes) or None
     return {t: {**fail, "raw_model_response": last_raw, "parse_status": status,
-               "model_used": last_model} for t in tickers}
+               "model_used": last_model, "usage": None, "fallback_from": fb} for t in tickers}

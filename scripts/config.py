@@ -48,6 +48,11 @@ MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 GEMINI_PACING_SECONDS = float(os.environ.get("GEMINI_PACING_SECONDS", "12"))
 # On a 429/API error, wait this long before a single retry (rate-limit recovery).
 GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", "20"))
+# Per-request timeout for the Gemini call, in MILLISECONDS. Set high on purpose:
+# 3.5-flash was responding but slowly, and the SDK's default timeout fired first,
+# so we discarded completed (token-billed) responses and fell back to lite. 180s
+# lets a slow-but-valid batch response land instead of being thrown away.
+GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "180000"))
 
 # Yahoo Finance (yfinance) has no published rate limit and rate-limited the
 # ingest loop mid-run (issue #1). Pace tickers apart and back off once on a
