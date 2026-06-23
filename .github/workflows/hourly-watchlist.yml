@@ -3,11 +3,15 @@ name: Hourly watchlist check
 # GitHub cron is UTC and does not shift with daylight saving. This window
 # (13:00-21:00 UTC, Mon-Fri) covers the 9:30-16:00 ET session in both EST and
 # EDT; run_hourly.py does the precise market-open gate, so early/late runs just
-# no-op. Phase 2 sends NO real pushes (ALERTS_ENABLED=false).
+# no-op. Fires every 30 min (not hourly): GitHub Actions cron is best-effort and
+# can be delayed 30-60 min at the top of the hour, which on an hourly schedule
+# blew an entire multi-hour hole in coverage (issue #4). A 30-min base cadence
+# keeps the effective gap within ~1-1.5h even when a run is delayed. Overlapping
+# runs are serialized by the concurrency group below, never run in parallel.
 
 on:
   schedule:
-    - cron: "0 13-21 * * 1-5"
+    - cron: "*/30 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
       force_run:
@@ -43,16 +47,13 @@ jobs:
           # Repository variables (Settings -> Secrets and variables -> Actions ->
           # Variables tab), not secrets -- model names aren't sensitive, and this
           # way you can swap models from the GitHub UI with no commit. Falls back
-          # to the literal on the right if the variable isn't set - so no action
-          # is required for these defaults to take effect; set the repo variables
-          # only if you want UI-driven overrides going forward.
+          # to the literal on the right if the variable isn't set.
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
           GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
-          # Phase 2 = dry run. Flip to "true" in Phase 3 once ntfy is wired.
+          # Live alerting.
           ALERTS_ENABLED: "true"
           # Set by the workflow_dispatch toggle; empty (gated) on the schedule.
           FORCE_RUN: ${{ inputs.force_run }}
-          # Phase 3 push wiring. Once these are set, flip ALERTS_ENABLED to "true".
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_hourly.py
