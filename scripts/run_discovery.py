@@ -30,13 +30,22 @@ def main() -> None:
     now = datetime.now(timezone.utc)
 
     watchlist = state.get_watchlist_tickers(sb)
-    candidates = prefilter.find_candidates(exclude=watchlist)
+    candidates, screens_attempted, screens_errored = prefilter.find_candidates(exclude=watchlist)
     print(f"Discovery: {len(candidates)} candidates after screen+gate "
-          f"(alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
+          f"({screens_attempted - screens_errored}/{screens_attempted} screens ok, "
+          f"{screens_errored} errored; alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
 
     if not candidates:
-        state.write_heartbeat(sb, "daily-discovery", "ok")
-        print("Done [ok]. No candidates today.")
+        # Distinguish a genuine quiet day (all screens ran, nothing passed gates)
+        # from a silent screener failure (screens errored) — the latter must not
+        # report a clean 'ok' (issue #2 principle applied to discovery).
+        if screens_errored:
+            state.write_heartbeat(sb, "daily-discovery", "partial")
+            print(f"Done [partial]. 0 candidates but {screens_errored}/{screens_attempted} "
+                  f"screens errored — treat as screener failure, NOT a quiet day.")
+        else:
+            state.write_heartbeat(sb, "daily-discovery", "ok")
+            print("Done [ok]. No candidates today (all screens ran, nothing passed gates).")
         return
 
     recently = state.recently_pushed_candidates(sb, config.DISCOVERY_PUSH_COOLDOWN_DAYS)
@@ -84,10 +93,11 @@ def main() -> None:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
             outcomes["error"] = outcomes.get("error", 0) + 1
 
-    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0)
+    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0) + screens_errored
     status = "partial" if degraded else "ok"
     state.write_heartbeat(sb, "daily-discovery", status)
-    print(f"Done [{status}]. {dict(outcomes)}")
+    print(f"Done [{status}]. {dict(outcomes)}"
+          + (f" ({screens_errored}/{screens_attempted} screens errored)" if screens_errored else ""))
 
 
 if __name__ == "__main__":

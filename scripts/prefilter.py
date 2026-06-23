@@ -29,12 +29,17 @@ def _quotes(res) -> list[dict]:
     return res or []
 
 
-def _screen(label: str, query, **kw) -> list[dict]:
+def _screen(label: str, query, **kw) -> tuple[list[dict], bool]:
+    """Run one screen. Returns (quotes, errored). errored=True means the call
+    raised (rate-limit, endpoint/shape change, runner-IP throttling) and got
+    swallowed — the caller counts these so a total screener failure can't
+    masquerade as a quiet '0 candidates' day (mirrors the issue #2 heartbeat fix).
+    """
     try:
-        return _quotes(yf.screen(query, **kw))
+        return _quotes(yf.screen(query, **kw)), False
     except Exception as e:
         print(f"  [prefilter] {label} screen error: {type(e).__name__}: {str(e)[:120]}")
-        return []
+        return [], True
 
 
 def _ca_query(op: str, pct: float):
@@ -85,22 +90,35 @@ def _market_for(exchange: str) -> str:
     return "TSX" if exchange == "Toronto" else "US"
 
 
-def find_candidates(exclude: set[str]) -> list[dict]:
-    """Return up to DISCOVERY_SHORTLIST_MAX candidates, ranked.
+def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int]:
+    """Return (candidates, screens_attempted, screens_errored), candidates ranked.
 
     Each candidate: {ticker, market, signals, screen_pct}. `exclude` is the
     uppercased watchlist set — those never reach discovery (the hourly loop
-    already covers them).
+    already covers them). The error count lets the caller tell a genuine quiet
+    day (0 candidates, 0 errors) from a silent screener failure (0 candidates,
+    N errors) — see run_discovery's heartbeat handling.
     """
     raw: list[dict] = []
+    attempted = 0
+    errored = 0
+
+    def _collect(label, query, **kw):
+        nonlocal attempted, errored
+        attempted += 1
+        quotes, err = _screen(label, query, **kw)
+        if err:
+            errored += 1
+        return quotes
+
     for label in ("day_gainers", "day_losers", "most_actives"):
-        raw += _screen(label, label, size=50)
+        raw += _collect(label, label, size=50)
         time.sleep(1)
-    raw += _screen("ca_gainers", _ca_query("gt", config.DISCOVERY_GAINER_PCT),
-                   sortField="percentchange", sortAsc=False, size=50)
+    raw += _collect("ca_gainers", _ca_query("gt", config.DISCOVERY_GAINER_PCT),
+                    sortField="percentchange", sortAsc=False, size=50)
     time.sleep(1)
-    raw += _screen("ca_losers", _ca_query("lt", config.DISCOVERY_LOSER_PCT),
-                   sortField="percentchange", sortAsc=True, size=50)
+    raw += _collect("ca_losers", _ca_query("lt", config.DISCOVERY_LOSER_PCT),
+                    sortField="percentchange", sortAsc=True, size=50)
 
     seen: dict[str, dict] = {}
     for q in raw:
@@ -123,4 +141,4 @@ def find_candidates(exclude: set[str]) -> list[dict]:
     ranked = sorted(seen.values(),
                     key=lambda c: (len(c["signals"]), abs(c.get("screen_pct") or 0)),
                     reverse=True)
-    return ranked[: config.DISCOVERY_SHORTLIST_MAX]
+    return ranked[: config.DISCOVERY_SHORTLIST_MAX], attempted, errored
