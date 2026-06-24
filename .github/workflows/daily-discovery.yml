@@ -1,8 +1,12 @@
 name: Daily discovery
+
+# No GitHub `schedule:` trigger on purpose (issue #4) — scheduling lives in
+# Supabase pg_cron, which calls this workflow via the workflow_dispatch API at
+# 22:00 UTC (~6pm ET, post-close) Mon-Fri, function public.dispatch_github_workflow.
+# This file only defines workflow_dispatch.
+
 on:
-  schedule:
-    - cron: "0 22 * * 1-5"     # 22:00 UTC weekdays = ~6pm EDT / 5pm EST, after close
-  workflow_dispatch:            # manual run for testing
+  workflow_dispatch:            # fired by Supabase pg_cron (and manual test runs)
 
 concurrency:
   group: daily-discovery
@@ -28,7 +32,7 @@ jobs:
           # Variables); falls back to these if unset.
           DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
           DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
-          # Dry run until you've watched a clean discovery run; then flip to "true".
           ALERTS_ENABLED: "true"
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
+        run: python scripts/run_discovery.py
