@@ -1,9 +1,8 @@
 """State & persistence + the core decision logic (solution design 5, 6.3).
 
-Holds the Supabase reads/writes and the change / cooldown / standing-reminder
-state machine. Every check writes a call_log row (FR15, v4) — quiet rows carry
-alerted=false / alert_type=null. In Phase 2 the notifier is a dry-run stub, so
-the logic runs and logs but nothing is actually pushed.
+Holds the Supabase reads/writes and the single-rule change state machine: any
+verdict change -> immediate alert, no change -> silence (issue #11). Every check
+writes a call_log row (FR15) — quiet rows carry alerted=false / alert_type=null.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -174,18 +173,19 @@ def _snapshot(data: dict, ai: dict) -> dict:
     }
 
 
-def _parse_dt(value) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-
-
 # --- the state machine (design 6.3) ------------------------------------------
 
 def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
-    """Run one watchlist ticker through the change/cooldown/reminder logic.
+    """Run one watchlist ticker through the single-rule change logic (design 6.3).
+
+    SINGLE RULE (issue #11): any verdict change -> immediate alert; no change ->
+    silence. No cooldown, no debounce, no standing-verdict reminder. The cold
+    start is the only special case, and it's a no-alert baseline, not an
+    exception to the rule. The 24h cooldown, the post-cold-start bootstrap path,
+    and FR7's 7-day reminder were all removed here (were: change-suppressed /
+    bootstrap-alert / reminder). A standing Buy/Sell that never changes is now
+    silent by design — the system signals on threshold *crossings*, not standing
+    states (accepted, solution design 2 item 4).
 
     Returns a short label of what happened, for the run log.
     """
@@ -193,15 +193,15 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
     verdict = ai["verdict"]
     rationale = ai["rationale"]
     snap = _snapshot(data, ai)
-    cooldown = timedelta(hours=config.COOLDOWN_HOURS)
-    interval = timedelta(days=config.REMINDER_INTERVAL_DAYS)
 
     state = get_verdict_state(sb, ticker)
 
     # ---- non-reading: rate-limited (api_error) or unparseable (failed). The
     #      "Hold" here is a fail-safe placeholder, NOT a real verdict, so never
     #      let it advance current_verdict or fire a (spurious) change alert. Log
-    #      the row for the audit trail (FR15); only touch last_checked_at. ----
+    #      the row for the audit trail (FR15); only touch last_checked_at. This
+    #      guard is load-bearing under the single rule: without it a fail-safe
+    #      Hold could read as a real change -> Hold and fire a fabricated alert. ----
     if ai.get("parse_status") in ("failed", "api_error"):
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="watchlist", alert_type=None, alerted=False, snapshot=snap)
@@ -209,90 +209,29 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
             _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
         return "no-read"
 
-    # ---- cold start ----
-    # Silent by design (avoids a go-live notification dump). bootstrapped=False
-    # marks that this ticker has NOT yet had a real evaluation that could alert;
-    # the next scheduled run picks that up below (issue #5).
+    # ---- cold start: establish the baseline silently (avoids a go-live dump) ----
     if state is None:
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="watchlist", alert_type=None, alerted=False, snapshot=snap)
         _insert_state(sb, ticker, {
-            "current_verdict": verdict, "last_alert_verdict": None,
-            "last_alert_at": None,
-            "reminder_due_at": (now + interval).isoformat(),
+            "current_verdict": verdict,
             "last_checked_at": now.isoformat(),
-            "bootstrapped": False,
         })
         return "cold-start"
 
-    # ---- first real evaluation after cold-start (issue #5) ----
-    # The cold-start run is silent, but the FIRST real run must be able to
-    # surface a standing Buy/Sell — otherwise an actionable verdict that never
-    # *changes* is swallowed until the 7-day reminder (observed live: SPCX Sell,
-    # TD.TO Buy). Alert on Buy/Sell, stay quiet on Hold, then flip bootstrapped
-    # so every later run uses ordinary change detection. Only the actionable
-    # verdicts alert here, so this never becomes a Hold dump.
-    if not state.get("bootstrapped"):
-        if verdict in ("Buy", "Sell"):
-            log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                                    label="watchlist", alert_type="change", alerted=True, snapshot=snap)
-            notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
-            _update_state(sb, ticker, {
-                "current_verdict": verdict, "last_alert_verdict": verdict,
-                "last_alert_at": now.isoformat(),
-                "reminder_due_at": (now + interval).isoformat(),
-                "last_checked_at": now.isoformat(),
-                "bootstrapped": True,
-            })
-            return "bootstrap-alert"
-        # Hold: establish the baseline quietly, no alert.
+    # ---- no change -> silence (still logged for the track record, FR15) ----
+    if verdict == state.get("current_verdict"):
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-        _update_state(sb, ticker, {
-            "current_verdict": verdict,
-            "last_checked_at": now.isoformat(),
-            "bootstrapped": True,
-        })
-        return "bootstrap-quiet"
+        _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
+        return "quiet"
 
-    last_alert_at = _parse_dt(state.get("last_alert_at"))
-    reminder_due_at = _parse_dt(state.get("reminder_due_at"))
-
-    # ---- CASE 1: verdict changed ----
-    if verdict != state.get("current_verdict"):
-        in_cooldown = last_alert_at is not None and (now - last_alert_at) < cooldown
-        if in_cooldown:
-            # suppressed: log but don't push; still advance current_verdict
-            write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                           label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-            _update_state(sb, ticker, {"current_verdict": verdict, "last_checked_at": now.isoformat()})
-            return "change-suppressed"
-
-        log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                                label="watchlist", alert_type="change", alerted=True, snapshot=snap)
-        notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
-        _update_state(sb, ticker, {
-            "current_verdict": verdict, "last_alert_verdict": verdict,
-            "last_alert_at": now.isoformat(),
-            "reminder_due_at": (now + interval).isoformat(),
-            "last_checked_at": now.isoformat(),
-        })
-        return "change-alert"
-
-    # ---- CASE 2: unchanged, standing Buy/Sell, reminder due ----
-    if verdict in ("Buy", "Sell") and reminder_due_at is not None and now >= reminder_due_at:
-        log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                                label="watchlist", alert_type="reminder", alerted=True, snapshot=snap)
-        notifier.push(ticker, verdict, rationale, kind="reminder", log_id=log_id)
-        _update_state(sb, ticker, {
-            "last_alert_at": now.isoformat(),
-            "reminder_due_at": (now + interval).isoformat(),
-            "last_checked_at": now.isoformat(),
-        })
-        return "reminder"
-
-    # ---- unchanged Hold, or not-yet-due: log quietly ----
-    write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                   label="watchlist", alert_type=None, alerted=False, snapshot=snap)
-    _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
-    return "quiet"
+    # ---- change -> immediate alert, no cooldown ----
+    log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                            label="watchlist", alert_type="change", alerted=True, snapshot=snap)
+    notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
+    _update_state(sb, ticker, {
+        "current_verdict": verdict,
+        "last_checked_at": now.isoformat(),
+    })
+    return "change-alert"
