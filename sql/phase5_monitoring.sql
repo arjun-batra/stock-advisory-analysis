@@ -96,6 +96,7 @@ language plpgsql security definer set search_path = '' as $$
 declare
   dow int  := extract(isodow from p_now);          -- 1=Mon .. 7=Sun
   t   time := (p_now at time zone 'UTC')::time;
+  et  time := (p_now at time zone 'America/New_York')::time;  -- #9/#12: ET-based watchlist window
   wl_last timestamptz; wl_status text;
   disc_last timestamptz; disc_status text;
   mins numeric;
@@ -104,11 +105,14 @@ begin
     return;   -- weekends: nothing is scheduled, so nothing to watch
   end if;
 
-  -- ===== WATCHLIST: stale or degraded, during the session + grace =====
-  -- Runs every 30 min over ~13:30-21:00 UTC. Evaluate from 14:30 (lets the
-  -- first run land) through 21:30 UTC. Stale if newest heartbeat > 70 min old
-  -- (~2 missed */30 cycles, allowing for a slow run).
-  if t >= time '14:30' and t <= time '21:30' then
+  -- ===== WATCHLIST: stale or degraded, during the ET session + grace =====
+  -- #9/#12 fix: gate on real Eastern time, not a fixed UTC window. The old
+  -- 14:30-21:30 UTC window ran ~90 min past the ET close in EDT, firing a false
+  -- "stalled" alert at 20:50 UTC (post-close no-op runs don't write a heartbeat).
+  -- ET 10:15 = grace after the 09:30 open (lets the first run land); 16:00 = close.
+  -- (p_now at time zone 'America/New_York') is DST-aware in both EST and EDT.
+  -- Stale if newest heartbeat > 70 min old (~2 missed */30 cycles, allows a slow run).
+  if et >= time '10:15' and et <= time '16:00' then
     select last_run_at, status into wl_last, wl_status
       from public.run_heartbeat where workflow_name = 'hourly-watchlist';
 
@@ -156,6 +160,44 @@ revoke execute on function public.send_ntfy(text,text,int,text[]) from public, a
 revoke execute on function public._raise_monitor(text,text,text,text,int,interval) from public, anon, authenticated;
 revoke execute on function public._clear_monitor(text,text,text) from public, anon, authenticated;
 revoke execute on function public.check_pipeline_health(timestamptz) from public, anon, authenticated;
+
+-- =====================================================================
+-- #9/#12 — DST-correct ET-aware dispatch gate
+-- =====================================================================
+-- The watchlist-dispatch cron fires every 30 min over a wide */30 13-21 UTC
+-- window. That window is a DST *superset* of the ET trading day; on its own it
+-- dispatches post-close no-op runs in EDT (#9). This gate sits between the cron
+-- and dispatch_github_workflow: it only dispatches during the real ET session
+-- (09:30-16:00 ET, weekdays). Postgres handles DST via 'America/New_York', so it
+-- self-corrects across the EST/EDT boundary with no hardcoded UTC offsets.
+-- The wide cron stays as the superset; this trims it to the live session.
+-- (Python is_market_open() remains as execution-time defense-in-depth.)
+-- No per-exchange holiday calendar (accepted risk; closed-day tickers fall
+-- through to skip-with-log downstream).
+create or replace function public.dispatch_watchlist_if_open()
+returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  et_now timestamp := (now() at time zone 'America/New_York');
+  dow int := extract(isodow from et_now);
+  t   time := et_now::time;
+begin
+  if dow > 5 then
+    return;
+  end if;
+  if t >= time '09:30' and t <= time '16:00' then
+    perform public.dispatch_github_workflow('hourly-watchlist.yml');
+  end if;
+end; $$;
+
+revoke execute on function public.dispatch_watchlist_if_open() from public, anon, authenticated;
+
+-- Re-point the watchlist-dispatch cron at the gate (was a direct
+-- dispatch_github_workflow call). Schedule unchanged — still the DST superset.
+select cron.alter_job(
+  (select jobid from cron.job where jobname = 'watchlist-dispatch'),
+  command => 'select public.dispatch_watchlist_if_open();'
+);
 
 -- --- schedule: :20 and :50 past the hour, 14-23 UTC, weekdays ---------
 -- Covers the watchlist session window and the post-22:00 discovery check.
