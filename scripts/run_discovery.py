@@ -30,10 +30,15 @@ def main() -> None:
     now = datetime.now(timezone.utc)
 
     watchlist = state.get_watchlist_tickers(sb)
-    candidates, screens_attempted, screens_errored = prefilter.find_candidates(exclude=watchlist)
+    candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(exclude=watchlist)
     print(f"Discovery: {len(candidates)} candidates after screen+gate "
           f"({screens_attempted - screens_errored}/{screens_attempted} screens ok, "
           f"{screens_errored} errored; alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
+    # Funnel breakdown (issue #8): makes a zero-candidate day diagnosable —
+    # which stage zeroed out tells you whether to tune the quality gates or the
+    # signal thresholds (or whether it's a genuinely quiet market).
+    print(f"  funnel: raw={funnel['raw']} -> dedup/in-scope={funnel['after_dedup']} "
+          f"-> passed_quality={funnel['passed_quality']} -> tripped_signal={funnel['passed_signal']}")
 
     if not candidates:
         # Distinguish a genuine quiet day (all screens ran, nothing passed gates)
