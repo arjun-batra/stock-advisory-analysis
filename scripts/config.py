@@ -38,8 +38,8 @@ ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
 FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
 
 # --- Tunables (solution design 6.3) ------------------------------------------
-REMINDER_INTERVAL_DAYS = 7
-COOLDOWN_HOURS         = 24
+# REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule
+# model has no reminder and no cooldown, so neither constant has a consumer.
 MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 
 # Pace the AI loop under the free-tier RPM cap. Free Flash is ~10 RPM, and the
