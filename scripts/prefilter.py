@@ -90,14 +90,24 @@ def _market_for(exchange: str) -> str:
     return "TSX" if exchange == "Toronto" else "US"
 
 
-def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int]:
-    """Return (candidates, screens_attempted, screens_errored), candidates ranked.
+def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
+    """Return (candidates, screens_attempted, screens_errored, funnel), ranked.
 
     Each candidate: {ticker, market, signals, screen_pct}. `exclude` is the
     uppercased watchlist set — those never reach discovery (the hourly loop
     already covers them). The error count lets the caller tell a genuine quiet
     day (0 candidates, 0 errors) from a silent screener failure (0 candidates,
     N errors) — see run_discovery's heartbeat handling.
+
+    `funnel` (issue #8) records where the day's quotes dropped off so a
+    zero-candidate day is diagnosable instead of opaque:
+      raw            — total quotes returned across all screens (pre-dedup)
+      after_dedup    — unique symbols, minus watchlist exclusions
+      passed_quality — cleared the marketCap/price/volume/exchange gates
+      passed_signal  — also tripped >=1 signal (mover/volume/52w) == shortlist pool
+    "screened 180, 12 passed quality, 0 tripped a signal" points straight at the
+    signal thresholds; "180 raw, 0 passed quality" points at the quality gates.
+    Three consecutive zero-signal days is a tuning signal, not normal (SD 4.3).
     """
     raw: list[dict] = []
     attempted = 0
@@ -120,25 +130,36 @@ def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int]:
     raw += _collect("ca_losers", _ca_query("lt", config.DISCOVERY_LOSER_PCT),
                     sortField="percentchange", sortAsc=True, size=50)
 
+    funnel = {"raw": len(raw), "after_dedup": 0, "passed_quality": 0, "passed_signal": 0}
+
     seen: dict[str, dict] = {}
     for q in raw:
         sym = (q.get("symbol") or "").upper()
         if not sym or sym in exclude or sym in seen:
             continue
+        seen[sym] = q   # provisional; pruned below. Counted as a unique, in-scope symbol.
+
+    funnel["after_dedup"] = len(seen)
+
+    kept: dict[str, dict] = {}
+    for sym, q in seen.items():
         if not _passes_quality(q):
             continue
+        funnel["passed_quality"] += 1
         sig = _signals(q)
         if not sig:
             continue
-        seen[sym] = {
+        kept[sym] = {
             "ticker": sym,
             "market": _market_for(q.get("exchange") or ""),
             "signals": sig,
             "screen_pct": q.get("regularMarketChangePercent"),
         }
 
+    funnel["passed_signal"] = len(kept)
+
     # Rank: more signals first, then larger absolute move.
-    ranked = sorted(seen.values(),
+    ranked = sorted(kept.values(),
                     key=lambda c: (len(c["signals"]), abs(c.get("screen_pct") or 0)),
                     reverse=True)
-    return ranked[: config.DISCOVERY_SHORTLIST_MAX], attempted, errored
+    return ranked[: config.DISCOVERY_SHORTLIST_MAX], attempted, errored, funnel
