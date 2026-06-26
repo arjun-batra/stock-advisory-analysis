@@ -3,9 +3,9 @@
 Wakes up, checks the market is actually open (ET), ingests every watchlist
 ticker, then makes ONE batched AI call for the whole list (was one call per
 ticker — cut to stay well under the Gemini free-tier daily request cap), and
-walks the results through the change/cooldown/reminder logic. One bad ticker is
-skipped-with-log and never takes down the run for the others. Writes a heartbeat
-at the end so a missed run is visible (NFR2). Phase 2: no real pushes.
+walks the results through the single-rule change logic (design 6.3). One bad
+ticker is skipped-with-log and never takes down the run for the others. Writes a
+heartbeat at the end so a missed run is visible (NFR2).
 """
 
 from datetime import datetime, timezone
@@ -20,12 +20,25 @@ import notify
 
 def main() -> None:
     now_et = datetime.now(config.MARKET_TZ)
-    if not config.is_market_open(now_et) and not config.FORCE_RUN:
+    now = datetime.now(timezone.utc)
+    market_open = config.is_market_open(now_et)
+
+    # Gate-decision audit line (issue #7). Makes every run self-explaining in the
+    # Actions log: was this an in-hours run or a FORCE_RUN, what did the gate see,
+    # and are alerts live. A FORCE_RUN with ALERTS_ENABLED=true fires REAL ntfy
+    # pushes regardless of market hours — this line is the trail that tells a
+    # deliberate off-hours test push apart from a gate defect (the #7 confusion).
+    print(f"[gate] market_open={market_open} force_run={config.FORCE_RUN} "
+          f"alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'} "
+          f"| {now:%Y-%m-%d %H:%M:%S} UTC / {now_et:%H:%M:%S %Z}")
+
+    if not market_open and not config.FORCE_RUN:
         print(f"Market closed at {now_et:%Y-%m-%d %H:%M %Z} - no-op, exit. "
               f"(workflow_dispatch with force_run=true overrides)")
         return
-    if not config.is_market_open(now_et):
-        print("FORCE_RUN: market closed, running anyway against last close (test/backfill).")
+    if not market_open:
+        print("FORCE_RUN: market closed, running anyway against last close (test/backfill). "
+              "NOTE: with ALERTS_ENABLED=true this sends REAL pushes — set it false for a silent test.")
 
     config.require_secrets()
     sb = state.client()
@@ -33,7 +46,6 @@ def main() -> None:
 
     watchlist = state.get_watchlist(sb)
     holdings = state.get_holdings_map(sb)
-    now = datetime.now(timezone.utc)
     print(f"Hourly run: {len(watchlist)} tickers, alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'}")
 
     outcomes = {}
@@ -63,7 +75,7 @@ def main() -> None:
     # --- Phase 2: ONE batched AI call for all tickers ---
     verdicts = ai_judge.judge_batch([{"data": d, "position": p} for (_, d, p) in items])
 
-    # --- Phase 3: per-ticker change/cooldown/reminder + logging ---
+    # --- Phase 3: per-ticker single-rule change detection + logging ---
     for row, data, position in items:
         ticker = row["ticker"]
         try:
