@@ -129,7 +129,7 @@ def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
     log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                             label="new-candidate", alert_type=None, alerted=do_push, snapshot=snap)
     if do_push:
-        notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id)
+        notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id, market=data.get("market"))
         return "candidate-pushed"
     return "candidate-logged"
 
@@ -150,8 +150,8 @@ def build_position(holding: dict | None, data: dict) -> dict | None:
     }
 
 
-def _snapshot(data: dict, ai: dict) -> dict:
-    return {
+def _snapshot(data: dict, ai: dict, position: dict | None = None) -> dict:
+    snap = {
         "price": data.get("price"),
         "pct_change_1d": data.get("pct_change_1d"),
         "pct_change_5d": data.get("pct_change_5d"),
@@ -171,11 +171,17 @@ def _snapshot(data: dict, ai: dict) -> dict:
         "fallback_from": ai.get("fallback_from"),
         "discovery_signals": data.get("discovery_signals"),
     }
+    # Held-position context (FR2/FR11) so the detail page can render the
+    # "Your position" block. Omitted entirely for watch-only tickers (position
+    # is None) — no empty block. Current price is read from snap.price.
+    if position:
+        snap["position"] = position
+    return snap
 
 
 # --- the state machine (design 6.3) ------------------------------------------
 
-def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
+def process_ticker(sb, notifier, wl_row, data, ai, now: datetime, position: dict | None = None) -> str:
     """Run one watchlist ticker through the single-rule change logic (design 6.3).
 
     SINGLE RULE (issue #11): any verdict change -> immediate alert; no change ->
@@ -192,7 +198,7 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
     ticker = wl_row["ticker"]
     verdict = ai["verdict"]
     rationale = ai["rationale"]
-    snap = _snapshot(data, ai)
+    snap = _snapshot(data, ai, position)
 
     state = get_verdict_state(sb, ticker)
 
@@ -229,7 +235,7 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime) -> str:
     # ---- change -> immediate alert, no cooldown ----
     log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                             label="watchlist", alert_type="change", alerted=True, snapshot=snap)
-    notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id)
+    notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id, market=wl_row.get("market"))
     _update_state(sb, ticker, {
         "current_verdict": verdict,
         "last_checked_at": now.isoformat(),

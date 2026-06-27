@@ -84,7 +84,7 @@ def main() -> None:
                 "rationale": "No verdict returned for this ticker; fail-safe Hold.",
                 "raw_model_response": "", "parse_status": "failed",
             }
-            result = state.process_ticker(sb, notifier, row, data, ai, now)
+            result = state.process_ticker(sb, notifier, row, data, ai, now, position)
             tag = "NEW" if data["is_new"] else ""
             print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
                   f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {tag}")
