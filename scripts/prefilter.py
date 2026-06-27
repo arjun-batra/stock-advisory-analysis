@@ -2,8 +2,8 @@
 
 Pulls the day's gainers / losers / most-active (US predefined screens + a custom
 region=ca query for Canada), applies quality gates, tags each survivor with the
-signal(s) it tripped (mover / volume spike / 52-week extreme), excludes watchlist
-names up front, ranks, and returns a shortlist for the AI.
+signal(s) it tripped (mover / volume spike / earnings proximity / 52-week extreme),
+excludes watchlist names up front, ranks, and returns a shortlist for the AI.
 
 Screener shape was verified by scripts/phase4_screener_smoke.py: US gainers/
 losers/most-active and a custom region=ca query all return, with marketCap,
@@ -67,7 +67,7 @@ def _passes_quality(q: dict) -> bool:
 
 
 def _signals(q: dict) -> list[str]:
-    """Which discovery signals this quote trips (mover / volume / 52w-high|low)."""
+    """Which discovery signals this quote trips (mover / volume / earnings / 52w)."""
     sig = []
     chg = q.get("regularMarketChangePercent")
     if chg is not None and (chg >= config.DISCOVERY_GAINER_PCT or chg <= config.DISCOVERY_LOSER_PCT):
@@ -76,6 +76,15 @@ def _signals(q: dict) -> list[str]:
     avg = q.get("averageDailyVolume3Month") or 0
     if avg and (vol / avg) >= config.DISCOVERY_VOL_SPIKE:
         sig.append("volume")
+    # earnings proximity (FR4): the screener often carries an earnings timestamp
+    # (epoch seconds). Best-effort like the 52w fields — applied only if present.
+    # Tag when earnings are imminent (within the window) or just reported (<=2d ago),
+    # since a same-day earnings move is exactly what discovery wants to catch.
+    now = time.time()
+    ets = q.get("earningsTimestampStart") or q.get("earningsTimestamp")
+    if isinstance(ets, (int, float)) and ets:
+        if (now - 2 * 86400) <= ets <= (now + config.DISCOVERY_EARNINGS_DAYS * 86400):
+            sig.append("earnings")
     px = q.get("regularMarketPrice")
     hi = q.get("fiftyTwoWeekHigh")            # best-effort: not guaranteed present
     lo = q.get("fiftyTwoWeekLow")
@@ -104,7 +113,7 @@ def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
       raw            — total quotes returned across all screens (pre-dedup)
       after_dedup    — unique symbols, minus watchlist exclusions
       passed_quality — cleared the marketCap/price/volume/exchange gates
-      passed_signal  — also tripped >=1 signal (mover/volume/52w) == shortlist pool
+      passed_signal  — also tripped >=1 signal (mover/volume/earnings/52w) == shortlist pool
     "screened 180, 12 passed quality, 0 tripped a signal" points straight at the
     signal thresholds; "180 raw, 0 passed quality" points at the quality gates.
     Three consecutive zero-signal days is a tuning signal, not normal (SD 4.3).

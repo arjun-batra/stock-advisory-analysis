@@ -13,17 +13,6 @@ from google.genai import types
 
 import config
 
-SYSTEM_PROMPT = (
-    "You are a disciplined, unemotional equity analyst. You output ONLY a single "
-    "JSON object and nothing else - no markdown, no code fences, no prose before "
-    "or after. Default to \"Hold\" unless the data clearly supports action. You do "
-    "not assume any fixed investment style or time horizon; weigh each stock on "
-    "its own context.\n\n"
-    "Schema (all fields required):\n"
-    '{"verdict": "Buy" | "Sell" | "Hold", '
-    '"rationale": "<a clear, simple, plain-language reason for the verdict, one or two short sentences>"}'
-)
-
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
 RATIONALE_MAX = 280   # stored + shown in full on the detail page; the push is clipped separately
 _FAIL_SAFE_PARSE = {"verdict": "Hold",
@@ -86,24 +75,6 @@ def _ticker_block(data: dict, position: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _build_user_prompt(data: dict, position: dict | None) -> str:
-    return _ticker_block(data, position) + "\n\nGive your verdict as JSON per the schema."
-
-
-def _parse(raw: str) -> dict | None:
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    if obj.get("verdict") not in VALID_VERDICTS:
-        return None
-    if not obj.get("rationale"):
-        return None
-    return {"verdict": obj["verdict"], "rationale": _clip(obj["rationale"])}
-
-
 def _client():
     """Gemini client with an explicit, generous request timeout.
 
@@ -158,60 +129,6 @@ def _models_to_try(models: list[str] | None = None) -> list[str]:
     if config.GEMINI_MODEL_BACKUP and config.GEMINI_MODEL_BACKUP != config.GEMINI_MODEL:
         out.append(config.GEMINI_MODEL_BACKUP)
     return out
-
-
-def _try_models(client, prompt, cfg) -> tuple[str, bool, str, dict | None, str | None]:
-    """Try each model in order; one backoff-retry per model before falling
-    through to the next. Returns (raw, success, model_used, usage, fallback_from).
-    fallback_from records the real error(s) of any earlier model that failed, so
-    a fallback is traceable in the log and the snapshot instead of guessed at.
-    """
-    models = _models_to_try()
-    raw, model, usage, notes = "", models[0], None, []
-    for i, model in enumerate(models):
-        raw, api_err, err, usage = _generate(client, model, prompt, cfg)
-        if api_err:
-            time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-            raw, api_err, err, usage = _generate(client, model, prompt, cfg)
-        if not api_err:
-            return raw, True, model, usage, ("; ".join(notes) or None)
-        notes.append(f"{model}: {err}")
-        nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
-        print(f"  [ai_judge] {model} failed after retry ({err}){nxt}")
-    return raw, False, model, None, ("; ".join(notes) or None)
-
-
-def judge(data: dict, position: dict | None = None) -> dict:
-    """Return {verdict, rationale, raw_model_response, parse_status, model_used,
-    usage, fallback_from}."""
-    client = _client()
-    user = _build_user_prompt(data, position)
-    cfg = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        response_mime_type="application/json",
-        temperature=0.2,
-    )
-
-    raw, ok, model, usage, fb = _try_models(client, user, cfg)
-    if not ok:
-        return {**_FAIL_SAFE_API, "raw_model_response": raw, "parse_status": "api_error",
-                "model_used": model, "usage": None, "fallback_from": fb}
-
-    parsed = _parse(raw)
-    if parsed:
-        return {**parsed, "raw_model_response": raw, "parse_status": "ok",
-                "model_used": model, "usage": usage, "fallback_from": fb}
-
-    # Got a reply, but it wasn't valid JSON -> one correction retry on the same model.
-    retry = user + "\n\nYour last reply was not valid JSON. Reply with ONLY the JSON object."
-    raw2, _, _, usage2 = _generate(client, model, retry, cfg)
-    parsed = _parse(raw2)
-    if parsed:
-        return {**parsed, "raw_model_response": raw2, "parse_status": "retried",
-                "model_used": model, "usage": usage2 or usage, "fallback_from": fb}
-
-    return {**_FAIL_SAFE_PARSE, "raw_model_response": f"{raw} || retry: {raw2}",
-            "parse_status": "failed", "model_used": model, "usage": None, "fallback_from": fb}
 
 
 def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:

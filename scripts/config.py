@@ -42,10 +42,6 @@ FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
 # model has no reminder and no cooldown, so neither constant has a consumer.
 MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 
-# Pace the AI loop under the free-tier RPM cap. Free Flash is ~10 RPM, and the
-# first live run hit 429s on the last ~5 tickers at 7s spacing, so 12s (~5/min)
-# keeps a safe margin. 15 tickers x 12s ~= 3 min/run.
-GEMINI_PACING_SECONDS = float(os.environ.get("GEMINI_PACING_SECONDS", "12"))
 # On a 429/API error, wait this long before a single retry (rate-limit recovery).
 GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", "20"))
 # Per-request timeout for the Gemini call, in MILLISECONDS. Set high on purpose:
@@ -83,6 +79,9 @@ DISCOVERY_LOSER_PCT  = float(os.environ.get("DISCOVERY_LOSER_PCT", "-5"))
 DISCOVERY_VOL_SPIKE = float(os.environ.get("DISCOVERY_VOL_SPIKE", "2.0"))
 # 52-week-extreme signal: price within this fraction of the 52w high/low.
 DISCOVERY_52W_PROXIMITY = float(os.environ.get("DISCOVERY_52W_PROXIMITY", "0.02"))
+# Earnings-proximity signal (FR4): flag a name whose next earnings date is within
+# this many days (best-effort, from the screener's earnings timestamp when present).
+DISCOVERY_EARNINGS_DAYS = int(os.environ.get("DISCOVERY_EARNINGS_DAYS", "7"))
 # Max candidates sent to the AI in the single daily batched call.
 DISCOVERY_SHORTLIST_MAX = int(os.environ.get("DISCOVERY_SHORTLIST_MAX", "15"))
 # Per-candidate push cooldown: a name flagged within this many days is logged
