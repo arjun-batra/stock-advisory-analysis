@@ -7,6 +7,11 @@ name: Daily discovery
 
 on:
   workflow_dispatch:            # fired by Supabase pg_cron (and manual test runs)
+    inputs:
+      alerts_enabled:
+        description: "Send real candidate pushes? Set false for a safe dry run"
+        type: boolean
+        default: true
 
 concurrency:
   group: daily-discovery
@@ -38,7 +43,13 @@ jobs:
           # Variables); falls back to these if unset.
           DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
           DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
-          ALERTS_ENABLED: "true"
+          # Live alerting by default. A manual workflow_dispatch can set
+          # alerts_enabled=false for a safe dry run (DryRunNotifier logs the
+          # would-be candidate push instead of sending it). Scheduled pg_cron
+          # dispatches send NO inputs, so the default (true) applies and live
+          # alerting is unchanged. No `|| 'true'` fallback: `false || 'true'`
+          # is truthy in GitHub expressions and would defeat the toggle.
+          ALERTS_ENABLED: ${{ inputs.alerts_enabled }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_discovery.py
