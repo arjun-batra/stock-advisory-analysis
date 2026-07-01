@@ -12,6 +12,7 @@ last close). Writes its own run_heartbeat row ("daily-discovery"). Phase 2-style
 dry run until ALERTS_ENABLED is flipped on.
 """
 
+from collections import Counter
 import os
 import time
 
@@ -59,7 +60,7 @@ def main() -> None:
         return
 
     recently = state.recently_pushed_candidates(sb, config.DISCOVERY_PUSH_COOLDOWN_DAYS)
-    outcomes = {}
+    outcomes = Counter()
 
     # --- ingest the shortlist (full per-ticker data, paced like the hourly loop) ---
     items = []   # list of (candidate, data)
@@ -71,13 +72,13 @@ def main() -> None:
             if not data["has_price"]:
                 reason = "rate-limited" if data.get("rate_limited") else "no data"
                 print(f"  skip {c['ticker']} ({reason})")
-                outcomes["skip"] = outcomes.get("skip", 0) + 1
+                outcomes["skip"] += 1
                 continue
             data["discovery_signals"] = c["signals"]   # carried into the stored snapshot
             items.append((c, data))
         except Exception as e:
             print(f"  ERROR {c['ticker']} (ingest): {type(e).__name__}: {e}")
-            outcomes["error"] = outcomes.get("error", 0) + 1
+            outcomes["error"] += 1
 
     # --- ONE batched AI call, on discovery's own models ---
     verdicts = ai_judge.judge_batch(
@@ -94,12 +95,12 @@ def main() -> None:
             result = state.process_candidate(sb, notifier, data, ai, push=push)
             print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
                   f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
-            outcomes[result] = outcomes.get(result, 0) + 1
+            outcomes[result] += 1
         except Exception as e:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
-            outcomes["error"] = outcomes.get("error", 0) + 1
+            outcomes["error"] += 1
 
-    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0) + screens_errored
+    degraded = outcomes["skip"] + outcomes["error"] + screens_errored
     status = "partial" if degraded else "ok"
     state.write_heartbeat(sb, "daily-discovery", status)
     print(f"Done [{status}]. {dict(outcomes)}"
