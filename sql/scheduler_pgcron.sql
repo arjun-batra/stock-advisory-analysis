@@ -109,9 +109,10 @@ select cron.schedule(
 -- is a parallel gate mirroring dispatch_watchlist_if_open().
 
 -- NSE watchlist dispatch gate: mirrors the ET gate but on the IST session
--- (09:15-15:30 IST). DRY-RUN — passes alerts_enabled=false so NSE runs process +
--- log but send no real pushes. GO-LIVE: drop the inputs (default true) once the
--- NSE ntfy topic is provisioned. The Python per-market gate re-checks is_nse_open.
+-- (09:15-15:30 IST). LIVE — dispatches with no inputs so alerts_enabled defaults to
+-- true (NSE alerts route to NSE_NTFY_TOPIC, notify.py D8). The Python per-market
+-- gate re-checks is_nse_open. (Was dry-run alerts_enabled=false pre-go-live;
+-- flipped in migration phase6_nse_go_live once the NSE topic was provisioned.)
 create or replace function public.dispatch_watchlist_nse_if_open()
 returns void
 language plpgsql security definer set search_path = '' as $$
@@ -124,10 +125,7 @@ begin
     return;
   end if;
   if t >= time '09:15' and t <= time '15:30' then
-    perform public.dispatch_github_workflow(
-      'hourly-watchlist.yml',
-      jsonb_build_object('alerts_enabled', 'false')   -- DRY-RUN; drop for go-live
-    );
+    perform public.dispatch_github_workflow('hourly-watchlist.yml');
   end if;
 end; $$;
 
@@ -139,9 +137,10 @@ select cron.schedule('nse-watchlist-dispatch', '*/30 3-10 * * 1-5',
   $cron$ select public.dispatch_watchlist_nse_if_open(); $cron$);
 
 -- NSE discovery cron: 10:00 UTC (15:30 IST / NSE close) — NOT the 22:00 UTC US run
--- (which would screen stale pre-open India data). region=in + DRY-RUN alerts off.
+-- (which would screen stale pre-open India data). region=in, LIVE (alerts default
+-- true; flipped from dry-run in migration phase6_nse_go_live).
 select cron.schedule('discovery-dispatch-nse', '0 10 * * 1-5',
-  $cron$ select public.dispatch_github_workflow('daily-discovery.yml', '{"region":"in","alerts_enabled":"false"}'::jsonb); $cron$);
+  $cron$ select public.dispatch_github_workflow('daily-discovery.yml', '{"region":"in"}'::jsonb); $cron$);
 
 -- Dashboard prices (issue #18 fallback): refresh the same-origin prices.json on the
 -- market cadence across both sessions. The workflow commits only when prices moved.
@@ -153,7 +152,7 @@ select cron.schedule('publish-prices', '*/30 3-10,13-21 * * 1-5',
 --   watchlist-dispatch      */30 13-21 * * 1-5   -> dispatch_watchlist_if_open()        [US/TSX, live]
 --   discovery-dispatch      0 22 * * 1-5         -> dispatch_github_workflow(daily-discovery.yml)  [US, live]
 --   health-monitor          20,50 4-10,14-23 * * 1-5 -> check_pipeline_health()         [both sessions]
---   nse-watchlist-dispatch  */30 3-10 * * 1-5    -> dispatch_watchlist_nse_if_open()    [NSE, DRY-RUN]
---   discovery-dispatch-nse  0 10 * * 1-5         -> daily-discovery.yml region=in       [NSE, DRY-RUN]
+--   nse-watchlist-dispatch  */30 3-10 * * 1-5    -> dispatch_watchlist_nse_if_open()    [NSE, LIVE]
+--   discovery-dispatch-nse  0 10 * * 1-5         -> daily-discovery.yml region=in       [NSE, LIVE]
 --   publish-prices          */30 3-10,13-21 * * 1-5 -> publish-prices.yml               [prices.json]
 -- =====================================================================
