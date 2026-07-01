@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import config
+from textutil import clip
 
 NOTIF_BODY_MAX = 150   # keep the push preview tidy; the full reason is on the detail page
 
@@ -35,16 +36,6 @@ def _market_timestamp(market: str | None) -> str:
     return now.strftime("%-I:%M %p ") + label
 
 
-def _clip_body(text: str, limit: int = NOTIF_BODY_MAX) -> str:
-    text = " ".join(str(text).split())
-    if len(text) <= limit:
-        return text
-    cut = text[: limit - 1]
-    if " " in cut:
-        cut = cut.rsplit(" ", 1)[0]
-    return cut.rstrip(" ,.;:-") + "\u2026"
-
-
 def _title(ticker: str, verdict: str, kind: str) -> str:
     if kind == "change":
         return f"{ticker} - Changed to {verdict}"
@@ -54,7 +45,7 @@ def _title(ticker: str, verdict: str, kind: str) -> str:
 def _compose_body(rationale: str, market: str | None) -> str:
     """Body = market-matched timestamp (FR23) + the rationale, clipped to fit."""
     prefix = f"{_market_timestamp(market)} \u00b7 "
-    return prefix + _clip_body(rationale, NOTIF_BODY_MAX - len(prefix))
+    return prefix + clip(rationale, NOTIF_BODY_MAX - len(prefix))
 
 
 def _topic_for(market: str | None, default_topic: str, nse_topic: str) -> str:
