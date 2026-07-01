@@ -101,8 +101,59 @@ select cron.schedule(
 --   ('20,50 14-23 * * 1-5' -> public.check_pipeline_health()). Not duplicated here.
 
 -- =====================================================================
--- Live cron inventory at extraction time (for reference):
---   jobid 1  watchlist-dispatch  */30 13-21 * * 1-5  -> dispatch_watchlist_if_open()
---   jobid 2  discovery-dispatch  0 22 * * 1-5        -> dispatch_github_workflow('daily-discovery.yml')
---   jobid 3  health-monitor      20,50 14-23 * * 1-5 -> check_pipeline_health()
+-- Phase 6 — India NSE activation (dry-run): dispatch + crons
+-- =====================================================================
+-- Applied via Supabase migrations phase6_nse_watchlist_dispatch_dryrun and
+-- phase6_nse_discovery_and_prices_crons; mirrored here for reproducibility.
+-- Sessions never overlap (fixed IST offset vs DST-aware ET), so the NSE dispatch
+-- is a parallel gate mirroring dispatch_watchlist_if_open().
+
+-- NSE watchlist dispatch gate: mirrors the ET gate but on the IST session
+-- (09:15-15:30 IST). DRY-RUN — passes alerts_enabled=false so NSE runs process +
+-- log but send no real pushes. GO-LIVE: drop the inputs (default true) once the
+-- NSE ntfy topic is provisioned. The Python per-market gate re-checks is_nse_open.
+create or replace function public.dispatch_watchlist_nse_if_open()
+returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  ist_now timestamp := (now() at time zone 'Asia/Kolkata');
+  dow int := extract(isodow from ist_now);
+  t   time := ist_now::time;
+begin
+  if dow > 5 then
+    return;
+  end if;
+  if t >= time '09:15' and t <= time '15:30' then
+    perform public.dispatch_github_workflow(
+      'hourly-watchlist.yml',
+      jsonb_build_object('alerts_enabled', 'false')   -- DRY-RUN; drop for go-live
+    );
+  end if;
+end; $$;
+
+revoke execute on function public.dispatch_watchlist_nse_if_open() from public, anon, authenticated;
+
+-- NSE watchlist cron: every 30 min over 03:00-10:59 UTC (brackets the 03:45-10:00
+-- UTC IST session); the gate trims it to the live session.
+select cron.schedule('nse-watchlist-dispatch', '*/30 3-10 * * 1-5',
+  $cron$ select public.dispatch_watchlist_nse_if_open(); $cron$);
+
+-- NSE discovery cron: 10:00 UTC (15:30 IST / NSE close) — NOT the 22:00 UTC US run
+-- (which would screen stale pre-open India data). region=in + DRY-RUN alerts off.
+select cron.schedule('discovery-dispatch-nse', '0 10 * * 1-5',
+  $cron$ select public.dispatch_github_workflow('daily-discovery.yml', '{"region":"in","alerts_enabled":"false"}'::jsonb); $cron$);
+
+-- Dashboard prices (issue #18 fallback): refresh the same-origin prices.json on the
+-- market cadence across both sessions. The workflow commits only when prices moved.
+select cron.schedule('publish-prices', '*/30 3-10,13-21 * * 1-5',
+  $cron$ select public.dispatch_github_workflow('publish-prices.yml'); $cron$);
+
+-- =====================================================================
+-- Live cron inventory (post Phase-6 activation):
+--   watchlist-dispatch      */30 13-21 * * 1-5   -> dispatch_watchlist_if_open()        [US/TSX, live]
+--   discovery-dispatch      0 22 * * 1-5         -> dispatch_github_workflow(daily-discovery.yml)  [US, live]
+--   health-monitor          20,50 4-10,14-23 * * 1-5 -> check_pipeline_health()         [both sessions]
+--   nse-watchlist-dispatch  */30 3-10 * * 1-5    -> dispatch_watchlist_nse_if_open()    [NSE, DRY-RUN]
+--   discovery-dispatch-nse  0 10 * * 1-5         -> daily-discovery.yml region=in       [NSE, DRY-RUN]
+--   publish-prices          */30 3-10,13-21 * * 1-5 -> publish-prices.yml               [prices.json]
 -- =====================================================================
