@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-07-01T18:31:34.066808+00:00",
+  "generated_at": "2026-07-01T19:01:34.982490+00:00",
   "prices": {
     "AAPL": {
-      "chg": 1.9,
+      "chg": 1.91,
       "currency": "USD",
       "market": "US",
-      "price": 294.86
+      "price": 294.88
     },
     "AMZN": {
-      "chg": 2.45,
+      "chg": 2.35,
       "currency": "USD",
       "market": "US",
-      "price": 244.1899
+      "price": 243.94
     },
     "BB": {
-      "chg": 3.75,
+      "chg": 3.28,
       "currency": "USD",
       "market": "US",
-      "price": 13.125
+      "price": 13.065
     },
     "BHARTIARTL.NS": {
       "chg": 0.59,
@@ -32,10 +32,10 @@
       "price": 123.27
     },
     "COST": {
-      "chg": -1.31,
+      "chg": -0.85,
       "currency": "USD",
       "market": "US",
-      "price": 923.245
+      "price": 927.52
     },
     "DOL.TO": {
       "chg": -1.88,
@@ -44,10 +44,10 @@
       "price": 187.62
     },
     "GOOG": {
-      "chg": 0.98,
+      "chg": 1.04,
       "currency": "USD",
       "market": "US",
-      "price": 356.81
+      "price": 356.995
     },
     "HDFCBANK.NS": {
       "chg": -0.12,
@@ -92,16 +92,16 @@
       "price": 4143.3999
     },
     "NFLX": {
-      "chg": 3.87,
+      "chg": 3.98,
       "currency": "USD",
       "market": "US",
-      "price": 74.165
+      "price": 74.245
     },
     "NVDA": {
-      "chg": -1.0,
+      "chg": -0.79,
       "currency": "USD",
       "market": "US",
-      "price": 198.08
+      "price": 198.51
     },
     "RELIANCE.NS": {
       "chg": -0.55,
@@ -128,10 +128,10 @@
       "price": 162.26
     },
     "SPCX": {
-      "chg": -7.11,
+      "chg": -7.54,
       "currency": "USD",
       "market": "US",
-      "price": 158.72
+      "price": 157.98
     },
     "TCS.NS": {
       "chg": -3.17,
@@ -146,10 +146,10 @@
       "price": 172.44
     },
     "TSLA": {
-      "chg": 0.93,
+      "chg": 1.33,
       "currency": "USD",
       "market": "US",
-      "price": 424.5283
+      "price": 426.205
     }
   }
 }
