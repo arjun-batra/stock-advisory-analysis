@@ -20,6 +20,19 @@ _FAIL_SAFE_PARSE = {"verdict": "Hold",
 _FAIL_SAFE_API = {"verdict": "Hold",
                   "rationale": "The AI service didn't return a usable response; showing a fail-safe Hold."}
 
+
+def missing_verdict(noun: str = "ticker") -> dict:
+    """Fail-safe result for a name the judge_batch return simply doesn't cover
+    (defensive — the parser fail-safes every requested ticker, so this only
+    fires if the result dict and the caller's item list ever disagree). Same
+    fail-safe-to-Hold posture as _FAIL_SAFE_PARSE: parse_status='failed' means
+    it never alerts and never advances verdict_state."""
+    return {
+        "verdict": "Hold",
+        "rationale": f"No verdict returned for this {noun}; fail-safe Hold.",
+        "raw_model_response": "", "parse_status": "failed",
+    }
+
 BATCH_SYSTEM_PROMPT = (
     "You are a disciplined, unemotional equity analyst. You are given several "
     "stocks at once. For EACH stock, decide Buy / Sell / Hold and give a clear, "

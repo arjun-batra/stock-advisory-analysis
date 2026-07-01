@@ -85,11 +85,7 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
     for row, data, position in items:
         ticker = row["ticker"]
         try:
-            ai = verdicts.get(ticker) or {
-                "verdict": "Hold",
-                "rationale": "No verdict returned for this ticker; fail-safe Hold.",
-                "raw_model_response": "", "parse_status": "failed",
-            }
+            ai = verdicts.get(ticker) or ai_judge.missing_verdict("ticker")
             result = state.process_ticker(sb, notifier, row, data, ai, now, position)
             tag = "NEW" if data["is_new"] else ""
             print(f"  {ticker:9} {ai['verdict']:4} -> {result} "

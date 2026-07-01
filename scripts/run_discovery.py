@@ -89,11 +89,7 @@ def main() -> None:
     for c, data in items:
         ticker = c["ticker"]
         try:
-            ai = verdicts.get(ticker) or {
-                "verdict": "Hold",
-                "rationale": "No verdict returned for this candidate; fail-safe Hold.",
-                "raw_model_response": "", "parse_status": "failed",
-            }
+            ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
             push = ticker not in recently
             result = state.process_candidate(sb, notifier, data, ai, push=push)
             print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
