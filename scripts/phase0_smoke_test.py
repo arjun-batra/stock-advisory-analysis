@@ -120,8 +120,9 @@ def check_price_volume(tk: "yf.Ticker") -> dict:
 
 
 def check_fundamentals(tk: "yf.Ticker") -> dict:
-    """P/E, market cap, 52-week range. fast_info first (reliable), .info fallback."""
-    out = {"pe": None, "market_cap": None, "range_52w": None, "currency": None, "notes": []}
+    """P/E, market cap, 52-week range, exchange. fast_info first (reliable), .info fallback."""
+    out = {"pe": None, "market_cap": None, "range_52w": None, "currency": None,
+           "exchange": None, "notes": []}
 
     fi = {}
     try:
@@ -141,6 +142,9 @@ def check_fundamentals(tk: "yf.Ticker") -> dict:
     out["currency"] = _get(fi, "currency") or _get(info, "currency")
     out["market_cap"] = _get(fi, "market_cap", "marketCap") or _get(info, "marketCap")
     out["pe"] = _get(info, "trailingPE", "forwardPE")  # P/E only lives in .info
+    # Phase-0 NSE gate (SD §12): confirm the exact `exchange` string yfinance
+    # returns for .NS tickers (expected "NSI") -- verify, don't assume.
+    out["exchange"] = _get(fi, "exchange") or _get(info, "exchange", "fullExchangeName")
 
     hi = _get(fi, "year_high", "yearHigh") or _get(info, "fiftyTwoWeekHigh")
     lo = _get(fi, "year_low", "yearLow") or _get(info, "fiftyTwoWeekLow")
@@ -187,7 +191,8 @@ def run(tickers):
           f"{datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
     rows = []
     for i, sym in enumerate(tickers):
-        is_tsx = sym.upper().endswith(".TO")
+        su = sym.upper()
+        market = "TSX" if su.endswith(".TO") else ("NSE" if su.endswith(".NS") else "US")
         try:
             tk = yf.Ticker(sym)
             pv = check_price_volume(tk)
@@ -200,22 +205,24 @@ def run(tickers):
         missing = [k for k, val in (("P/E", fund.get("pe")),
                                     ("mcap", fund.get("market_cap")),
                                     ("52w", fund.get("range_52w"))) if val is None]
-        line = f"[{v:7}] {sym:10} ({'TSX' if is_tsx else 'US'})"
+        line = f"[{v:7}] {sym:10} ({market})"
         if pv.get("has_price"):
             line += (f"  close={pv['last_close']} {fund.get('currency') or '?'}"
                      f"  1d={pv.get('pct_1d')}%  5d={pv.get('pct_5d')}%"
                      f"  20d={pv.get('pct_20d')}%  vol/avg={pv.get('vol_vs_avg')}x"
-                     f"  news={news['count']}")
+                     f"  news={news['count']}  exchange={fund.get('exchange') or '?'}")
         if missing:
             line += f"  MISSING: {', '.join(missing)}"
+        if market == "NSE" and fund.get("exchange") not in (None, "NSI"):
+            line += f"  ⚠ exchange={fund.get('exchange')!r} (expected 'NSI')"
         for note in pv.get("notes", []):
             line += f"\n            ! {note}"
         print(line)
 
         rows.append({
-            "ticker": sym, "market": "TSX" if is_tsx else "US", "verdict": v,
+            "ticker": sym, "market": market, "verdict": v,
             "rows": pv.get("rows"), "last_close": pv.get("last_close"),
-            "currency": fund.get("currency"),
+            "currency": fund.get("currency"), "exchange": fund.get("exchange"),
             "pct_1d": pv.get("pct_1d"), "pct_5d": pv.get("pct_5d"),
             "pct_20d": pv.get("pct_20d"), "vol_vs_avg": pv.get("vol_vs_avg"),
             "pe": fund.get("pe"), "market_cap": fund.get("market_cap"),
@@ -233,11 +240,11 @@ def write_report(rows):
     df.to_csv("phase0_results.csv", index=False)
     with open("phase0_results.md", "w") as f:
         f.write(f"# Phase 0 results — {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
-        f.write("| Ticker | Mkt | Verdict | Close | Cur | 1d% | 5d% | 20d% | Vol/avg | P/E | MktCap | 52w | News | Missing |\n")
-        f.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+        f.write("| Ticker | Mkt | Verdict | Close | Cur | Exchange | 1d% | 5d% | 20d% | Vol/avg | P/E | MktCap | 52w | News | Missing |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for r in rows:
             f.write(f"| {r['ticker']} | {r['market']} | {r['verdict']} | "
-                    f"{r['last_close']} | {r['currency'] or '—'} | {r['pct_1d']} | "
+                    f"{r['last_close']} | {r['currency'] or '—'} | {r.get('exchange') or '—'} | {r['pct_1d']} | "
                     f"{r['pct_5d']} | {r['pct_20d']} | {r['vol_vs_avg']} | "
                     f"{r['pe'] or '—'} | {r['market_cap'] or '—'} | "
                     f"{'✓' if r['range_52w'] else '—'} | {r['news']} | {r['missing'] or '—'} |\n")
@@ -272,6 +279,16 @@ def summarize(rows):
             print(f"\n  Note: {len(tsx_partial)}/{len([r for r in rows if r['market']=='TSX'])} "
                   f"TSX tickers have fundamentals gaps — the known risk in Section 2. "
                   f"Confirm the missing fields aren't ones the AI prompt leans on.")
+    nse_rows = [r for r in rows if r["market"] == "NSE"]
+    if nse_rows:
+        bad_exchange = [r for r in nse_rows if r.get("exchange") not in (None, "NSI")]
+        print(f"\n  NSE exchange-string check (Phase-6 gate, SD §12): {len(nse_rows)} NSE tickers.")
+        if bad_exchange:
+            print("    ⚠ Unexpected exchange string — SD §12 assumed 'NSI', verify before Phase 6:")
+            for r in bad_exchange:
+                print(f"      - {r['ticker']}: exchange={r.get('exchange')!r}")
+        else:
+            print("    All NSE tickers report exchange='NSI' as SD §12 expected.")
     if not fails:
         print("\n  Exit criteria MET: every ticker returns usable data from the source "
               "(NEW = needs time, PARTIAL = em-dash handled). Phase 0 passes.")
