@@ -97,6 +97,7 @@ declare
   dow int  := extract(isodow from p_now);          -- 1=Mon .. 7=Sun
   t   time := (p_now at time zone 'UTC')::time;
   et  time := (p_now at time zone 'America/New_York')::time;  -- #9/#12: ET-based watchlist window
+  ist time := (p_now at time zone 'Asia/Kolkata')::time;      -- Phase 6 D4: NSE/IST watchlist window
   wl_last timestamptz; wl_status text;
   disc_last timestamptz; disc_status text;
   mins numeric;
@@ -121,6 +122,34 @@ begin
       perform public._raise_monitor(
         'watchlist', 'stale', '⚠️ Watchlist stalled',
         format('No hourly-watchlist run since %s (%s min ago). The pg_cron dispatch, PAT, or workflow may be down.',
+               coalesce(to_char(wl_last,'Mon DD HH24:MI UTC'),'never'),
+               coalesce(round(mins)::text,'?')),
+        5, interval '6 hours');
+    elsif wl_status is not null and wl_status <> 'ok' then
+      perform public._raise_monitor(
+        'watchlist', 'degraded', '⚠️ Watchlist degraded',
+        format('Latest hourly-watchlist run status = %s (%s). Some tickers skipped/errored.',
+               wl_status, to_char(wl_last,'Mon DD HH24:MI UTC')),
+        3, interval '12 hours');
+    else
+      perform public._clear_monitor('watchlist', '✅ Watchlist recovered',
+        format('hourly-watchlist running cleanly again (last run %s).',
+               to_char(wl_last,'Mon DD HH24:MI UTC')));
+    end if;
+
+  -- ===== NSE WATCHLIST: same checks during the IST session (10:00-15:30 IST) =====
+  -- Phase 6 D4. ET and IST sessions never overlap, so this shares the 'watchlist'
+  -- monitor key + the hourly-watchlist heartbeat; only one window is active at a
+  -- time. IST 10:00 = grace after the 09:15 open; 15:30 = close (fixed offset).
+  elsif ist >= time '10:00' and ist <= time '15:30' then
+    select last_run_at, status into wl_last, wl_status
+      from public.run_heartbeat where workflow_name = 'hourly-watchlist';
+
+    if wl_last is null or p_now - wl_last > interval '70 minutes' then
+      mins := extract(epoch from (p_now - coalesce(wl_last, p_now)))/60;
+      perform public._raise_monitor(
+        'watchlist', 'stale', '⚠️ Watchlist stalled',
+        format('No hourly-watchlist run since %s (%s min ago) during the NSE session. The pg_cron dispatch, PAT, or workflow may be down.',
                coalesce(to_char(wl_last,'Mon DD HH24:MI UTC'),'never'),
                coalesce(round(mins)::text,'?')),
         5, interval '6 hours');
@@ -199,7 +228,9 @@ select cron.alter_job(
   command => 'select public.dispatch_watchlist_if_open();'
 );
 
--- --- schedule: :20 and :50 past the hour, 14-23 UTC, weekdays ---------
--- Covers the watchlist session window and the post-22:00 discovery check.
-select cron.schedule('health-monitor', '20,50 14-23 * * 1-5',
+-- --- schedule: :20 and :50 past the hour, weekdays -------------------
+-- Covers BOTH sessions' watchlist windows (IST 04-10 UTC + ET 14-23 UTC) and the
+-- post-22:00 discovery check. Phase 6 D4 widened this from '14-23' to add '4-10'
+-- so the IST watchlist window in check_pipeline_health actually gets evaluated.
+select cron.schedule('health-monitor', '20,50 4-10,14-23 * * 1-5',
   $cron$ select public.check_pipeline_health(); $cron$);
