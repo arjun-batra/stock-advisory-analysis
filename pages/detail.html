@@ -85,6 +85,11 @@
   // Q10: render a currency symbol ($ / CA$ / ₹) from the currency code, not "USD".
   const CUR = {USD:"$", CAD:"CA$", INR:"₹"};
   const curSym = c => CUR[c] || (c ? c + " " : "");
+  // UI-handoff v3: the price currency symbol is derived from the MARKET
+  // ($ US / CA$ TSX / ₹ NSE), not the ticker suffix and not a possibly-missing
+  // fundamentals currency code (no FX). Map market -> currency code and reuse
+  // curSym; fall back to the snapshot's own currency for legacy rows with no market.
+  const MKT_CUR_CODE = {US:"USD", TSX:"CAD", NSE:"INR"};
   const money = (v, c) => (typeof v === "number" || (typeof v === "string" && v !== ""))
     ? curSym(c) + v : "—";
 
@@ -115,6 +120,9 @@
   function render(row){
     const snap = row.data_snapshot || {};
     const f = snap.fundamentals || {};
+    // Market-anchored price currency (UI-handoff v3): market first, snapshot
+    // currency as a fallback only when the row predates the market field.
+    const marketCur = MKT_CUR_CODE[snap.market] || f.currency;
     const v = VERDICT[row.verdict] || VERDICT.Hold;
     const pill = pillFor(row);
     const ts = fmtTs(row.timestamp);
@@ -127,8 +135,10 @@
 
     // Issue #13: discovery rows have no watchlist row, so there's no authoritative
     // market to badge — suppress it entirely rather than guess from ticker suffix.
+    const suffixMkt = String(row.ticker).endsWith(".NS") ? "NSE"
+                    : String(row.ticker).endsWith(".TO") ? "TSX" : "US";
     const mktBadge = row.label === "new-candidate" ? "" :
-      `<span class="mkt">${esc(snap.market || (String(row.ticker).endsWith(".TO") ? "TSX" : "US"))}</span>`;
+      `<span class="mkt">${esc(snap.market || suffixMkt)}</span>`;
 
     // Q3 (FR2/FR11): held-position block. Omitted entirely for watch-only
     // tickers (snap.position absent) — no empty block, no placeholder.
@@ -158,7 +168,7 @@
         ${posBlock}
         <p class="section-label">Price &amp; volume</p>
         <div class="grid2">
-          <div class="stat-card"><p class="stat-label">Last close</p><p class="stat-value">${money(snap.price, f.currency)}</p></div>
+          <div class="stat-card"><p class="stat-label">Last close</p><p class="stat-value">${money(snap.price, marketCur)}</p></div>
           <div class="stat-card"><p class="stat-label">1d change</p><p class="stat-value">${pct(snap.pct_change_1d)}</p></div>
           <div class="stat-card"><p class="stat-label">5d change</p><p class="stat-value">${pct(snap.pct_change_5d)}</p></div>
           <div class="stat-card"><p class="stat-label">20d change</p><p class="stat-value">${pct(snap.pct_change_20d)}</p></div>
