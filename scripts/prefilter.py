@@ -116,7 +116,10 @@ def _signals(q: dict) -> list[str]:
     return sig
 
 
-def _market_for(exchange: str) -> str:
+def _market_from_exchange(exchange: str) -> str:
+    """Map a screener exchange code to its market label. (Distinct from
+    ingest._market_for, which maps a ticker SUFFIX — the screener path has the
+    exchange field in hand, the ingest path only has the symbol.)"""
     return {"Toronto": "TSX", "NSI": "NSE"}.get(exchange, "US")
 
 
@@ -205,7 +208,7 @@ def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], 
             continue
         kept[sym] = {
             "ticker": sym,
-            "market": _market_for(q.get("exchange") or ""),
+            "market": _market_from_exchange(q.get("exchange") or ""),
             "signals": sig,
             "screen_pct": q.get("regularMarketChangePercent"),
         }
