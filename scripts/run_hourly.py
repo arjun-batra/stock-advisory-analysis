@@ -20,6 +20,7 @@ shared "hourly-watchlist" heartbeat is written at the end so a missed run is
 visible (NFR2), regardless of which session ran.
 """
 
+from collections import Counter
 from datetime import datetime, timezone
 import time
 
@@ -66,13 +67,13 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
                 reason = "rate-limited" if data.get("rate_limited") else "no data"
                 print(f"  skip {ticker} ({reason}): {'; '.join(data['notes'])}")  # skip-with-log (7.5)
                 state.log_skip(sb, ticker, data["notes"], rate_limited=data.get("rate_limited", False))
-                outcomes["skip"] = outcomes.get("skip", 0) + 1
+                outcomes["skip"] += 1
                 continue
             position = state.build_position(holdings.get(ticker), data)
             items.append((row, data, position))
         except Exception as e:
             print(f"  ERROR {ticker} (ingest): {type(e).__name__}: {e}")
-            outcomes["error"] = outcomes.get("error", 0) + 1
+            outcomes["error"] += 1
 
     if not items:
         return
@@ -85,19 +86,15 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
     for row, data, position in items:
         ticker = row["ticker"]
         try:
-            ai = verdicts.get(ticker) or {
-                "verdict": "Hold",
-                "rationale": "No verdict returned for this ticker; fail-safe Hold.",
-                "raw_model_response": "", "parse_status": "failed",
-            }
+            ai = verdicts.get(ticker) or ai_judge.missing_verdict("ticker")
             result = state.process_ticker(sb, notifier, row, data, ai, now, position)
             tag = "NEW" if data["is_new"] else ""
             print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
                   f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {tag}")
-            outcomes[result] = outcomes.get(result, 0) + 1
+            outcomes[result] += 1
         except Exception as e:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
-            outcomes["error"] = outcomes.get("error", 0) + 1
+            outcomes["error"] += 1
 
 
 def main() -> None:
@@ -143,7 +140,7 @@ def main() -> None:
     watchlist = state.get_watchlist(sb)
     holdings = state.get_holdings_map(sb)
 
-    outcomes = {}
+    outcomes = Counter()
     for s in run_sessions:
         rows = [r for r in watchlist if (r.get("market") or "US") in s["markets"]]
         print(f"[{s['name']}] {len(rows)} tickers, "
@@ -154,7 +151,7 @@ def main() -> None:
     # when any ticker was skipped or errored, "ok" only when all succeeded. One
     # shared "hourly-watchlist" key across both sessions (design §12 D4/D5) — the
     # monitor computes the right staleness window per session off this same key.
-    degraded = outcomes.get("skip", 0) + outcomes.get("error", 0)
+    degraded = outcomes["skip"] + outcomes["error"]
     status = "partial" if degraded else "ok"
     state.write_heartbeat(sb, "hourly-watchlist", status)
     print(f"Done [{status}]. {dict(outcomes)}")

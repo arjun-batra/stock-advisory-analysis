@@ -8,7 +8,7 @@ confirm, on a runner where Yahoo is reachable:
   2. what `marketCap` magnitudes come back — they're in INR, so the USD $2B
      DISCOVERY_MIN_MARKET_CAP gate is meaningless as-is and needs recalibrating;
   3. what `exchange` / `fullExchangeName` tag NSE listings carry (for the
-     allow-list + _market_for mapping);
+     allow-list + _market_from_exchange mapping);
   4. that price/volume/change fields the quality gate + signals need are present.
 
 Run on a GitHub-hosted runner (Yahoo is egress-blocked in the dev container):
@@ -104,7 +104,7 @@ if allq:
     print("\nDECISION INPUTS for SD §12 D5:")
     print("  - region=in screener usable:", "YES" if allq else "NO")
     print("  - Recalibrate DISCOVERY_MIN_MARKET_CAP for INR (per-market cap), and add the")
-    print("    NSE exchange tag(s) above to DISCOVERY_ALLOWED_EXCHANGES + _market_for.")
+    print("    NSE exchange tag(s) above to DISCOVERY_ALLOWED_EXCHANGES + _market_from_exchange.")
 else:
     print("region=in returned nothing from either screen — SD §12 D5 'mirrors region=ca' is")
     print("NOT confirmed; report back before wiring India into prefilter.")

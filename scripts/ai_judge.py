@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 
 import config
+from textutil import clip
 
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
 RATIONALE_MAX = 280   # stored + shown in full on the detail page; the push is clipped separately
@@ -19,6 +20,19 @@ _FAIL_SAFE_PARSE = {"verdict": "Hold",
                     "rationale": "The model reply could not be parsed; showing a fail-safe Hold."}
 _FAIL_SAFE_API = {"verdict": "Hold",
                   "rationale": "The AI service didn't return a usable response; showing a fail-safe Hold."}
+
+
+def missing_verdict(noun: str = "ticker") -> dict:
+    """Fail-safe result for a name the judge_batch return simply doesn't cover
+    (defensive — the parser fail-safes every requested ticker, so this only
+    fires if the result dict and the caller's item list ever disagree). Same
+    fail-safe-to-Hold posture as _FAIL_SAFE_PARSE: parse_status='failed' means
+    it never alerts and never advances verdict_state."""
+    return {
+        "verdict": "Hold",
+        "rationale": f"No verdict returned for this {noun}; fail-safe Hold.",
+        "raw_model_response": "", "parse_status": "failed",
+    }
 
 BATCH_SYSTEM_PROMPT = (
     "You are a disciplined, unemotional equity analyst. You are given several "
@@ -32,22 +46,6 @@ BATCH_SYSTEM_PROMPT = (
     '{"ticker": "<symbol>", "verdict": "Buy" | "Sell" | "Hold", '
     '"rationale": "<one or two short sentences>"}'
 )
-
-
-def _clip(text: str, limit: int = RATIONALE_MAX) -> str:
-    """Trim to <= limit chars on a word boundary, adding an ellipsis if cut.
-
-    The rationale becomes the push-notification body, so the old hard slice
-    (text[:140]) shipped half-words to the user. Clip on whitespace instead and
-    signal the cut with a single-char ellipsis, keeping the result <= limit.
-    """
-    text = " ".join(str(text).split())              # normalize whitespace
-    if len(text) <= limit:
-        return text
-    clipped = text[: limit - 1]                      # leave room for the ellipsis
-    if " " in clipped:
-        clipped = clipped.rsplit(" ", 1)[0]          # back up to the last whole word
-    return clipped.rstrip(" ,.;:-") + "\u2026"
 
 
 def _ticker_block(data: dict, position: dict | None) -> str:
@@ -163,7 +161,7 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
         if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
             o = arr[i]                           # positional fallback (same order requested)
         if isinstance(o, dict) and o.get("verdict") in VALID_VERDICTS and o.get("rationale"):
-            out[t] = {"verdict": o["verdict"], "rationale": _clip(o["rationale"]),
+            out[t] = {"verdict": o["verdict"], "rationale": clip(o["rationale"], RATIONALE_MAX),
                       "raw_model_response": raw, "parse_status": "ok", "model_used": model}
         else:
             out[t] = {**_FAIL_SAFE_PARSE, "raw_model_response": raw,
