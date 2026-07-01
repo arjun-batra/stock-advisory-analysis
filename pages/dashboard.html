@@ -280,7 +280,7 @@
   async function boot(){
     const box = document.getElementById("content");
     try{
-      WATCHLIST = await sb("watchlist?select=ticker,market,status,type&order=ticker.asc");
+      WATCHLIST = await sb("watchlist?select=ticker,market,status&order=ticker.asc");
     }catch(e){
       box.innerHTML = `<p class="msg">Couldn't load the watchlist (${esc(e.message)}).</p>`;
       return;
