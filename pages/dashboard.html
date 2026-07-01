@@ -93,10 +93,8 @@
   // Auto-refresh cadence (FR22) — configurable here, NOT hardcoded in the loop below.
   const REFRESH_MS = 60000;                       // 60s
 
-  // FR19 access gate. SHA-256 of the passcode (never the plaintext). Default passcode
-  // is "watchlist-2026" — REPLACE before deploy:  echo -n 'yourpass' | shasum -a 256
   const ACCESS_PASSCODE_SHA256 =
-    "47eb88f4ecbc73be1d3e942567b13aa0ec2dde25da85c0c94c90607f36ea239c";
+    "1a7b50114acc73148e2751ce49815288ad63ec1718408d53faa162e6879d5ad9";
 
   // Publishable (anon) key is client-safe by design: RLS scopes it to read-only
   // call_log + watchlist. Requires the watchlist SELECT policy (#16) to be applied.
