@@ -19,6 +19,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import config
 import ingest
 import state
 
@@ -40,7 +41,7 @@ def main() -> None:
     for i, row in enumerate(watchlist):
         ticker = row["ticker"]
         if i > 0:
-            time.sleep(2)   # be polite to Yahoo, same posture as the ingest loop
+            time.sleep(config.YF_PACING_SECONDS)   # be polite to Yahoo, same pacing as the ingest loops
         try:
             data = ingest.get_market_data(ticker)
             if data["has_price"]:
