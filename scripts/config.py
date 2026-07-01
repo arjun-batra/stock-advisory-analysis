@@ -26,6 +26,14 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-3.1-flash-lite")
 
+# NSE watchlist model pair (Phase 6, design §12 D3). Same Variable-driven
+# pattern as GEMINI_MODEL: point at a different model for quota isolation from
+# the US/TSX watchlist bucket, or the same string to share it -- a config-time
+# choice, no code change either way. Defaults to the same models as the US/TSX
+# watchlist since NSE runs in a separate, non-overlapping session anyway.
+NSE_GEMINI_MODEL = os.environ.get("NSE_GEMINI_MODEL", GEMINI_MODEL)
+NSE_GEMINI_MODEL_BACKUP = os.environ.get("NSE_GEMINI_MODEL_BACKUP", GEMINI_MODEL_BACKUP)
+
 # Phase 3 (not used yet in Phase 2):
 NTFY_TOPIC       = os.environ.get("NTFY_TOPIC", "")
 DETAIL_PAGE_BASE = os.environ.get("DETAIL_PAGE_BASE", "")
@@ -93,6 +101,10 @@ def discovery_models() -> list[str]:
     return [m for m in (DISCOVERY_GEMINI_MODEL, DISCOVERY_GEMINI_MODEL_BACKUP) if m]
 
 
+def nse_models() -> list[str]:
+    return [m for m in (NSE_GEMINI_MODEL, NSE_GEMINI_MODEL_BACKUP) if m]
+
+
 # --- Market hours (NYSE/TSX share the session: 9:30-16:00 ET) ----------------
 # Hours-and-weekday only. Deliberately NO per-exchange holiday calendar
 # (accepted risk, design 2 item 5); a closed market's tickers fall through to
@@ -107,6 +119,24 @@ def is_market_open(now_et: datetime | None = None) -> bool:
     if now.weekday() >= 5:                  # Saturday / Sunday
         return False
     return MARKET_OPEN <= now.time() <= MARKET_CLOSE
+
+
+# --- NSE market hours (Phase 6, design §12) -----------------------------------
+# NSE trades 09:15-15:30 IST. IST has no DST (fixed UTC+5:30), so unlike the
+# ET session this window never needs a twice-a-year check. Same posture as
+# US/TSX: hours-and-weekday only, no dedicated NSE holiday calendar (accepted
+# risk, design §2 item 5 / Requirements FR17) -- a closed session (weekend or
+# holiday) falls through to skip-with-log when Yahoo returns nothing.
+NSE_MARKET_TZ    = ZoneInfo("Asia/Kolkata")
+NSE_MARKET_OPEN  = time(9, 15)
+NSE_MARKET_CLOSE = time(15, 30)
+
+
+def is_nse_open(now_ist: datetime | None = None) -> bool:
+    now = now_ist or datetime.now(NSE_MARKET_TZ)
+    if now.weekday() >= 5:                  # Saturday / Sunday
+        return False
+    return NSE_MARKET_OPEN <= now.time() <= NSE_MARKET_CLOSE
 
 
 def require_secrets() -> None:
