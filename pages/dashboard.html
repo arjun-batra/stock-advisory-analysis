@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock advisor — dashboard</title>
+<style>
+  :root {
+    --bg-page:#faf9f6; --bg-surface:#fff; --bg-subtle:#f1efe8;
+    --text-primary:#1a1a18; --text-secondary:#6b6a64; --text-tertiary:#9a988f;
+    --border:#e5e3da;
+    --buy-bg:#eaf3de; --buy-text:#27500a;
+    --sell-bg:#fcebeb; --sell-text:#791f1f;
+    --hold-bg:#f1efe8; --hold-text:#444441;
+    --info-bg:#e6f1fb; --info-text:#0c447c;
+    --candidate-bg:#eeedfe; --candidate-text:#3c3489;
+    --amber-bg:#faeeda; --amber-text:#854f0b;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--font);background:var(--bg-page);color:var(--text-primary);line-height:1.5;}
+  .wrap{max-width:480px;margin:0 auto;padding:24px 18px 60px;}
+  .head{margin:0 0 4px;font-size:20px;font-weight:600;}
+  .refresh{font-size:11px;color:var(--text-tertiary);margin:0 0 20px;}
+  .group-label{font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;
+    letter-spacing:.04em;margin:22px 0 10px;}
+  .card{background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;
+    padding:16px 16px 4px;margin-bottom:12px;}
+  .tc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .tick-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .ticker{font-size:18px;font-weight:600;}
+  .mkt{font-size:10px;padding:2px 7px;border-radius:9px;background:var(--bg-subtle);color:var(--text-secondary);}
+  .badge{font-size:10px;padding:2px 8px;border-radius:9px;font-weight:500;white-space:nowrap;display:inline-flex;gap:4px;align-items:center;}
+  .b-held{background:var(--amber-bg);color:var(--amber-text);}
+  .b-watch{background:var(--bg-subtle);color:var(--text-secondary);}
+  .price{font-size:20px;font-weight:600;text-align:right;line-height:1.15;white-space:nowrap;}
+  .chg{font-size:12px;font-weight:500;text-align:right;}
+  .pos{color:var(--buy-text);} .neg{color:var(--sell-text);}
+  .muted{color:var(--text-tertiary);}
+  .tc-bot{border-top:1px solid var(--border);margin-top:14px;padding:12px 0 12px;
+    text-decoration:none;color:inherit;display:block;}
+  .pill{font-size:10px;padding:2px 8px;border-radius:9px;font-weight:500;white-space:nowrap;display:inline-block;}
+  .bot-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+  .at-price{font-size:12px;color:var(--text-secondary);}
+  .rationale{font-size:13px;color:var(--text-primary);margin:0 0 8px;}
+  .age-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:11px;}
+  .age-primary{font-weight:500;color:var(--text-secondary);}
+  .age-secondary{color:var(--text-tertiary);text-align:right;}
+  .footer{border-top:1px solid var(--border);padding-top:14px;margin-top:24px;
+    font-size:11px;color:var(--text-tertiary);text-align:center;}
+  .msg{color:var(--text-secondary);font-size:14px;padding:32px 4px;text-align:center;}
+  /* Access gate */
+  #gate{position:fixed;inset:0;background:var(--bg-page);display:flex;align-items:center;
+    justify-content:center;padding:24px;z-index:10;}
+  #gate .box{background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;
+    padding:24px;max-width:340px;width:100%;text-align:center;}
+  #gate h1{font-size:16px;margin:0 0 4px;}
+  #gate p{font-size:12.5px;color:var(--text-secondary);margin:0 0 16px;}
+  #gate input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    font-size:14px;font-family:var(--font);margin-bottom:10px;}
+  #gate button{width:100%;padding:10px;border:none;border-radius:8px;background:var(--text-primary);
+    color:#fff;font-size:14px;font-weight:500;cursor:pointer;}
+  #gate .err{color:var(--sell-text);font-size:12px;min-height:16px;margin:8px 0 0;}
+</style>
+</head>
+<body>
+
+<!-- FR19 access gate — client-side JS passcode. Obfuscation, not real security (the anon-key
+     data is RLS-scoped to call_log + watchlist and technically reachable); accepted per SD §13. -->
+<div id="gate" hidden>
+  <div class="box">
+    <h1>Stock advisor</h1>
+    <p>Enter the access passcode to view the dashboard.</p>
+    <form id="gate-form">
+      <input id="gate-input" type="password" autocomplete="off" placeholder="Passcode" autofocus>
+      <button type="submit">Unlock</button>
+      <p class="err" id="gate-err"></p>
+    </form>
+  </div>
+</div>
+
+<main class="wrap" id="app" hidden>
+  <h1 class="head">Watchlist</h1>
+  <p class="refresh" id="refresh">Loading live prices…</p>
+  <div id="content"><p class="msg">Loading…</p></div>
+  <div class="footer">Informational only — not financial advice</div>
+</main>
+
+<script>
+  // ─── Build-time config ──────────────────────────────────────────────────────
+  // Auto-refresh cadence (FR22) — configurable here, NOT hardcoded in the loop below.
+  const REFRESH_MS = 60000;                       // 60s
+
+  // FR19 access gate. SHA-256 of the passcode (never the plaintext). Default passcode
+  // is "watchlist-2026" — REPLACE before deploy:  echo -n 'yourpass' | shasum -a 256
+  const ACCESS_PASSCODE_SHA256 =
+    "47eb88f4ecbc73be1d3e942567b13aa0ec2dde25da85c0c94c90607f36ea239c";
+
+  // Publishable (anon) key is client-safe by design: RLS scopes it to read-only
+  // call_log + watchlist. Requires the watchlist SELECT policy (#16) to be applied.
+  const SUPABASE_URL = "https://ikghqdtlbwifwnooytmm.supabase.co";
+  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1CNiVwpI_NV7MzOvi_XucA_nQ47FKjG";
+
+  // Yahoo chart endpoint — browser fetches live prices directly (the anon key carries
+  // no price data; yfinance runs only in GitHub Actions). CORS-permitted on this host.
+  const YAHOO_CHART = t =>
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t)}?range=1d&interval=1d`;
+
+  // US + Canada render together; India (NSE) is a separate labelled group (UI handoff v3).
+  const GROUPS = [
+    {label:"US & Canada", markets:["US","TSX"]},
+    {label:"India (NSE)",  markets:["NSE"]},
+  ];
+  const CUR = {US:"$", TSX:"CA$", NSE:"₹"};        // native symbol per market, no FX
+  const VERDICT = {
+    Buy:  {bg:"var(--buy-bg)",  text:"var(--buy-text)"},
+    Sell: {bg:"var(--sell-bg)", text:"var(--sell-text)"},
+    Hold: {bg:"var(--hold-bg)", text:"var(--hold-text)"},
+  };
+
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const curSym = m => CUR[m] || "";
+  const fmtPrice = (v, m) => (typeof v === "number") ? curSym(m)+v.toFixed(2) : "—";
+  const pctSpan = v => (typeof v === "number")
+    ? `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${v.toFixed(2)}%</span>` : `<span class="muted">—</span>`;
+
+  // FR23 relative time — primary per-row display; also drives the "prices updated Ns ago" header.
+  function relTime(ms){
+    const s = Math.max(0, Math.floor((Date.now() - ms)/1000));
+    if(s < 60) return s+"s ago";
+    const m = Math.floor(s/60); if(m < 60) return m+"m ago";
+    const h = Math.floor(m/60); if(h < 24) return h+"h ago";
+    return Math.floor(h/24)+"d ago";
+  }
+  // FR23 absolute dual-tz secondary: device tz primary + IST in brackets; single ts if device is IST.
+  const _TZSHORT = {EST:"ET",EDT:"ET",CST:"CT",CDT:"CT",MST:"MT",MDT:"MT",PST:"PT",PDT:"PT"};
+  function tzLabel(iso, tz){
+    const p = new Intl.DateTimeFormat("en-US",{timeZone:tz,timeZoneName:"short"})
+      .formatToParts(new Date(iso)).find(x => x.type === "timeZoneName");
+    const raw = p ? p.value : "";
+    return _TZSHORT[raw] || raw;
+  }
+  const clockIn = (iso, tz) =>
+    new Date(iso).toLocaleString("en-US", {timeZone:tz, hour:"numeric", minute:"2-digit"});
+  function fmtAbs(iso){
+    if(!iso) return "";
+    const dev = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "America/New_York";
+    const primary = clockIn(iso, dev) + " " + tzLabel(iso, dev);
+    if(dev === "Asia/Kolkata") return primary;
+    return primary + " (" + clockIn(iso, "Asia/Kolkata") + " IST)";
+  }
+
+  // ─── State ──────────────────────────────────────────────────────────────────
+  let WATCHLIST = [];        // rows from watchlist
+  let LATEST = {};           // ticker -> latest call_log row (any alerted value)
+  let PRICES = {};           // ticker -> {price, chg}
+  let lastPriceFetch = 0;
+
+  // ─── Data reads ─────────────────────────────────────────────────────────────
+  async function sb(path){
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`,
+      {headers:{apikey:SUPABASE_PUBLISHABLE_KEY, Authorization:"Bearer "+SUPABASE_PUBLISHABLE_KEY}});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    return res.json();
+  }
+
+  // Latest call_log per ticker, regardless of `alerted` (SD §13: what the system last *thought*).
+  async function loadLatestCalls(){
+    const rows = await sb("call_log?select=*&order=timestamp.desc&limit=1000");
+    const out = {};
+    for(const r of rows) if(!(r.ticker in out)) out[r.ticker] = r;   // first = most recent
+    LATEST = out;
+  }
+
+  // Live price + 1d change straight from Yahoo, per ticker. Failures degrade to "—".
+  async function loadPrices(){
+    await Promise.all(WATCHLIST.map(async w => {
+      try{
+        const res = await fetch(YAHOO_CHART(w.ticker));
+        if(!res.ok) throw new Error("HTTP "+res.status);
+        const j = await res.json();
+        const meta = j?.chart?.result?.[0]?.meta || {};
+        const price = meta.regularMarketPrice;
+        const prev  = meta.chartPreviousClose ?? meta.previousClose;
+        const chg = (typeof price === "number" && typeof prev === "number" && prev)
+          ? ((price - prev) / prev) * 100 : null;
+        PRICES[w.ticker] = {price: (typeof price === "number" ? price : null), chg};
+      }catch(e){
+        PRICES[w.ticker] = PRICES[w.ticker] || {price:null, chg:null};
+      }
+    }));
+    lastPriceFetch = Date.now();
+  }
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
+  function statusBadge(status){
+    return status === "held"
+      ? `<span class="badge b-held">★ Held</span>`
+      : `<span class="badge b-watch">☆ Watching</span>`;
+  }
+
+  function botBlock(w){
+    const row = LATEST[w.ticker];
+    if(!row) return "";                              // FR21: no call_log row -> block absent from DOM
+    const v = VERDICT[row.verdict] || VERDICT.Hold;
+    const scan = row.label === "new-candidate"
+      ? `<span class="pill" style="background:var(--candidate-bg);color:var(--candidate-text)">discovery scan</span>` : "";
+    const lastPrice = row?.data_snapshot?.price;
+    const atPrice = (typeof lastPrice === "number")
+      ? `<span class="at-price">at ${esc(curSym(w.market))}${lastPrice.toFixed(2)}</span>` : "";
+    const href = `detail.html?log_id=${encodeURIComponent(row.id)}`;
+    return `
+      <a class="tc-bot" href="${href}">
+        <div class="bot-head">
+          <span class="pill" style="background:${v.bg};color:${v.text}">${esc(row.verdict)}</span>
+          ${scan}
+          ${atPrice}
+        </div>
+        <p class="rationale">${esc(row.rationale)}</p>
+        <div class="age-row">
+          <span class="age-primary">${relTime(new Date(row.timestamp).getTime())}</span>
+          <span class="age-secondary">${esc(fmtAbs(row.timestamp))}</span>
+        </div>
+      </a>`;
+  }
+
+  function card(w){
+    const px = PRICES[w.ticker] || {};
+    return `
+      <div class="card">
+        <div class="tc-top">
+          <div>
+            <div class="tick-row">
+              <span class="ticker">${esc(w.ticker)}</span>
+              <span class="mkt">${esc(w.market)}</span>
+              ${statusBadge(w.status)}
+            </div>
+          </div>
+          <div>
+            <div class="price">${fmtPrice(px.price, w.market)}</div>
+            <div class="chg">${pctSpan(px.chg)}</div>
+          </div>
+        </div>
+        ${botBlock(w)}
+      </div>`;
+  }
+
+  function render(){
+    const box = document.getElementById("content");
+    if(!WATCHLIST.length){ box.innerHTML = `<p class="msg">No tickers on the watchlist.</p>`; return; }
+    let html = "";
+    for(const g of GROUPS){
+      const items = WATCHLIST.filter(w => g.markets.includes(w.market));
+      if(!items.length) continue;
+      html += `<p class="group-label">${esc(g.label)}</p>` + items.map(card).join("");
+    }
+    box.innerHTML = html || `<p class="msg">No tickers on the watchlist.</p>`;
+  }
+
+  function tickRefreshLabel(){
+    document.getElementById("refresh").textContent =
+      lastPriceFetch ? `Prices updated ${relTime(lastPriceFetch)}` : "Loading live prices…";
+  }
+
+  // ─── Boot ───────────────────────────────────────────────────────────────────
+  async function boot(){
+    const box = document.getElementById("content");
+    try{
+      WATCHLIST = await sb("watchlist?select=ticker,market,status,type&order=ticker.asc");
+    }catch(e){
+      box.innerHTML = `<p class="msg">Couldn't load the watchlist (${esc(e.message)}).</p>`;
+      return;
+    }
+    await loadLatestCalls().catch(()=>{});     // verdicts are best-effort; prices still render
+    render();                                  // paint cards immediately (prices fill in next)
+    await loadPrices();
+    render();
+    tickRefreshLabel();
+
+    // Two clocks, kept distinct (UI handoff): the header "prices updated Ns ago" ticks every
+    // second off the last price fetch; the per-card verdict age re-renders each refresh cycle.
+    setInterval(tickRefreshLabel, 1000);
+    setInterval(async () => {
+      await loadLatestCalls().catch(()=>{});   // read 2: latest call_log per ticker
+      await loadPrices();                      // read 1: live prices from Yahoo
+      render();
+      tickRefreshLabel();
+    }, REFRESH_MS);
+  }
+
+  // ─── Access gate ────────────────────────────────────────────────────────────
+  async function sha256Hex(s){
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }
+  function unlock(){
+    document.getElementById("gate").hidden = true;
+    document.getElementById("app").hidden = false;
+    boot();
+  }
+  function initGate(){
+    const gate = document.getElementById("gate");
+    // Session-scoped unlock so a refresh within the same tab doesn't re-prompt.
+    if(sessionStorage.getItem("sa_unlocked") === "1"){ unlock(); return; }
+    gate.hidden = false;
+    document.getElementById("gate-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const err = document.getElementById("gate-err");
+      const val = document.getElementById("gate-input").value;
+      if(await sha256Hex(val) === ACCESS_PASSCODE_SHA256){
+        sessionStorage.setItem("sa_unlocked", "1");
+        unlock();
+      } else {
+        err.textContent = "Incorrect passcode.";
+        document.getElementById("gate-input").value = "";
+      }
+    });
+  }
+  initGate();
+</script>
+</body>
+</html>
