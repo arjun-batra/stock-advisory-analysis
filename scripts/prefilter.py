@@ -42,26 +42,47 @@ def _screen(label: str, query, **kw) -> tuple[list[dict], bool]:
         return [], True
 
 
-def _ca_query(op: str, pct: float):
+def _EQ():
     EQ = getattr(yf, "EquityQuery", None)
     if EQ is None:
         from yfinance import EquityQuery as EQ  # noqa
+    return EQ
+
+
+def _region_query(region_code: str, op: str, pct: float, min_mcap: float, min_price: float):
+    """Custom EquityQuery for a region (ca or in), gated on move/mcap/price."""
+    EQ = _EQ()
     return EQ("and", [
         EQ(op, ["percentchange", pct]),
-        EQ("eq", ["region", "ca"]),
-        EQ("gt", ["intradaymarketcap", config.DISCOVERY_MIN_MARKET_CAP]),
-        EQ("gt", ["intradayprice", config.DISCOVERY_MIN_PRICE]),
+        EQ("eq", ["region", region_code]),
+        EQ("gt", ["intradaymarketcap", min_mcap]),
+        EQ("gt", ["intradayprice", min_price]),
     ])
 
 
-def _passes_quality(q: dict) -> bool:
-    if (q.get("marketCap") or 0) < config.DISCOVERY_MIN_MARKET_CAP:
+def _profile(region: str) -> dict:
+    """Per-region quality gate (Phase 6 D5). 'na' = US + Canada (the original
+    behaviour). 'in' = India NSE only — region=in also returns BSE listings, so
+    the allowed-exchange set is NSI-only to drop the .BO duplicates, and the
+    marketCap/price floors are INR-denominated.
+    """
+    if region == "in":
+        return {"min_mcap": config.DISCOVERY_MIN_MARKET_CAP_INR,
+                "min_price": config.DISCOVERY_MIN_PRICE_INR,
+                "exchanges": config.DISCOVERY_ALLOWED_EXCHANGES_IN}
+    return {"min_mcap": config.DISCOVERY_MIN_MARKET_CAP,
+            "min_price": config.DISCOVERY_MIN_PRICE,
+            "exchanges": config.DISCOVERY_ALLOWED_EXCHANGES}
+
+
+def _passes_quality(q: dict, profile: dict) -> bool:
+    if (q.get("marketCap") or 0) < profile["min_mcap"]:
         return False
-    if (q.get("regularMarketPrice") or 0) < config.DISCOVERY_MIN_PRICE:
+    if (q.get("regularMarketPrice") or 0) < profile["min_price"]:
         return False
     if (q.get("regularMarketVolume") or 0) < config.DISCOVERY_MIN_VOLUME:
         return False
-    if (q.get("exchange") or "") not in config.DISCOVERY_ALLOWED_EXCHANGES:
+    if (q.get("exchange") or "") not in profile["exchanges"]:
         return False
     return True
 
@@ -96,11 +117,17 @@ def _signals(q: dict) -> list[str]:
 
 
 def _market_for(exchange: str) -> str:
-    return "TSX" if exchange == "Toronto" else "US"
+    return {"Toronto": "TSX", "NSI": "NSE"}.get(exchange, "US")
 
 
-def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
+def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], int, int, dict]:
     """Return (candidates, screens_attempted, screens_errored, funnel), ranked.
+
+    `region` selects the market set (Phase 6 D5): "na" = US predefined movers +
+    a custom region=ca query (the original behaviour); "in" = India, a custom
+    region=in gainers/losers query filtered to NSE (exchange NSI) only. The
+    per-region quality gate (mcap/price floors, allowed exchanges) comes from
+    _profile(region).
 
     Each candidate: {ticker, market, signals, screen_pct}. `exclude` is the
     uppercased watchlist set — those never reach discovery (the hourly loop
@@ -121,6 +148,7 @@ def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
     raw: list[dict] = []
     attempted = 0
     errored = 0
+    profile = _profile(region)
 
     def _collect(label, query, **kw):
         nonlocal attempted, errored
@@ -130,14 +158,31 @@ def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
             errored += 1
         return quotes
 
-    for label in ("day_gainers", "day_losers", "most_actives"):
-        raw += _collect(label, label, size=50)
+    if region == "in":
+        # India (NSE): region=in custom gainers/losers. No US predefined screens
+        # apply. BSE duplicates are dropped later by the NSI-only quality gate.
+        raw += _collect("in_gainers",
+                        _region_query("in", "gt", config.DISCOVERY_GAINER_PCT,
+                                      profile["min_mcap"], profile["min_price"]),
+                        sortField="percentchange", sortAsc=False, size=50)
         time.sleep(1)
-    raw += _collect("ca_gainers", _ca_query("gt", config.DISCOVERY_GAINER_PCT),
-                    sortField="percentchange", sortAsc=False, size=50)
-    time.sleep(1)
-    raw += _collect("ca_losers", _ca_query("lt", config.DISCOVERY_LOSER_PCT),
-                    sortField="percentchange", sortAsc=True, size=50)
+        raw += _collect("in_losers",
+                        _region_query("in", "lt", config.DISCOVERY_LOSER_PCT,
+                                      profile["min_mcap"], profile["min_price"]),
+                        sortField="percentchange", sortAsc=True, size=50)
+    else:
+        for label in ("day_gainers", "day_losers", "most_actives"):
+            raw += _collect(label, label, size=50)
+            time.sleep(1)
+        raw += _collect("ca_gainers",
+                        _region_query("ca", "gt", config.DISCOVERY_GAINER_PCT,
+                                      profile["min_mcap"], profile["min_price"]),
+                        sortField="percentchange", sortAsc=False, size=50)
+        time.sleep(1)
+        raw += _collect("ca_losers",
+                        _region_query("ca", "lt", config.DISCOVERY_LOSER_PCT,
+                                      profile["min_mcap"], profile["min_price"]),
+                        sortField="percentchange", sortAsc=True, size=50)
 
     funnel = {"raw": len(raw), "after_dedup": 0, "passed_quality": 0, "passed_signal": 0}
 
@@ -152,7 +197,7 @@ def find_candidates(exclude: set[str]) -> tuple[list[dict], int, int, dict]:
 
     kept: dict[str, dict] = {}
     for sym, q in seen.items():
-        if not _passes_quality(q):
+        if not _passes_quality(q, profile):
             continue
         funnel["passed_quality"] += 1
         sig = _signals(q)

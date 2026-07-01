@@ -102,10 +102,13 @@
   const SUPABASE_URL = "https://ikghqdtlbwifwnooytmm.supabase.co";
   const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1CNiVwpI_NV7MzOvi_XucA_nQ47FKjG";
 
-  // Yahoo chart endpoint — browser fetches live prices directly (the anon key carries
-  // no price data; yfinance runs only in GitHub Actions). CORS-permitted on this host.
-  const YAHOO_CHART = t =>
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t)}?range=1d&interval=1d`;
+  // Live-ish prices come from a same-origin prices.json published by a GitHub
+  // Actions runner (issue #18: the browser CANNOT fetch Yahoo directly — every
+  // market is CORS-blocked; the anon key carries no price data; yfinance runs
+  // only in Actions). A relative URL keeps it same-origin with this page wherever
+  // GitHub Pages serves from. Refreshed on the market cadence, so the price is
+  // "as of the last publish run," not tick-live — the accepted #18 fallback.
+  const PRICES_URL = "prices.json";
 
   // US + Canada render together; India (NSE) is a separate labelled group (UI handoff v3).
   const GROUPS = [
@@ -174,24 +177,32 @@
     LATEST = out;
   }
 
-  // Live price + 1d change straight from Yahoo, per ticker. Failures degrade to "—".
+  // Live-ish price + 1d change from the same-origin prices.json (issue #18).
+  // Missing ticker or a failed fetch degrades that card to "—" without wiping
+  // any price we already had.
   async function loadPrices(){
-    await Promise.all(WATCHLIST.map(async w => {
-      try{
-        const res = await fetch(YAHOO_CHART(w.ticker));
-        if(!res.ok) throw new Error("HTTP "+res.status);
-        const j = await res.json();
-        const meta = j?.chart?.result?.[0]?.meta || {};
-        const price = meta.regularMarketPrice;
-        const prev  = meta.chartPreviousClose ?? meta.previousClose;
-        const chg = (typeof price === "number" && typeof prev === "number" && prev)
-          ? ((price - prev) / prev) * 100 : null;
-        PRICES[w.ticker] = {price: (typeof price === "number" ? price : null), chg};
-      }catch(e){
-        PRICES[w.ticker] = PRICES[w.ticker] || {price:null, chg:null};
+    try{
+      const res = await fetch(`${PRICES_URL}?_=${Date.now()}`, {cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const j = await res.json();
+      const p = j.prices || {};
+      for(const w of WATCHLIST){
+        const row = p[w.ticker];
+        PRICES[w.ticker] = row
+          ? {price: (typeof row.price === "number" ? row.price : null),
+             chg:   (typeof row.chg   === "number" ? row.chg   : null)}
+          : (PRICES[w.ticker] || {price:null, chg:null});
       }
-    }));
-    lastPriceFetch = Date.now();
+      // Freshness signal #1 is the age of the DATA (generated_at), not this fetch:
+      // with the #18 fallback the price only changes when a new prices.json is
+      // published, so "prices updated Ns ago" must count from generated_at — honest,
+      // and still distinct from the per-card verdict age (signal #2), which is driven
+      // by the check cadence and does not reset on a price refresh tick.
+      const gen = Date.parse(j.generated_at);
+      lastPriceFetch = Number.isFinite(gen) ? gen : Date.now();
+    }catch(e){
+      // Keep whatever we had; the header shows the last known age (or "Loading…").
+    }
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────────
@@ -284,7 +295,7 @@
     setInterval(tickRefreshLabel, 1000);
     setInterval(async () => {
       await loadLatestCalls().catch(()=>{});   // read 2: latest call_log per ticker
-      await loadPrices();                      // read 1: live prices from Yahoo
+      await loadPrices();                      // read 1: live-ish prices from prices.json (#18)
       render();
       tickRefreshLabel();
     }, REFRESH_MS);

@@ -1,0 +1,25 @@
+name: India screener smoke test (Phase 6 D5 prep)
+
+# Learns the region=in Yahoo screener shape (marketCap magnitudes in INR, NSE
+# exchange tags, field coverage) so SD §12 D5's INR threshold + exchange
+# allow-list can be set from real data instead of guessed. Runs on a runner
+# because Yahoo is egress-blocked in the dev container. Fires on push of the
+# script so a change re-runs it; also manually dispatchable.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/india_screener_smoke.py"
+      - ".github/workflows/india-screener-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -U yfinance
+      - run: python scripts/india_screener_smoke.py

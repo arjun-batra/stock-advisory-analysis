@@ -13,6 +13,7 @@ dry run until ALERTS_ENABLED is flipped on.
 """
 
 from datetime import datetime, timezone
+import os
 import time
 
 import config
@@ -29,9 +30,15 @@ def main() -> None:
     notifier = notify.get_notifier()
     now = datetime.now(timezone.utc)
 
+    # Region selects the market set (Phase 6 D5): "na" = US + Canada (the 22:00 UTC
+    # post-US-close dispatch); "in" = India NSE (a separate NSE-close-timed dispatch,
+    # ~10:00 UTC / 15:30 IST). Defaults to "na" so the existing dispatch is unchanged.
+    region = (os.environ.get("DISCOVERY_REGION", "na") or "na").lower()
+
     watchlist = state.get_watchlist_tickers(sb)
-    candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(exclude=watchlist)
-    print(f"Discovery: {len(candidates)} candidates after screen+gate "
+    candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(
+        exclude=watchlist, region=region)
+    print(f"Discovery [{region}]: {len(candidates)} candidates after screen+gate "
           f"({screens_attempted - screens_errored}/{screens_attempted} screens ok, "
           f"{screens_errored} errored; alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
     # Funnel breakdown (issue #8): makes a zero-candidate day diagnosable —
