@@ -2,9 +2,10 @@ name: Publish dashboard prices (issue #18 fallback)
 
 # Issue #18: the browser can't fetch Yahoo directly (CORS-blocked). This runner
 # fetches live-ish prices server-side (yfinance) and commits pages/prices.json,
-# which the dashboard reads same-origin. Scheduling on the market cadence is added
-# in the Phase-6/7 activation step (pg_cron dispatch, ref main); for now it runs on
-# manual dispatch and on push of the script (which also seeds the first prices.json).
+# which the dashboard reads same-origin. Scheduled by Supabase pg_cron on the
+# market cadence — job 'publish-prices', */30 3-10,13-21 UTC weekdays, via
+# dispatch_github_workflow on ref main (sql/scheduler_pgcron.sql). Also runs on
+# manual dispatch and on push of the script (which seeds/refreshes prices.json).
 
 on:
   workflow_dispatch:
