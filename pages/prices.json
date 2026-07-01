@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-07-01T16:31:36.577071+00:00",
+  "generated_at": "2026-07-01T17:01:36.611347+00:00",
   "prices": {
     "AAPL": {
-      "chg": 1.95,
+      "chg": 1.69,
       "currency": "USD",
       "market": "US",
-      "price": 294.99
+      "price": 294.26
     },
     "AMZN": {
-      "chg": 1.67,
+      "chg": 1.72,
       "currency": "USD",
       "market": "US",
-      "price": 242.315
+      "price": 242.43
     },
     "BB": {
-      "chg": 5.53,
+      "chg": 4.7,
       "currency": "USD",
       "market": "US",
-      "price": 13.349
+      "price": 13.245
     },
     "BHARTIARTL.NS": {
       "chg": 1.03,
@@ -32,10 +32,10 @@
       "price": 123.27
     },
     "COST": {
-      "chg": -0.48,
+      "chg": -0.85,
       "currency": "USD",
       "market": "US",
-      "price": 930.96
+      "price": 927.5
     },
     "DOL.TO": {
       "chg": -1.88,
@@ -44,10 +44,10 @@
       "price": 187.62
     },
     "GOOG": {
-      "chg": 0.61,
+      "chg": 0.57,
       "currency": "USD",
       "market": "US",
-      "price": 355.47
+      "price": 355.35
     },
     "HDFCBANK.NS": {
       "chg": -0.23,
@@ -92,16 +92,16 @@
       "price": 4092.6001
     },
     "NFLX": {
-      "chg": 2.64,
+      "chg": 3.13,
       "currency": "USD",
       "market": "US",
-      "price": 73.285
+      "price": 73.635
     },
     "NVDA": {
-      "chg": -1.4,
+      "chg": -1.35,
       "currency": "USD",
       "market": "US",
-      "price": 197.29
+      "price": 197.385
     },
     "RELIANCE.NS": {
       "chg": 1.09,
@@ -128,10 +128,10 @@
       "price": 162.26
     },
     "SPCX": {
-      "chg": -6.32,
+      "chg": -6.2,
       "currency": "USD",
       "market": "US",
-      "price": 160.07
+      "price": 160.275
     },
     "TCS.NS": {
       "chg": -2.41,
@@ -146,10 +146,10 @@
       "price": 172.44
     },
     "TSLA": {
-      "chg": 1.75,
+      "chg": 1.49,
       "currency": "USD",
       "market": "US",
-      "price": 427.98
+      "price": 426.85
     }
   }
 }
