@@ -57,24 +57,43 @@ def _compose_body(rationale: str, market: str | None) -> str:
     return prefix + _clip_body(rationale, NOTIF_BODY_MAX - len(prefix))
 
 
+def _topic_for(market: str | None, default_topic: str, nse_topic: str) -> str:
+    """FR18 / design §12 D7 — route by market at send time. NSE goes to its own
+    topic so India and US/TSX alerts can be filtered/muted independently; if the
+    NSE topic isn't provisioned yet, fall back to the default so no alert drops.
+    """
+    if (market or "").upper() == "NSE" and nse_topic:
+        return nse_topic
+    return default_topic
+
+
 class DryRunNotifier:
-    """Logs what it *would* send. Used in Phase 2 (no alerting yet)."""
+    """Logs what it *would* send, including the topic it would route to. Used in
+    Phase 2 (no alerting yet) and whenever ALERTS_ENABLED/NTFY_TOPIC are unset."""
+
+    def __init__(self, topic: str = "", nse_topic: str = ""):
+        self.topic = topic
+        self.nse_topic = nse_topic
 
     def push(self, ticker, verdict, rationale, *, kind, log_id, market=None):
-        print(f"[DRY RUN] would push [{kind}] {_title(ticker, verdict, kind)} :: {_compose_body(rationale, market)} (log {log_id})")
+        topic = _topic_for(market, self.topic, self.nse_topic) or "(no topic set)"
+        print(f"[DRY RUN] would push [{kind}] -> topic '{topic}' :: "
+              f"{_title(ticker, verdict, kind)} :: {_compose_body(rationale, market)} (log {log_id})")
 
 
 class NtfyNotifier:
-    def __init__(self, topic: str, detail_base: str = ""):
+    def __init__(self, topic: str, detail_base: str = "", nse_topic: str = ""):
         self.topic = topic
+        self.nse_topic = nse_topic
         self.detail_base = detail_base
 
     def push(self, ticker, verdict, rationale, *, kind, log_id, market=None):
+        topic = _topic_for(market, self.topic, self.nse_topic)
         headers = {"Title": _title(ticker, verdict, kind)}
         if self.detail_base and log_id:
             headers["Click"] = f"{self.detail_base}?log_id={log_id}"
         try:
-            requests.post(f"https://ntfy.sh/{self.topic}",
+            requests.post(f"https://ntfy.sh/{topic}",
                           data=_compose_body(rationale, market).encode("utf-8"), headers=headers, timeout=10)
         except Exception as e:
             print(f"[notify error] {ticker}: {type(e).__name__}: {e}")
@@ -82,5 +101,5 @@ class NtfyNotifier:
 
 def get_notifier():
     if config.ALERTS_ENABLED and config.NTFY_TOPIC:
-        return NtfyNotifier(config.NTFY_TOPIC, config.DETAIL_PAGE_BASE)
-    return DryRunNotifier()
+        return NtfyNotifier(config.NTFY_TOPIC, config.DETAIL_PAGE_BASE, config.NSE_NTFY_TOPIC)
+    return DryRunNotifier(config.NTFY_TOPIC, config.NSE_NTFY_TOPIC)

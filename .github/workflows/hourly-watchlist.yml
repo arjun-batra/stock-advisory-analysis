@@ -50,6 +50,12 @@ jobs:
           # to the literal on the right if the variable isn't set.
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
           GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
+          # NSE watchlist model pair (design §12 D3) — same Variable-driven
+          # pattern, own free-tier quota bucket. Unset -> falls back to the US/TSX
+          # models (NSE runs in a separate, non-overlapping session). Explicit
+          # fallback so the env var is never an empty string.
+          NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
           # Live alerting by default. A manual workflow_dispatch can set
           # alerts_enabled=false for a safe dry run (DryRunNotifier logs the
           # composed push instead of sending it). Scheduled pg_cron dispatches
@@ -61,5 +67,8 @@ jobs:
           # the pg_cron dispatch fires it without inputs.
           FORCE_RUN: ${{ inputs.force_run }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # NSE alerts route here (FR18 / §12 D7). Unset -> notify.py falls back
+          # to NTFY_TOPIC, so NSE alerts still land (just not separated yet).
+          NSE_NTFY_TOPIC: ${{ secrets.NSE_NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_hourly.py

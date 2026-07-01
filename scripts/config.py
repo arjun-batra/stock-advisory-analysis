@@ -36,6 +36,12 @@ NSE_GEMINI_MODEL_BACKUP = os.environ.get("NSE_GEMINI_MODEL_BACKUP", GEMINI_MODEL
 
 # Phase 3 (not used yet in Phase 2):
 NTFY_TOPIC       = os.environ.get("NTFY_TOPIC", "")
+# NSE alerts go to their OWN ntfy topic (FR18 / design §12 D7) so India and
+# US/TSX pushes can be filtered or muted independently on the same device. Set
+# as a GitHub Actions secret (mirrors NTFY_TOPIC, read here at runtime). Left
+# empty until the operator provisions the topic — notify.py then falls back to
+# NTFY_TOPIC so no NSE alert is ever dropped.
+NSE_NTFY_TOPIC   = os.environ.get("NSE_NTFY_TOPIC", "")
 DETAIL_PAGE_BASE = os.environ.get("DETAIL_PAGE_BASE", "")
 
 # Phase 2 runs the full logic but sends NO real pushes. Phase 3 flips this true.

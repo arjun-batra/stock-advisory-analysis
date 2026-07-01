@@ -1,0 +1,60 @@
+name: Issue 18 - Browser to Yahoo CORS smoke test
+
+# Issue #18: prove (or disprove) that the read-only dashboard can fetch the live
+# price client-side, straight from Yahoo, in the browser. Runs on a GitHub-hosted
+# runner because Yahoo egress is org-policy-blocked in the authoring container.
+# Two independent probes:
+#   1. curl each market's chart endpoint with the real GitHub Pages Origin and
+#      dump response headers -- the authoritative "does Yahoo send
+#      Access-Control-Allow-Origin?" check (the true determinant of browser CORS).
+#   2. a real headless-Chromium fetch from a static page on a foreign origin.
+# Trigger manually from the Actions tab.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/cors_smoke_test.py"
+      - ".github/workflows/cors-smoke-test.yml"
+
+jobs:
+  cors-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Authoritative CORS header check (curl, prod origin)
+        run: |
+          ORIGIN="https://arjun-batra.github.io"
+          for pair in "US:AAPL" "TSX:RY.TO" "NSE:RELIANCE.NS"; do
+            market="${pair%%:*}"; sym="${pair##*:}"
+            url="https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1d&interval=1m"
+            echo "=================================================================="
+            echo "[$market] $sym  ->  $url"
+            echo "Origin: $ORIGIN"
+            echo "------------------------------------------------------------------"
+            hdrs=$(curl -sS -D - -o /dev/null \
+              -H "Origin: $ORIGIN" \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+              "$url" || true)
+            echo "$hdrs"
+            if echo "$hdrs" | grep -i -q '^access-control-allow-origin'; then
+              echo ">>> [$market] Access-Control-Allow-Origin PRESENT  -> browser fetch ALLOWED"
+            else
+              echo ">>> [$market] Access-Control-Allow-Origin ABSENT   -> browser fetch CORS-BLOCKED"
+            fi
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright + Chromium
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run in-browser CORS fetch test
+        run: python3 scripts/cors_smoke_test.py
