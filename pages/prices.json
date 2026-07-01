@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-07-01T17:01:36.611347+00:00",
+  "generated_at": "2026-07-01T17:31:35.757110+00:00",
   "prices": {
     "AAPL": {
-      "chg": 1.69,
+      "chg": 1.64,
       "currency": "USD",
       "market": "US",
-      "price": 294.26
+      "price": 294.105
     },
     "AMZN": {
-      "chg": 1.72,
+      "chg": 2.56,
       "currency": "USD",
       "market": "US",
-      "price": 242.43
+      "price": 244.45
     },
     "BB": {
-      "chg": 4.7,
+      "chg": 3.7,
       "currency": "USD",
       "market": "US",
-      "price": 13.245
+      "price": 13.1175
     },
     "BHARTIARTL.NS": {
       "chg": 1.03,
@@ -32,10 +32,10 @@
       "price": 123.27
     },
     "COST": {
-      "chg": -0.85,
+      "chg": -1.17,
       "currency": "USD",
       "market": "US",
-      "price": 927.5
+      "price": 924.5
     },
     "DOL.TO": {
       "chg": -1.88,
@@ -44,10 +44,10 @@
       "price": 187.62
     },
     "GOOG": {
-      "chg": 0.57,
+      "chg": 0.71,
       "currency": "USD",
       "market": "US",
-      "price": 355.35
+      "price": 355.85
     },
     "HDFCBANK.NS": {
       "chg": -0.23,
@@ -92,16 +92,16 @@
       "price": 4092.6001
     },
     "NFLX": {
-      "chg": 3.13,
+      "chg": 3.55,
       "currency": "USD",
       "market": "US",
-      "price": 73.635
+      "price": 73.935
     },
     "NVDA": {
-      "chg": -1.35,
+      "chg": -0.91,
       "currency": "USD",
       "market": "US",
-      "price": 197.385
+      "price": 198.275
     },
     "RELIANCE.NS": {
       "chg": 1.09,
@@ -128,10 +128,10 @@
       "price": 162.26
     },
     "SPCX": {
-      "chg": -6.2,
+      "chg": -5.03,
       "currency": "USD",
       "market": "US",
-      "price": 160.275
+      "price": 162.2652
     },
     "TCS.NS": {
       "chg": -2.41,
@@ -146,10 +146,10 @@
       "price": 172.44
     },
     "TSLA": {
-      "chg": 1.49,
+      "chg": 1.41,
       "currency": "USD",
       "market": "US",
-      "price": 426.85
+      "price": 426.545
     }
   }
 }
