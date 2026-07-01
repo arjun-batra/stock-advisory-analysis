@@ -85,6 +85,22 @@ def _headlines(tk: "yf.Ticker", limit: int = 5) -> list[str]:
     return titles[:limit]
 
 
+def _market_for(ticker: str) -> str:
+    """Map a ticker suffix to its market (design §12 D6).
+
+    `.NS` -> NSE (India), `.TO` -> TSX (Canada), otherwise US. This is the same
+    suffix convention yfinance uses; the Phase-0 smoke test confirmed `.NS`
+    tickers report exchange='NSI' and carry currency='INR', which flows through
+    `_fundamentals` into data_snapshot.fundamentals.currency untouched (no FX).
+    """
+    t = ticker.upper()
+    if t.endswith(".NS"):
+        return "NSE"
+    if t.endswith(".TO"):
+        return "TSX"
+    return "US"
+
+
 def get_market_data(ticker: str) -> dict:
     """Fetch price/volume + fundamentals + news for one ticker.
 
@@ -93,7 +109,7 @@ def get_market_data(ticker: str) -> dict:
     `rate_limited=True` flags a skip caused by Yahoo throttling vs. genuine
     no-data (delisted/halted), so the run log and call_log can tell them apart.
     """
-    market = "TSX" if ticker.upper().endswith(".TO") else "US"
+    market = _market_for(ticker)
     out = {
         "ticker": ticker, "market": market,
         "has_price": False, "is_new": False, "rate_limited": False,
