@@ -12,7 +12,6 @@ last close). Writes its own run_heartbeat row ("daily-discovery"). Phase 2-style
 dry run until ALERTS_ENABLED is flipped on.
 """
 
-from datetime import datetime, timezone
 import os
 import time
 
@@ -28,7 +27,6 @@ def main() -> None:
     config.require_secrets()
     sb = state.client()
     notifier = notify.get_notifier()
-    now = datetime.now(timezone.utc)
 
     # Region selects the market set (Phase 6 D5): "na" = US + Canada (the 22:00 UTC
     # post-US-close dispatch); "in" = India NSE (a separate NSE-close-timed dispatch,
