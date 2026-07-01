@@ -1,12 +1,65 @@
 # Stock Advisory Agent — Solution Design: change history
- 
-Archived change-note stack (v2 → v13), split out of the working Solution Design for token hygiene. The
+
+Archived change-note stack (v2 → v14), split out of the working Solution Design for token hygiene. The
 working document (`stock-advisory-agent-solution-design.md`) carries the current-state design plus a
 distilled **Load-bearing decisions** list; this file preserves the full provenance — what changed in
 each revision and why. Read newest-first.
- 
+
 ---
- 
+
+> **v14 note — Part-1 issue cleanup + Phase 6 (NSE) + Phase 7 (dashboard) build, executed 2026-07-01.**
+> The full developer handoff plan (issue cleanup → Phase 6 → Phase 7) shipped in one build cycle
+> across PRs #19–#26. This is a **code + doc** revision, not doc-only like v13.
+>
+> **Issue cleanup (#13–#18), all resolved:**
+> 1. **#13** — `detail.html` no longer renders a market badge on `new-candidate` rows (no authoritative
+>    `watchlist` row to badge from). #17 fixed in the same PR (#19): `ai_judge._FAIL_SAFE_API` no
+>    longer says "rate-limited," matching `_FAIL_SAFE_PARSE`'s neutral tone (load-bearing decision #3).
+> 2. **#14** — `call_log.alert_type` CHECK tightened to `change`/null only; `reminder` (retired since
+>    v6) is no longer a permitted value. Bundled with the #15 migration.
+> 3. **#15** — `watchlist.market` CHECK widened to admit `NSE`, `holdings.currency` to admit `INR`;
+>    `holdings.shares > 0` / `holdings.cost_basis > 0` validation guards added in the same migration,
+>    per the v13 scope expansion.
+> 4. **#16** — `watchlist` SELECT RLS policy added (mirrors `call_log`'s), unblocking dashboard reads.
+> 5. **#18** — CORS smoke test (runner-based, since Yahoo is egress-blocked in the dev container)
+>    **confirmed browser→Yahoo direct fetch is CORS-blocked for all three markets** — `HTTP 200` with
+>    valid data server-side, but no `Access-Control-Allow-Origin` header, and a real headless-Chromium
+>    `fetch()` from a foreign origin fails outright. This is a Yahoo-side property (`vary: Origin`
+>    confirms selective CORS-gating), not an environment artifact. **Fallback ruling: publish prices
+>    server-side (`publish-prices.yml` → `pages/prices.json`), dashboard reads same-origin.** This
+>    ruling was given directly by Arjun, not inferred by the build session. §13's live-price
+>    architecture is corrected to match — this is a genuine design change from the original spec, not
+>    an implementation detail.
+>
+> **Phase 6 — India NSE, built and live (D1–D9, §12):** per-market ET/IST gate (verified 0 session
+> overlaps across DST regimes), second IST watchlist dispatch, NSE model Variable pair, IST monitor
+> window, NSE discovery on its own close-timed dispatch (`region=in`, filtered to NSE-only via
+> `exchange='NSI'` to drop BSE duplicates, INR-denominated quality-gate thresholds), separate NSE ntfy
+> topic with safe fallback, NSE badge/currency rendering. **Two D5 defaults were flagged for
+> ratification during the build and confirmed by Arjun on 2026-07-01:**
+> `DISCOVERY_MIN_MARKET_CAP_INR=₹5e10`, `DISCOVERY_MIN_PRICE_INR=₹50`, and NSE-only (not
+> all-India/BSE-inclusive) discovery filtering. Go-live was staged (dry-run → alerts-on) specifically
+> so the pipeline could be observed live before any real NSE alert could fire; cold-start silence
+> meant the 10 seeded tickers produced no alert dump on activation.
+>
+> **Phase 7 — read-only dashboard, built in two passes (§13):** first built (PR #22) against the
+> original UI-handoff spec (direct browser→Yahoo fetch), then **reworked (PR #24)** once #18 proved
+> that design infeasible. The rework is documented in §13 as the as-built architecture, not a footnote
+> — the original design is superseded. All other FR19–22 behavior (market grouping, conditional
+> last-run block via `tc-bot`, access gate, FR23 dual-timezone timestamps) is unchanged from the
+> original build.
+>
+> **Also in this pass:** the four governing documents (Requirements v4, UI-handoff v3, this SD, and
+> the history file) were committed to the repo at `requirements_docs/` (previously lived only in the
+> Claude Project) so a Claude Code session building against this plan can read them directly rather
+> than relying on prompt-pasted context. §8's repo-structure note claiming the docs "live outside the
+> repo" is corrected accordingly.
+>
+> **Not yet observed:** a full live NSE trading-session run — go-live landed after that day's NSE
+> window had already closed (§11, §12).
+
+---
+
 > **v13 note — access-control ratification (doc-only, no code/schema change).** A cross-functional
 > consistency review (Requirements ↔ UI-handoff ↔ SD, 2026-06-30) surfaced two undocumented access-
 > control assumptions and one ambiguous requirement reading. All three were taken to Product for a
@@ -37,9 +90,9 @@ each revision and why. Read newest-first.
 > already correct and needed no change; only the requirement's wording was misaligned with it). No SD
 > section changed for that item. No code, migration, or Supabase change was made in this pass — issue
 > #15's expanded scope is tracked for the Phase-6 migration, not executed here.
- 
+
 ---
- 
+
 > **v12 note — code-ahead reconciliation (the pass v10/v11 deferred).** A file-by-file code review of
 > `main` HEAD (`e133d70`) against SD v11, cross-checked against live Supabase (constraints, cron, RLS,
 > data state), closed the long-standing *code-vs-doc* gap. **Five items the SD still described as
@@ -77,9 +130,9 @@ each revision and why. Read newest-first.
 > **Explicitly NOT touched in v12:** no Requirements or UI-handoff edits (those route to Product /
 > Designer); no code or Supabase changes (log-only); §12 (NSE) and §13 (dashboard) remain
 > confirmed-but-unbuilt.
- 
+
 ---
- 
+
 > **v11 note — two more document-contradiction fixes (C5–C6).** A second document-vs-document pass
 > (UI-handoff v3 ↔ SD, and an SD-internal cross-check) found two contradictions v10 didn't cover.
 > Both are doc-only corrections on **unbuilt** surfaces (dashboard / NSE discovery), so no behavior
@@ -104,10 +157,10 @@ each revision and why. Read newest-first.
 > the live `market`/`currency` CHECK constraints are US/TSX-only — pending its own ruling), and the
 > *code-ahead* reconciliation still deferred from v10 (earnings signal §4.3, FR23 timestamps §4.6/§4.7,
 > position block §4.7, scheduler DDL §8). Those are out of scope for these two contradiction fixes.
- 
+
 ---
- 
- 
+
+
 > ↔ SD, UI-handoff v3 ↔ SD) found four places where the SD still carried stale "to-be-done / flagged
 > to X" notes that the source-of-truth docs had already resolved. In every case the SD trailed its own
 > upstream doc; the source-of-truth doc wins and the SD was corrected. **No behavior changed; no
@@ -135,9 +188,9 @@ each revision and why. Read newest-first.
 > §4.6/§4.7, detail-page position block §4.7, scheduler DDL §8), but the SD still describes these as
 > pending/not-built. That is a code-vs-doc pass (its own version bump) and is out of scope for these
 > four document-contradiction fixes.
- 
+
 ---
- 
+
 > **v9 note — code-review reconciliation.** A file-by-file review found the SD had drifted from the
 > deployed code in several places. This revision fixes the **document** side of those gaps; the
 > **code** side (and the GitHub-committed scheduler DDL) is tracked separately as pending work.
@@ -169,7 +222,7 @@ each revision and why. Read newest-first.
 > *Code/infra work spawned by this review is pending (GitHub commit queue): add earnings screen;
 > commit the scheduler DDL to `sql/`; add the position block; build FR23 timestamps (push + detail);
 > remove the dead reminder paths + dead pacing constant; small detail-page copy/symbol fixes.*
- 
+
 > **v8 note — reconciling to requirements v3 + UI handoff v3.** No built behavior is re-opened; this
 > revision folds in newly-confirmed scope and corrects one stale deferral.
 >
@@ -196,7 +249,7 @@ each revision and why. Read newest-first.
 >
 > Unchanged and explicitly *not* re-opened: §6.3 single-rule alerting, §4.4/§4.4a AI prompt, §4.1
 > scheduler, §4.8 monitor, §5 schema (dashboard reads existing tables; NSE adds rows only), §7.
- 
+
 > **v7 note — QA batch #6–#12 landed; pending markers cleared; two diagnoses corrected.** Every
 > ⏳ PENDING fix from v6 has now shipped, so those markers flip to live and move out of Open Items.
 > Two places where the v6 doc's *diagnosis* differed from what live data showed are corrected (the
@@ -235,7 +288,7 @@ each revision and why. Read newest-first.
 > 8. **RPD sustainability (#10 Problem 2) is a standing ops note, not a defect (§11).** Configurable
 >    model Variable + separate dual-model buckets + trackable `data_snapshot.tokens` make it an
 >    ongoing watch item, not a fix.
- 
+
 > **v6 note — reconciling the SD with what's actually deployed.** Phases 0–5 shipped, and the
 > implementation drifted from and extended v5. This revision folds reality back in, drafts the
 > pending defect fixes, and adds the NSE proposal. Where v5 and deployment conflicted, **deployment
@@ -276,18 +329,17 @@ each revision and why. Read newest-first.
 >
 > *Proposed, not built:*
 > 10. **§12 — India NSE expansion, watchlist-only, discovery deferred.** Clearly fenced as a proposal.
- 
+
 > **v5 note:** New-listing handling added (Phase 0). A recently-IPO'd ticker returns valid price
 > data but too few sessions for the 20-day metrics — compute 1d/5d, pass the 20d fields as
 > `n/a (newly listed)`, never skip/fail on history depth. Sections 4.4a, 7.5.
- 
+
 > **v4 note:** Four review gaps closed — FR15 every-check logging, discovery dedup, UUID detail-page
 > id, NYSE/TSX holiday-calendar divergence. Sections 2, 4.1, 4.3, 4.7, 5, 6.1, 6.2, 6.3, 7.2, 10.
- 
+
 > **v3 note:** FR7/FR8 reconciled as a hybrid (change alert + standing-verdict reminder); two-run
 > debounce removed. **Superseded by v6** — the hybrid and the reminder are both retired under the
 > single-rule model (issue #11). Retained here for history.
- 
+
 > **v2 note:** Senior-review pass — AI prompt fully specified (§4.4a), public-repo cost fix (§7.1),
 > concurrency/manual-edit/timezone/universe-ownership gaps made explicit.
- 
