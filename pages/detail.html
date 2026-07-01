@@ -125,6 +125,11 @@
       .map(h => `<p class="headline-item">${esc(h)}</p>`).join("") ||
       `<p class="stat-label">No headlines captured.</p>`;
 
+    // Issue #13: discovery rows have no watchlist row, so there's no authoritative
+    // market to badge — suppress it entirely rather than guess from ticker suffix.
+    const mktBadge = row.label === "new-candidate" ? "" :
+      `<span class="mkt">${esc(snap.market || (String(row.ticker).endsWith(".TO") ? "TSX" : "US"))}</span>`;
+
     // Q3 (FR2/FR11): held-position block. Omitted entirely for watch-only
     // tickers (snap.position absent) — no empty block, no placeholder.
     const p = snap.position;
@@ -145,7 +150,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin:2px 0 14px">
           <span class="ticker">${esc(row.ticker)}</span>
-          <span class="mkt">${esc(snap.market || (String(row.ticker).endsWith(".TO") ? "TSX" : "US"))}</span>
+          ${mktBadge}
         </div>
         ${failNote}
         <p class="headline" style="color:${v.text}">${esc(headlineText(row))}</p>

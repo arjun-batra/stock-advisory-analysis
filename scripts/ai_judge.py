@@ -18,7 +18,7 @@ RATIONALE_MAX = 280   # stored + shown in full on the detail page; the push is c
 _FAIL_SAFE_PARSE = {"verdict": "Hold",
                     "rationale": "The model reply could not be parsed; showing a fail-safe Hold."}
 _FAIL_SAFE_API = {"verdict": "Hold",
-                  "rationale": "The AI service was rate-limited and didn't respond; showing a fail-safe Hold."}
+                  "rationale": "The AI service didn't return a usable response; showing a fail-safe Hold."}
 
 BATCH_SYSTEM_PROMPT = (
     "You are a disciplined, unemotional equity analyst. You are given several "
