@@ -12,6 +12,10 @@ on:
         description: "Send real candidate pushes? Set false for a safe dry run"
         type: boolean
         default: true
+      region:
+        description: "Discovery region: 'na' (US+Canada, post-US-close) or 'in' (NSE, post-NSE-close)"
+        type: string
+        default: "na"
 
 concurrency:
   group: daily-discovery
@@ -50,6 +54,11 @@ jobs:
           # alerting is unchanged. No `|| 'true'` fallback: `false || 'true'`
           # is truthy in GitHub expressions and would defeat the toggle.
           ALERTS_ENABLED: ${{ inputs.alerts_enabled }}
+          # Region select (D5). pg_cron's post-US-close dispatch sends no inputs, so
+          # this defaults to 'na'; the NSE-close dispatch passes region=in.
+          DISCOVERY_REGION: ${{ inputs.region || 'na' }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # NSE candidates route to the NSE topic (FR18); falls back to NTFY_TOPIC if unset.
+          NSE_NTFY_TOPIC: ${{ secrets.NSE_NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_discovery.py

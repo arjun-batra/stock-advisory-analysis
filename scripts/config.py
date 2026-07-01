@@ -86,6 +86,19 @@ DISCOVERY_MIN_PRICE      = float(os.environ.get("DISCOVERY_MIN_PRICE", "5"))    
 DISCOVERY_MIN_VOLUME     = float(os.environ.get("DISCOVERY_MIN_VOLUME", "500000"))           # 500k shares/day
 # Only real primary exchanges — excludes Cboe CA secondary listings, OTC, pink sheets.
 DISCOVERY_ALLOWED_EXCHANGES = {"NYSE", "NYSEArca", "NasdaqGS", "NasdaqGM", "NasdaqCM", "Nasdaq", "Toronto"}
+
+# --- NSE discovery gates (Phase 6 D5) ----------------------------------------
+# The region=in Yahoo screener returns BOTH NSE and BSE listings (D5 smoke test:
+# 45% NSI / 55% BSE, same names dual-listed). §12 is NSE discovery, so filter to
+# NSE only (exchange 'NSI') and drop the BSE ('.BO') duplicates.
+DISCOVERY_ALLOWED_EXCHANGES_IN = {"NSI"}
+# marketCap comes back in INR, so the USD $2B floor above is meaningless here.
+# Default ₹5,000 crore (₹5e10 ≈ $0.6B): a liquid mid/large-cap floor. The USD-$2B
+# equivalent (~₹1.66e11) would leave almost nothing — the D5 probe's median mover
+# mcap was ~₹4e10. TUNABLE / for ratification, like every discovery threshold.
+DISCOVERY_MIN_MARKET_CAP_INR = float(os.environ.get("DISCOVERY_MIN_MARKET_CAP_INR", "50000000000"))  # ₹5e10
+# INR price floor (rupees), analogous to the $5 US floor. ₹50 default.
+DISCOVERY_MIN_PRICE_INR = float(os.environ.get("DISCOVERY_MIN_PRICE_INR", "50"))
 # Movement thresholds for the gainers/losers screens (abs % move to qualify).
 DISCOVERY_GAINER_PCT = float(os.environ.get("DISCOVERY_GAINER_PCT", "5"))
 DISCOVERY_LOSER_PCT  = float(os.environ.get("DISCOVERY_LOSER_PCT", "-5"))
