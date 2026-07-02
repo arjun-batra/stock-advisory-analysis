@@ -1,23 +1,25 @@
-# Stock Advisory Agent — Solution Design (v14)
+# Stock Advisory Agent — Solution Design (v15)
 
 **Owner:** Arjun (solo build reference)
-**Status:** Phases 0–7 all live. **v14 reflects the Part-1 issue cleanup + Phase 6 (NSE) + Phase 7
-(dashboard) build**, executed 2026-07-01 across PRs #19–#26. All five genuine gaps from the v12/v13
-review (**#13–#17**) are fixed and merged. Phase 6 (India NSE, §12) is live — 10 tickers, per-market
-gate, separate ntfy topic, region-aware discovery — activated via a deliberate dry-run → alerts-on
-staged go-live so cold-start silence (§6.3) never risked an alert dump. Phase 7 (dashboard, §13) is
-live, but **not as originally designed**: issue #18's CORS smoke test proved the browser cannot fetch
-Yahoo prices directly (blocked for all three markets, confirmed both by header inspection and a real
-in-browser fetch), so the live-price read was reworked mid-build to a server-published `prices.json`
-read same-origin — a real architecture change to §13, ratified by Arjun directly (not inferred), and
-documented as such below. Two Phase-6 D5 defaults (NSE discovery INR thresholds, NSE-only filtering)
-were flagged for ratification during the build and were **confirmed by Arjun on 2026-07-01** — see §12.
+**Status:** Phases 0–7 all live. **v15 documents the 2026-07-01 behavior-preserving refactor**
+(audit: issue #27, execution: PR #28) — dead code removed, two duplicated algorithms consolidated
+(`textutil.clip()`, `ai_judge.missing_verdict()`), one naming collision fixed
+(`prefilter._market_from_exchange`), and the vestigial `candidate_universe` table dropped from the
+schema (§5). Net −31 lines, **zero behavior change** to any live pipeline — verified via differential
+tests, static analysis, and a live `publish-prices` run producing output identical to pre-refactor
+except the timestamp. Full record: `docs/refactor-handover-2026-07-01.md` (in-repo, dev-owned).
+
+The refactor also surfaced one genuine doc-vs-code gap: `data_snapshot` never actually carries a
+`market` field, so §4.7's documented detail-page currency/badge logic is dead in practice, silently
+replaced by a fundamentals/suffix fallback that happens to agree today. Tracked as **issue #31**
+(open, needs a ruling) — flagged in §4.7 and §5 below, not yet resolved.
+
 **Companion docs:** `stock-advisory-agent-requirements.md` (**v4 — source of truth**);
 `stock-advisor-ui-handoff-v3-spec.md` (**v3 — rendering authority**);
-`stock-advisory-agent-solution-design-history.md` (change history). **All four docs now live in the
+`stock-advisory-agent-solution-design-history.md` (change history). **All four docs live in the
 repo** at `requirements_docs/`, committed 2026-07-01 so Claude Code sessions can read them directly.
 
-> **Change history moved out (token hygiene).** The full v2–v13 dated change-note stack lives in
+> **Change history moved out (token hygiene).** The full v2–v14 dated change-note stack lives in
 > `stock-advisory-agent-solution-design-history.md`. This working document carries the **current-state**
 > design only. The handful of decisions whose *rationale* is load-bearing — the ones a future reader
 > could otherwise undo by accident — are distilled in §0 below.
@@ -251,9 +253,8 @@ screener** and applies quality gates + signals locally:
   `day_gainers`, `day_losers`, `most_actives` (US) plus a custom `region=ca` EquityQuery for Canada
   and (v14, live) a `region=in` EquityQuery for NSE — see §12 D5 for the India-specific corrections
   (NSE-only filtering, INR thresholds). There is **no maintained universe table**; the
-  `candidate_universe` table in §5 is **vestigial** (seeded by no one, read by nothing) and should be
-  dropped or ignored. This removes the "seed-and-quarterly-refresh" ownership burden the old SD
-  invented — there's nothing to maintain.
+  `candidate_universe` table has been **dropped** (v15, §5) — this removes the "seed-and-quarterly-
+  refresh" ownership burden the old SD invented — there's nothing to maintain.
 - **Quality gates (all tunable, per-region):** minimum market cap (~$2B US/CA; **₹5e10 for NSE, v14** —
   a direct USD gate would leave almost nothing given INR-denominated market caps), price (~$5 US/CA;
   **₹50 for NSE, v14**), daily volume (~500k), and an allow-list of real primary exchanges (NYSE/Nasdaq
@@ -454,6 +455,10 @@ no authoritative market. The badge is now suppressed entirely for `label==='new-
 **NSE badge + currency (v14, D9, live).** Currency symbol is derived from `watchlist.market`
 (`$`/`CA$`/`₹`), not the ticker suffix or a possibly-missing fundamentals currency code, per UI-handoff
 v3 — with a `.NS`-aware badge fallback so an NSE row with no snapshot market still badges NSE.
+**Known gap (issue #31):** `data_snapshot` never actually carries a `market` field — this fallback
+badge/currency path is what's really running in production; the "derived from `watchlist.market`"
+description above is the documented intent, not the live mechanism. See §5's `data_snapshot` note and
+issue #31 for the ruling needed to close this doc-vs-code gap.
 
 **Timestamp — client-rendered dual timezone (FR23). ✅ Live.** The detail page runs in the browser, so
 the device timezone *is* available — it renders **device timezone primary, IST secondary in brackets**
@@ -502,11 +507,16 @@ documented (unbuilt) mitigation.
 |---|---|---|
 | `watchlist` | ticker, market (US/TSX/NSE), type (stock/ETF), status (held/watch-only), date_added | The ticker list (FR1, FR3); `market` now three-valued (§12), CHECK widened v14 |
 | `holdings` | ticker, shares, cost_basis, currency | Position data for gain/loss (FR2, FR11); `currency` now three-valued (§12); `shares > 0` / `cost_basis > 0` guards live (v14) |
-| `candidate_universe` | ticker, market, active | **Vestigial (v9)** — not read by code; discovery uses Yahoo's live screener (§4.3). Drop or ignore. |
 | `verdict_state` | ticker, current_verdict, last_checked_at | Change-detection for the single rule (§6.3) |
 | `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp, label (watchlist/new-candidate), alert_type (**change/null**, CHECK tightened v14), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source |
 | `monitor_alerts` | check_name (PK), last_state, last_alerted_at, updated_at | Dead-man monitor dedup state (§4.8) |
 | `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat the monitor reads (NFR2) |
+
+**`candidate_universe` — DROPPED (v15, issue #27/PR #28).** Confirmed vestigial before dropping
+(0 rows, zero references from code, DB functions, views, cron jobs, or FKs — load-bearing decision #7
+held throughout) and removed via auditable migration `drop_vestigial_candidate_universe`. The public
+schema now holds exactly the six tables listed above; no code change accompanied the drop since
+nothing referenced the table.
 
 **`verdict_state` is now physically three columns (v7): `ticker`, `current_verdict`,
 `last_checked_at`.** Retiring the cooldown (issue #11) and the reminder (FR7) removed everything the
@@ -549,6 +559,17 @@ and for discovery rows (no holding).
 **`tokens` is a per-batch total replicated across every row of the run — dedup per run, never sum per
 row.** `fallback_from` records the *real* reason a call fell to the backup model (§4.4a), null if the
 primary succeeded.
+
+**⚠️ Known gap — `market` is documented but not written (flagged v15, issue #31, not yet ruled on).**
+Nothing above lists a `market` key, but §4.7's detail-page badge/currency logic is described as reading
+`snap.market`. In the live code, `state._snapshot()` never writes one — that read path is dead, and
+`detail.html` silently falls back to fundamentals-currency / ticker-suffix inference instead, which
+happens to agree with the true market for every ticker live today. Surfaced during the 2026-07-01
+refactor audit (issue #27); left unfixed there because adding the field is a behavior change, not
+cleanup. **Two ways to close this doc-vs-code gap, pending a ruling on issue #31:** (1) add `market` to
+the snapshot write and make §4.7 read it as documented, or (2) formally document the fallback-inference
+path as the real mechanism and drop the `snap.market` description. Until ruled, treat §4.7's
+"derived from `watchlist.market`" framing as aspirational, not as what's actually running.
 
 **Supabase objects.** Functions: `dispatch_github_workflow` (live), `dispatch_watchlist_if_open`
 (**live** — ET-aware dispatch gate, §4.1), `dispatch_watchlist_nse_if_open` (**live, v14** — IST gate,
@@ -779,6 +800,7 @@ stock-advisory-analysis/                # actual repo name
 │   ├── ai_judge.py               # Gemini batched judge_batch(models=...) + timeout/fallback
 │   ├── state.py                  # Supabase read/write, single-rule change machine (§6.3)
 │   ├── notify.py                 # ntfy.sh dispatch (provider-agnostic); per-market topic routing (v14)
+│   ├── textutil.py               # v15 (refactor, PR #28): shared clip() — was duplicated in ai_judge.py/notify.py
 │   ├── run_hourly.py             # hourly watchlist orchestrator, per-market gate (§6.1)
 │   ├── run_discovery.py          # daily discovery orchestrator, region-aware (§6.2)
 │   ├── publish_prices.py         # v14: fetches watchlist prices, writes pages/prices.json (issue #18)
@@ -812,6 +834,7 @@ stock-advisory-analysis/                # actual repo name
 | — | **Scheduling migration (cross-cutting)** | ✅ Done — pg_cron + `workflow_dispatch` replaced GitHub native cron (§4.1) |
 | 6 | **India NSE — watchlist + discovery** | ✅ **Done, live (v14).** §12. 10 NSE tickers on the IST watchlist dispatch + monitor window; NSE discovery live on its own NSE-close-timed dispatch (region=in, NSE-only, INR-thresholded); separate NSE ntfy topic (D7); INR rendering per UI handoff. Go-live (alerts on) landed same day as build; cold-start silence meant no alert dump on activation. |
 | 7 | **Read-only dashboard** | ✅ **Done, live (v14).** §13. Built (#22) against the original direct-Yahoo-fetch design; **reworked (#24) after issue #18's CORS smoke test proved that design infeasible** — live price now reads a server-published `pages/prices.json` (same-origin) instead. All other FR19–22 behavior (market grouping, conditional last-run block, access gate, FR23 timestamps) unchanged from the original build. |
+| — | **Behavior-preserving refactor (v15, issue #27/PR #28)** | ✅ Done — dead-code removal, deduplication (`textutil.clip()`, `missing_verdict()`), naming-collision fix, `candidate_universe` dropped. Zero behavior change to any live pipeline; net −31 lines. Surfaced one real doc-vs-code gap (`data_snapshot.market`, issue #31, open). |
 
 ---
 
@@ -902,8 +925,17 @@ and merged. Phase 6 (NSE) and Phase 7 (dashboard) are both built and live. Issue
 feasibility) is resolved with a documented architecture change (§13). The Part-1/Phase-6/Phase-7
 build plan handed to the dev conversation is complete.*
 
+*Closed in v15: the behavior-preserving refactor (issue #27, executed via PR #28) — dead code,
+duplication, and one naming collision cleaned up; `candidate_universe` dropped from the schema
+(§5). Zero behavior change to any live pipeline.*
+
 Still open:
 
+- **`data_snapshot.market` doc-vs-code gap (v15, issue #31).** §4.7/§5 describe the detail page's
+  currency/badge logic as reading `snap.market`; the live code never writes that field, so the real
+  mechanism is a fundamentals/suffix fallback that happens to agree today. Needs a ruling: write the
+  field to match the doc, or rewrite the doc to match the fallback. Not urgent — no live ticker
+  currently exposes a mismatch — but the doc and code should stop disagreeing.
 - **Supabase single-point-of-failure** (§2 item 6) — scheduling *and* monitoring both live in
   Supabase pg_cron; an out-of-band uptime ping is the unbuilt mitigation. Decide if it's worth adding.
 - **RPD sustainability — standing ops note, not a defect (#10 Problem 2).** This is *not* the old
@@ -918,9 +950,6 @@ Still open:
   live IST session.
 - **Confirm current Gemini free-tier model names + RPM/RPD** against live docs at build time —
   standing item, now covering three model-Variable pairs (US/TSX, discovery, NSE).
-- **SD §8 self-reference stale (minor, doc-only).** §8 previously said the requirements/SD docs "live
-  outside the repo" — no longer true as of the docs being committed to `requirements_docs/`. Corrected
-  in this v14 pass.
 ---
 
 ## 12. India NSE Expansion — live (v14)
