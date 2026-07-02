@@ -419,12 +419,15 @@ Unknown/missing market falls back to ET.
 **Separate NSE ntfy topic (v14, D7, FR18, live).** `notify._topic_for(market)` routes NSE alerts to
 `NSE_NTFY_TOPIC`, US/TSX to the default `NTFY_TOPIC`. **Falls back to the default topic if
 `NSE_NTFY_TOPIC` is unset**, so an alert is never dropped for a missing config value — it just lands
-on the shared topic until the NSE-specific one is provisioned. **That fallback is no longer silent
-(issue #35, v16):** each NSE alert routed to the default topic emits an operator-visible
-`[FR18 fallback]` run-log line, so a degraded routing (issue #34 — the secret being unprovisioned in
-the runner) is detectable in logs rather than only via the wrong channel on-device. Fully restoring
-FR18's separate-topic behavior is an operational step (provision the `NSE_NTFY_TOPIC` secret), not a
-code change — tracked in #34.
+on the shared topic until the NSE-specific one is provisioned. The `NSE_NTFY_TOPIC` secret **is now
+provisioned in the runner (issue #34, resolved 2026-07-02)**, so NSE alerts route to their own topic
+and the fallback path is inert. The code plumbing was verified intact end to end — both workflows set
+`NSE_NTFY_TOPIC` from the secret, `config.NSE_NTFY_TOPIC` reads it, and `notify._topic_for()` routes
+`market=='NSE'` to it — so no code change was required; the fix was operational (create the topic +
+set the secret). **That fallback is also no longer silent (issue #35, v16):** were the secret ever
+unset again, each NSE alert routed to the default topic emits an operator-visible `[FR18 fallback]`
+run-log line, so a degraded routing is detectable in logs rather than only via the wrong channel
+on-device.
 
 This is deliberately *not* the dual-timezone display used on the client-rendered surfaces (§4.7,
 §13) — the server can't detect the device, and the market's own timezone is the unambiguous anchor
