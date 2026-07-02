@@ -1,4 +1,4 @@
-# Stock Advisory Agent — Solution Design (v16)
+# Stock Advisory Agent — Solution Design (v17)
 
 **Owner:** Arjun (solo build reference)
 **Status:** Phases 0–7 all live. **v15 documents the 2026-07-01 behavior-preserving refactor**
@@ -17,6 +17,12 @@ fundamentals/suffix fallback instead of the documented mechanism. Tracked as **i
 **resolved (2026-07-02, ruling: "make the field real")** — `state._snapshot()` now writes `market`
 from ingest's per-ticker resolution, so §4.7 reads it as documented and the fallback is a legacy-row
 safety net, not the live mechanism. See §4.7 and §5 below.
+
+**v17 (2026-07-02)** fixes a confirmed dispatch bug: the market-close boundary check in both
+`dispatch_watchlist_if_open()` (ET) and `dispatch_watchlist_nse_if_open()` (IST) tested against the
+*exact* close time, so pg_cron's sub-second execution jitter silently dropped the final 30-min
+dispatch of every trading day. The upper bound is now **close-time + 5 minutes** (16:05 ET / 15:35
+IST); applied via Supabase migration `fix_market_close_boundary_jitter`. See §0 item 9 and §4.1.
 
 **Companion docs:** `stock-advisory-agent-requirements.md` (**v4 — source of truth**);
 `stock-advisor-ui-handoff-v3-spec.md` (**v3 — rendering authority**);
@@ -61,6 +67,18 @@ provenance is in the history file; the short version:
 8. **AI fails safe to Hold (§4.4a, §6.3).** A parse/API failure logs a fail-safe Hold, and the
    non-reading guard stops it from being read as a real change — so a bug can only ever *miss* a
    signal, never *fabricate* one. Keep that guard.
+9. **Market-close dispatch boundary is close + 5 min, not exact close (§4.1, confirmed bug fix
+   2026-07-02).** `dispatch_watchlist_if_open()` (ET) and `dispatch_watchlist_nse_if_open()` (IST) gate
+   the final `*/30` dispatch of the session against **16:05 ET / 15:35 IST**, not the exact 16:00 /
+   15:30 close. This is deliberate slack for pg_cron's sub-second execution jitter: at the exact-close
+   slot `now()` lands a few hundred ms *past* the close, so an exact `<= '16:00'` (`<= '15:30'`) test
+   evaluated false and **silently dropped the last dispatch of every trading day** — both windows were
+   confirmed missing their final 30-min run. Only the exact-close instance was the defect; the *next*
+   slot (16:30 ET / 16:00 IST) correctly stays excluded — the +5 min is wide enough to catch the close
+   slot's jitter but too narrow to admit the post-close slot, so the fix adds **no** post-close no-op.
+   Applied as Supabase migration `fix_market_close_boundary_jitter`. **Don't tighten either bound back
+   to the exact close** — the jitter is real and the last dispatch is the most decision-relevant of the
+   day. (The monitor's own `<= 16:00 / 15:30` staleness window is a *different* check and unchanged.)
 ## 1. Purpose of This Document
 
 The requirements doc closes the product questions. This doc closes the engineering ones — how the
@@ -219,9 +237,14 @@ is to not miss things.
 UTC offsets, which couldn't track the ET market close across daylight-saving transitions — the symptom
 was post-close no-op dispatches (#9) and a daily false "watchlist stalled" alert (#12). **Now shipped:**
 - `public.dispatch_watchlist_if_open()` gates the watchlist dispatch on
-  `(now() at time zone 'America/New_York')::time between '09:30' and '16:00'` **plus** a weekday check,
+  `(now() at time zone 'America/New_York')::time between '09:30' and '16:05'` **plus** a weekday check,
   then calls `dispatch_github_workflow('hourly-watchlist.yml')`. The watchlist-dispatch cron is
-  re-pointed at this gate.
+  re-pointed at this gate. The upper bound is **16:05, not the 16:00 exact close** — deliberate slack
+  for pg_cron's sub-second execution jitter, which otherwise made the exact-close `*/30` slot's `now()`
+  land just past 16:00 and dropped the session's final dispatch (confirmed bug, 2026-07-02; §0 item 9).
+  The IST twin `dispatch_watchlist_nse_if_open()` carries the same +5 min slack (15:35, §12). Neither
+  admits the following post-close slot (16:30 ET / 16:00 IST). Migration
+  `fix_market_close_boundary_jitter`.
 - The wide `*/30 13-21 UTC` cron **stays as the DST superset** — it fires more often than needed and
   the ET gate trims it down to the live session, so the schedule never has to be edited twice a year.
   This is the "schedule fires loosely, the gate is the authority" principle made concrete.
@@ -876,8 +899,10 @@ stock-advisory-analysis/                # actual repo name
   no-show, (c) degraded run → each raises one ntfy alert; `monitor_alerts` dedups; clearing fires
   exactly one recovery notice.
 - **ET-aware gate (#9, #12) — live regression:** across a DST boundary, no post-close dispatch and no
-  false "stalled" alert. The dispatch gate (`09:30–16:00` ET) and the monitor window (`10:15–16:00`
-  ET) both track the close correctly; the old 20:50 UTC false alert no longer fires.
+  false "stalled" alert. The dispatch gate (`09:30–16:05` ET — close + 5 min jitter slack, §0 item 9)
+  and the monitor window (`10:15–16:00` ET) both track the close correctly; the old 20:50 UTC false
+  alert no longer fires. **Close-boundary jitter (2026-07-02):** the exact-close `*/30` slot must still
+  dispatch (16:05 bound), while the next slot (16:30 ET / 16:00 IST) must not.
 - **Safe forced test (#7) — live:** `FORCE_RUN=true` + `ALERTS_ENABLED=false` runs off-hours with
   **no** real push; the `[gate]` audit line records `market_open`, `force_run`, `alerts`, and UTC+ET
   time. `ALERTS_ENABLED=true` off-hours *does* push (documented, not a defect).
@@ -987,7 +1012,10 @@ sessions**, verified with a 5-minute-resolution sweep across both DST regimes (0
 **Design decisions (D1–D9) — as built:**
 
 - **D1 — Scheduling (watchlist). Live.** A second `nse-watchlist-dispatch` pg_cron
-  (`*/30 3-10 * * 1-5`) reuses `hourly-watchlist.yml` — no new workflow. *(§4.1)*
+  (`*/30 3-10 * * 1-5`) reuses `hourly-watchlist.yml` — no new workflow. Its gate
+  `dispatch_watchlist_nse_if_open()` bounds the IST session at **09:15–15:35** — the 15:35 upper bound
+  (close + 5 min) mirrors the ET gate's jitter slack so the exact-close slot is not dropped (§0 item 9,
+  migration `fix_market_close_boundary_jitter`). *(§4.1)*
 - **D2 — Per-market open gate. Live.** `run_hourly.py` filters the watchlist to whichever session is
   open (US/TSX via ET, NSE via IST) and runs each open group through its own batched AI call with its
   own model try-order. Runtime gate remains the authority (load-bearing decision #4). Shared

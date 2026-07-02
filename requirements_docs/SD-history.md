@@ -1,9 +1,35 @@
 # Stock Advisory Agent — Solution Design: change history
 
-Archived change-note stack (v2 → v16), split out of the working Solution Design for token hygiene. The
+Archived change-note stack (v2 → v17), split out of the working Solution Design for token hygiene. The
 working document (`stock-advisory-agent-solution-design.md`) carries the current-state design plus a
 distilled **Load-bearing decisions** list; this file preserves the full provenance — what changed in
 each revision and why. Read newest-first.
+
+---
+
+> **v17 note — market-close dispatch boundary jitter fix (confirmed bug), 2026-07-02.** The two
+> watchlist dispatch gates — `dispatch_watchlist_if_open()` (ET) and `dispatch_watchlist_nse_if_open()`
+> (IST) — tested the session's upper bound against the **exact** close time (`t <= '16:00'` /
+> `t <= '15:30'`). pg_cron fires the `*/30` job with sub-second scheduling jitter, so at the
+> exact-close slot `now()` resolves to a few hundred ms *past* the close and the `<=` test evaluated
+> **false** — silently dropping the **final 30-min dispatch of every trading day**. Found 2026-07-02;
+> **both** the ET and IST windows were confirmed missing their last session run.
+>
+> **The fix.** Widen each upper bound to **close + 5 minutes** — **16:05 ET** and **15:35 IST** — which
+> is enough slack to absorb the jitter at the exact-close slot while staying narrow enough that the
+> *next* `*/30` slot (16:30 ET / 16:00 IST) still falls outside and is correctly excluded. So the fix
+> recovers the dropped close-slot dispatch and introduces **no** post-close no-op run; per session
+> hours, only the exact-close instance was ever a defect. Applied as Supabase migration
+> **`fix_market_close_boundary_jitter`** (redefines both gate functions; the wide `*/30` crons and all
+> other schedules are unchanged). The monitor's own `<= 16:00 / 15:30` staleness window is a separate
+> check with a different purpose and was **not** touched.
+>
+> **Docs touched:** new §0 load-bearing decision **item 9** (don't tighten either bound back to the
+> exact close); §4.1's dispatch-gate description updated to `09:30–16:05` with the jitter rationale;
+> §12 D1 gains the IST 09:15–15:35 bound; §9's ET-gate regression check updated to assert the
+> exact-close slot still dispatches while the next slot does not. Repo SQL brought back in sync with the
+> live definitions: `sql/phase5_monitoring.sql` (ET gate → 16:05) and `sql/scheduler_pgcron.sql` (NSE
+> gate → 15:35). Requirements and UI-handoff untouched.
 
 ---
 

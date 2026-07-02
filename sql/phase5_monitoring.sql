@@ -211,10 +211,16 @@ declare
   dow int := extract(isodow from et_now);
   t   time := et_now::time;
 begin
+  -- Weekday + ET regular session only. Upper bound is 16:05, not the 16:00 exact
+  -- close, to absorb pg_cron sub-second execution jitter: at the exact-close */30
+  -- slot, now() lands a few hundred ms past 16:00 and an exact `<= '16:00'` test
+  -- silently dropped the final dispatch of every trading day. 16:05 catches that
+  -- slot; the next slot (16:30) still falls outside and stays excluded, so no
+  -- post-close no-op is introduced. (Migration fix_market_close_boundary_jitter.)
   if dow > 5 then
     return;
   end if;
-  if t >= time '09:30' and t <= time '16:00' then
+  if t >= time '09:30' and t <= time '16:05' then
     perform public.dispatch_github_workflow('hourly-watchlist.yml');
   end if;
 end; $$;
