@@ -52,9 +52,20 @@ def _topic_for(market: str | None, default_topic: str, nse_topic: str) -> str:
     """FR18 / design §12 D7 — route by market at send time. NSE goes to its own
     topic so India and US/TSX alerts can be filtered/muted independently; if the
     NSE topic isn't provisioned yet, fall back to the default so no alert drops.
+
+    The fallback is deliberate (never drop an alert), but it is no longer silent
+    (issue #35): an NSE alert routed to the default topic emits an operator-visible
+    `[FR18 fallback]` line, so a degraded routing (issue #34 — NSE_NTFY_TOPIC secret
+    unprovisioned) is detectable in run logs instead of only via the wrong channel
+    on the owner's phone. Routing behavior is unchanged.
     """
-    if (market or "").upper() == "NSE" and nse_topic:
-        return nse_topic
+    if (market or "").upper() == "NSE":
+        if nse_topic:
+            return nse_topic
+        print(f"[FR18 fallback] NSE alert routed to the default topic "
+              f"'{default_topic or '(unset)'}' — NSE_NTFY_TOPIC not provisioned, so "
+              f"India and US/TSX pushes share one channel. Set the NSE_NTFY_TOPIC "
+              f"secret to restore separate-topic routing.")
     return default_topic
 
 
