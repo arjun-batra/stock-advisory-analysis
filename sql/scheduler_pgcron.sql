@@ -121,10 +121,15 @@ declare
   dow int := extract(isodow from ist_now);
   t   time := ist_now::time;
 begin
+  -- Upper bound is 15:35, not the 15:30 exact close, to absorb pg_cron sub-second
+  -- execution jitter at the exact-close */30 slot (same defect/fix as the ET gate:
+  -- an exact `<= '15:30'` silently dropped the final IST dispatch of every trading
+  -- day; the next slot at 16:00 IST still stays excluded). Migration
+  -- fix_market_close_boundary_jitter.
   if dow > 5 then
     return;
   end if;
-  if t >= time '09:15' and t <= time '15:30' then
+  if t >= time '09:15' and t <= time '15:35' then
     perform public.dispatch_github_workflow('hourly-watchlist.yml');
   end if;
 end; $$;
