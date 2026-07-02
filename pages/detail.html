@@ -72,12 +72,17 @@
   const pct = v => (typeof v === "number")
     ? `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${v}%</span>`
     : (typeof v === "string" ? esc(v) : "—");
-  function mcap(v){
+  // Market cap carries the same per-market currency symbol as price (UI-handoff
+  // v3: $ US / CA$ TSX / ₹ NSE, no FX) — issue #32. `s` is a pre-resolved symbol
+  // ("$"/"CA$"/"₹"); curSym is applied at the call site so the magnitude stays
+  // native (e.g. an NSE mcap renders "₹5.6T", not "$5.6T").
+  function mcap(v, s){
+    s = s || "";   // unknown currency -> no symbol, same as money() (never a wrong "$")
     if(typeof v !== "number") return "—";
-    if(v >= 1e12) return "$"+(v/1e12).toFixed(1)+"T";
-    if(v >= 1e9)  return "$"+(v/1e9).toFixed(1)+"B";
-    if(v >= 1e6)  return "$"+(v/1e6).toFixed(1)+"M";
-    return "$"+v.toFixed(0);
+    if(v >= 1e12) return s+(v/1e12).toFixed(1)+"T";
+    if(v >= 1e9)  return s+(v/1e9).toFixed(1)+"B";
+    if(v >= 1e6)  return s+(v/1e6).toFixed(1)+"M";
+    return s+v.toFixed(0);
   }
   const range52 = r => (Array.isArray(r) && r.length===2) ? `${r[0]} – ${r[1]}` : "—";
   const num = v => (v ?? "—");
@@ -178,7 +183,7 @@
         <p class="section-label">Fundamentals</p>
         <div class="grid2">
           <div class="stat-card"><p class="stat-label">P/E</p><p class="stat-value">${num(typeof f.pe==="number"?f.pe.toFixed(1):f.pe)}</p></div>
-          <div class="stat-card"><p class="stat-label">Market cap</p><p class="stat-value">${mcap(f.market_cap)}</p></div>
+          <div class="stat-card"><p class="stat-label">Market cap</p><p class="stat-value">${mcap(f.market_cap, curSym(marketCur))}</p></div>
           <div class="stat-card" style="grid-column:1/-1"><p class="stat-label">52 week range</p><p class="stat-value">${range52(f.range_52w)}</p></div>
         </div>
 
