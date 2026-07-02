@@ -1,155 +1,155 @@
 {
-  "generated_at": "2026-07-02T18:01:32.462375+00:00",
+  "generated_at": "2026-07-02T18:31:35.697392+00:00",
   "prices": {
     "AAPL": {
-      "chg": 4.38,
+      "chg": 4.4,
       "currency": "USD",
       "market": "US",
-      "price": 307.28
+      "price": 307.345
     },
     "AMZN": {
-      "chg": 0.94,
+      "chg": 0.87,
       "currency": "USD",
       "market": "US",
-      "price": 243.98
+      "price": 243.81
     },
     "BB": {
-      "chg": -12.06,
+      "chg": -11.71,
       "currency": "USD",
       "market": "US",
-      "price": 11.265
+      "price": 11.31
     },
     "BHARTIARTL.NS": {
-      "chg": 0.21,
+      "chg": 1.03,
       "currency": "INR",
       "market": "NSE",
-      "price": 1875.0
+      "price": 1871.0
     },
     "BNS.TO": {
-      "chg": -2.06,
+      "chg": -1.66,
       "currency": "CAD",
       "market": "TSX",
-      "price": 120.73
+      "price": 121.22
     },
     "COST": {
-      "chg": 2.58,
+      "chg": 2.61,
       "currency": "USD",
       "market": "US",
-      "price": 948.49
+      "price": 948.83
     },
     "DOL.TO": {
-      "chg": -0.62,
+      "chg": -0.6,
       "currency": "CAD",
       "market": "TSX",
-      "price": 186.45
+      "price": 186.5
     },
     "GOOG": {
-      "chg": -1.28,
+      "chg": -0.8,
       "currency": "USD",
       "market": "US",
-      "price": 353.305
+      "price": 355.03
     },
     "HDFCBANK.NS": {
-      "chg": -0.03,
+      "chg": -0.23,
       "currency": "INR",
       "market": "NSE",
-      "price": 795.9
+      "price": 796.15
     },
     "HINDUNILVR.NS": {
-      "chg": 1.31,
+      "chg": 3.01,
       "currency": "INR",
       "market": "NSE",
-      "price": 2210.6001
+      "price": 2182.0
     },
     "ICICIBANK.NS": {
-      "chg": 1.46,
+      "chg": 0.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 1400.0
+      "price": 1379.8
     },
     "INFY.NS": {
-      "chg": 5.64,
+      "chg": -1.51,
       "currency": "INR",
       "market": "NSE",
-      "price": 1040.9
+      "price": 985.3
     },
     "ITC.NS": {
-      "chg": -0.14,
+      "chg": 1.17,
       "currency": "INR",
       "market": "NSE",
-      "price": 289.9
+      "price": 290.3
     },
     "L.TO": {
-      "chg": -2.38,
+      "chg": -2.33,
       "currency": "CAD",
       "market": "TSX",
-      "price": 62.81
+      "price": 62.84
     },
     "LT.NS": {
-      "chg": -0.81,
+      "chg": -1.23,
       "currency": "INR",
       "market": "NSE",
-      "price": 4059.3999
+      "price": 4092.6001
     },
     "NFLX": {
-      "chg": 5.45,
+      "chg": 5.47,
       "currency": "USD",
       "market": "US",
-      "price": 78.23
+      "price": 78.245
     },
     "NVDA": {
-      "chg": -2.51,
+      "chg": -1.89,
       "currency": "USD",
       "market": "US",
-      "price": 192.62
+      "price": 193.84
     },
     "RELIANCE.NS": {
-      "chg": -0.34,
+      "chg": 1.09,
       "currency": "INR",
       "market": "NSE",
-      "price": 1303.5
+      "price": 1308.0
     },
     "RY.TO": {
-      "chg": -1.61,
+      "chg": -1.14,
       "currency": "CAD",
       "market": "TSX",
-      "price": 288.96
+      "price": 290.32
     },
     "SBIN.NS": {
-      "chg": 0.4,
+      "chg": 2.0,
       "currency": "INR",
       "market": "NSE",
-      "price": 1051.6
+      "price": 1047.4
     },
     "SHOP.TO": {
-      "chg": 4.54,
+      "chg": 4.96,
       "currency": "CAD",
       "market": "TSX",
-      "price": 169.63
+      "price": 170.31
     },
     "SPCX": {
-      "chg": -0.23,
+      "chg": 0.9,
       "currency": "USD",
       "market": "US",
-      "price": 157.175
+      "price": 158.955
     },
     "TCS.NS": {
-      "chg": 4.31,
+      "chg": -2.41,
       "currency": "INR",
       "market": "NSE",
-      "price": 2068.1001
+      "price": 1982.6
     },
     "TD.TO": {
-      "chg": -2.32,
+      "chg": -1.78,
       "currency": "CAD",
       "market": "TSX",
-      "price": 168.445
+      "price": 169.37
     },
     "TSLA": {
-      "chg": -7.86,
+      "chg": -7.4,
       "currency": "USD",
       "market": "US",
-      "price": 391.865
+      "price": 393.84
     }
   }
 }
