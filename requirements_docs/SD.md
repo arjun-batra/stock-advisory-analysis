@@ -7,7 +7,9 @@
 (`prefilter._market_from_exchange`), and the vestigial `candidate_universe` table dropped from the
 schema (§5). Net −31 lines, **zero behavior change** to any live pipeline — verified via differential
 tests, static analysis, and a live `publish-prices` run producing output identical to pre-refactor
-except the timestamp. Full record: `docs/refactor-handover-2026-07-01.md` (in-repo, dev-owned).
+except the timestamp. Full record: [issue #27](https://github.com/arjun-batra/stock-advisory-analysis/issues/27)
+(audit findings + execution comment — the standalone handover doc was removed from the repo, not
+meant to be committed there).
 
 The refactor also surfaced one genuine doc-vs-code gap: `data_snapshot` never actually carries a
 `market` field, so §4.7's documented detail-page currency/badge logic is dead in practice, silently
