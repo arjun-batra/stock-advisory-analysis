@@ -132,7 +132,7 @@
     const pill = pillFor(row);
     const ts = fmtTs(row.timestamp);
     const failNote = (snap.parse_status === "failed" || snap.parse_status === "api_error")
-      ? `<div class="note">This is a fail-safe Hold — the AI call didn't return a usable verdict, so treat it as "no signal," not a real call.</div>` : "";
+      ? `<div class="note">Model response couldn't be parsed — showing fail-safe Hold.</div>` : "";
 
     const heads = (snap.headlines || []).slice(0,5)
       .map(h => `<p class="headline-item">${esc(h)}</p>`).join("") ||
