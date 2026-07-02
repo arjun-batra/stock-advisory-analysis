@@ -1,9 +1,69 @@
 # Stock Advisory Agent — Solution Design: change history
 
-Archived change-note stack (v2 → v14), split out of the working Solution Design for token hygiene. The
+Archived change-note stack (v2 → v15), split out of the working Solution Design for token hygiene. The
 working document (`stock-advisory-agent-solution-design.md`) carries the current-state design plus a
 distilled **Load-bearing decisions** list; this file preserves the full provenance — what changed in
 each revision and why. Read newest-first.
+
+---
+
+> **v15 note — behavior-preserving refactor, executed 2026-07-01.** A code-cleanup pass (audit:
+> issue #27, execution: PR #28) — the first version bump since v14 that touches **code**, not just
+> docs, though the mandate was explicitly "same behavior, less code," not new features.
+>
+> **What changed (code):**
+> 1. **Dead code removed** — an unused `now` local + orphaned import in `run_discovery.py`; a
+>    never-read `type` column dropped from the dashboard's watchlist query.
+> 2. **Two duplicated algorithms consolidated** — the fail-safe verdict dict (duplicated in
+>    `run_hourly.py`/`run_discovery.py`) → `ai_judge.missing_verdict()`; the word-boundary clip logic
+>    (duplicated in `ai_judge._clip`/`notify._clip_body`) → shared `scripts/textutil.py::clip()`.
+>    Both changes were differential-tested against the removed originals (byte-identical output,
+>    120,078 cases for the clip consolidation) before landing.
+> 3. **One naming collision fixed** — `prefilter._market_for` renamed to `_market_from_exchange`
+>    (pure rename) to stop colliding with the semantically different `ingest._market_for` (ticker
+>    suffix → market, vs. exchange code → market).
+> 4. **`collections.Counter`** replaces six hand-rolled `get(k,0)+1` outcome-tally sites (cosmetic,
+>    parity-tested).
+> 5. **`publish_prices.py`** now uses `config.YF_PACING_SECONDS` instead of a hardcoded `sleep(2)`
+>    literal — default value unchanged, but the workflow can now honor an env override if one is ever
+>    set. Live-verified: a push-triggered `publish-prices` run produced a `prices.json` identical to
+>    the pre-refactor output except `generated_at`.
+> 6. **One stale comment fixed** in `publish-prices.yml` (scheduling description, no behavior change).
+>
+> **What changed (schema):** **`candidate_universe` dropped** — confirmed vestigial before dropping
+> (0 rows, zero references from code, DB functions, views, cron jobs, or FKs; load-bearing decision #7
+> held throughout the check), removed via auditable migration `drop_vestigial_candidate_universe`.
+> The public schema now holds exactly six tables (§5). §4.3's discovery-sourcing description is
+> updated to say "dropped" instead of "vestigial, should be dropped or ignored."
+>
+> **What was explicitly NOT touched:** all eight SD §0 load-bearing patterns, verified byte-identical
+> before and after — dual-model fallback, the DST-superset cron + runtime gate, cold-start silence,
+> skip-with-log + fail-safe-Hold, per-batch AI call + per-batch `tokens`, the separate dead-man
+> monitor job, live-screener discovery, and the `#gate[hidden]{display:none}` CSS fix from the
+> dashboard passcode-gate bug. A handful of audit-identified dedup candidates (ingest-loop sharing,
+> HTML-page CSS/JS sharing between `detail.html`/`dashboard.html`, log-prefix unification, monitor-SQL
+> ET/IST dedup, the dashboard's `call_log` fetch shape) were explicitly ruled "leave as-is" — reasoning
+> preserved on issue #27, not repeated here.
+>
+> **What this surfaced, not fixed:** a genuine doc-vs-code gap — `data_snapshot` never actually
+> carries a `market` field, so §4.7's documented detail-page currency/badge logic (reading
+> `snap.market`) is dead in practice, silently replaced by a fundamentals/suffix fallback that happens
+> to agree with the true market for every ticker live today. Adding the field is a behavior change,
+> out of scope for a refactor — tracked as **issue #31**, open, pending a ruling. §4.7 and §5 flag it
+> inline rather than silently describing the dead path as live.
+>
+> **Verification posture, stated plainly:** static analysis (`py_compile`/`pyflakes`) clean after
+> every commit; per-commit diff-scope review; deterministic differential tests for both consolidated
+> algorithms; one live end-to-end confirmation (`publish-prices`). **No `FORCE_RUN` dry run was fired**
+> against the live hourly/discovery pipeline for this pass — a live dry run would burn real Gemini
+> quota and could advance `verdict_state` under a dry-run notifier, risking a silently swallowed
+> alert. The deterministic tests above were judged stronger evidence for these specific, narrow
+> changes; this is a stated tradeoff, not an oversight.
+>
+> **Repo housekeeping in this pass, not code-related:** a standalone handover document
+> (`docs/refactor-handover-2026-07-01.md`) was briefly committed to the repo alongside this refactor
+> and then removed — it wasn't meant to land there. The same content is preserved on issue #27, which
+> is the canonical record going forward. SD's header no longer references the removed file.
 
 ---
 
