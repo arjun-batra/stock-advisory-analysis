@@ -165,6 +165,10 @@ def _snapshot(data: dict, ai: dict, position: dict | None = None) -> dict:
         "fundamentals": data.get("fundamentals", {}),
         "headlines": data.get("headlines", []),
         "raw_model_response": ai.get("raw_model_response"),
+        # Model's self-rated confidence in the verdict (high/medium/low; null on
+        # fail-safes). Stored for tuning — e.g. a future gate pushing only
+        # high-confidence discovery Buys.
+        "confidence": ai.get("confidence"),
         "parse_status": ai.get("parse_status"),
         "model_used": ai.get("model_used"),
         # Token counts for THIS Gemini call. For the watchlist/discovery batch

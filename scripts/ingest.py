@@ -8,6 +8,7 @@ string "n/a (newly listed)" rather than being omitted or faked.
 """
 
 import time
+from datetime import datetime, timezone
 
 import yfinance as yf
 
@@ -67,10 +68,33 @@ def _fundamentals(tk: "yf.Ticker") -> dict:
     hi = _get(fi, "year_high", "yearHigh") or _get(info, "fiftyTwoWeekHigh")
     lo = _get(fi, "year_low", "yearLow") or _get(info, "fiftyTwoWeekLow")
     rng = [round(float(lo), 2), round(float(hi), 2)] if (hi and lo) else None
-    return {"pe": pe, "market_cap": mcap, "range_52w": rng, "currency": cur}
+    # Company identity/sector so the AI isn't guessing what a ticker is from
+    # its symbol alone (matters most for small caps and NSE names).
+    name = _get(info, "shortName", "longName")
+    sector = _get(info, "sector")
+    industry = _get(info, "industry")
+    return {"pe": pe, "market_cap": mcap, "range_52w": rng, "currency": cur,
+            "name": name, "sector": sector, "industry": industry}
+
+
+def _news_date(item: dict, content: dict) -> str | None:
+    """Best-effort publish date (YYYY-MM-DD) from either yfinance news shape:
+    new-style content.pubDate ISO string, or legacy providerPublishTime epoch."""
+    pub = content.get("pubDate") or content.get("displayTime")
+    if isinstance(pub, str) and len(pub) >= 10:
+        return pub[:10]
+    ts = item.get("providerPublishTime")
+    if isinstance(ts, (int, float)) and ts > 0:
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    return None
 
 
 def _headlines(tk: "yf.Ticker", limit: int = 5) -> list[str]:
+    """Headline titles prefixed with their publish date when available, so the
+    AI (and the detail page) can tell a this-morning story from a stale one."""
     try:
         items = tk.news or []
     except Exception:
@@ -79,9 +103,12 @@ def _headlines(tk: "yf.Ticker", limit: int = 5) -> list[str]:
     for it in items:
         if not isinstance(it, dict):
             continue
-        title = it.get("title") or (it.get("content") or {}).get("title")
-        if title:
-            titles.append(title)
+        content = it.get("content") or {}
+        title = it.get("title") or content.get("title")
+        if not title:
+            continue
+        date_s = _news_date(it, content)
+        titles.append(f"[{date_s}] {title}" if date_s else title)
     return titles[:limit]
 
 
