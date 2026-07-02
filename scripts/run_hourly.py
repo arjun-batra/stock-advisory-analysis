@@ -89,7 +89,7 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
             ai = verdicts.get(ticker) or ai_judge.missing_verdict("ticker")
             result = state.process_ticker(sb, notifier, row, data, ai, now, position)
             tag = "NEW" if data["is_new"] else ""
-            print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
+            print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
                   f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {tag}")
             outcomes[result] += 1
         except Exception as e:

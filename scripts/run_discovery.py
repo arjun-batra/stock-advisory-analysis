@@ -93,7 +93,7 @@ def main() -> None:
             ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
             push = ticker not in recently
             result = state.process_candidate(sb, notifier, data, ai, push=push)
-            print(f"  {ticker:9} {ai['verdict']:4} -> {result} "
+            print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
                   f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
             outcomes[result] += 1
         except Exception as e:
