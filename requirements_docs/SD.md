@@ -1,4 +1,4 @@
-# Stock Advisory Agent — Solution Design (v15)
+# Stock Advisory Agent — Solution Design (v16)
 
 **Owner:** Arjun (solo build reference)
 **Status:** Phases 0–7 all live. **v15 documents the 2026-07-01 behavior-preserving refactor**
@@ -11,10 +11,12 @@ except the timestamp. Full record: [issue #27](https://github.com/arjun-batra/st
 (audit findings + execution comment — the standalone handover doc was removed from the repo, not
 meant to be committed there).
 
-The refactor also surfaced one genuine doc-vs-code gap: `data_snapshot` never actually carries a
-`market` field, so §4.7's documented detail-page currency/badge logic is dead in practice, silently
-replaced by a fundamentals/suffix fallback that happens to agree today. Tracked as **issue #31**
-(open, needs a ruling) — flagged in §4.7 and §5 below, not yet resolved.
+The refactor also surfaced one genuine doc-vs-code gap: `data_snapshot` never actually carried a
+`market` field, so §4.7's documented detail-page currency/badge logic ran on a coincidental
+fundamentals/suffix fallback instead of the documented mechanism. Tracked as **issue #31** and
+**resolved (2026-07-02, ruling: "make the field real")** — `state._snapshot()` now writes `market`
+from ingest's per-ticker resolution, so §4.7 reads it as documented and the fallback is a legacy-row
+safety net, not the live mechanism. See §4.7 and §5 below.
 
 **Companion docs:** `stock-advisory-agent-requirements.md` (**v4 — source of truth**);
 `stock-advisor-ui-handoff-v3-spec.md` (**v3 — rendering authority**);
@@ -457,10 +459,11 @@ no authoritative market. The badge is now suppressed entirely for `label==='new-
 **NSE badge + currency (v14, D9, live).** Currency symbol is derived from `watchlist.market`
 (`$`/`CA$`/`₹`), not the ticker suffix or a possibly-missing fundamentals currency code, per UI-handoff
 v3 — with a `.NS`-aware badge fallback so an NSE row with no snapshot market still badges NSE.
-**Known gap (issue #31):** `data_snapshot` never actually carries a `market` field — this fallback
-badge/currency path is what's really running in production; the "derived from `watchlist.market`"
-description above is the documented intent, not the live mechanism. See §5's `data_snapshot` note and
-issue #31 for the ruling needed to close this doc-vs-code gap.
+**Resolved (issue #31, 2026-07-02).** `data_snapshot` now carries a `market` field (`state._snapshot()`
+writes it from ingest's per-ticker market), so the badge/currency logic reads `snap.market` as
+documented above — the documented intent *is* the live mechanism. The `.NS`-aware badge fallback and
+the fundamentals-currency fallback remain only as a safety net for legacy rows written before the field
+existed; they are no longer load-bearing for live rows. See §5's `data_snapshot` contract.
 
 **Timestamp — client-rendered dual timezone (FR23). ✅ Live.** The detail page runs in the browser, so
 the device timezone *is* available — it renders **device timezone primary, IST secondary in brackets**
@@ -537,6 +540,7 @@ Discovery `new-candidate` rows carry `alert_type=null`; the detail-page/notifica
 **`data_snapshot` (jsonb) contract (corrected to live code, v9):**
 ```json
 {
+  "market": "US | TSX | NSE",
   "price": 0.0, "pct_change_1d": 0.0, "pct_change_5d": 0.0,
   "pct_change_20d": 0.0,
   "volume_vs_avg": 0.0, "fundamentals": { "pe": 0, "market_cap": 0, "range_52w": [0,0], "currency": "USD" },
@@ -562,16 +566,14 @@ and for discovery rows (no holding).
 row.** `fallback_from` records the *real* reason a call fell to the backup model (§4.4a), null if the
 primary succeeded.
 
-**⚠️ Known gap — `market` is documented but not written (flagged v15, issue #31, not yet ruled on).**
-Nothing above lists a `market` key, but §4.7's detail-page badge/currency logic is described as reading
-`snap.market`. In the live code, `state._snapshot()` never writes one — that read path is dead, and
-`detail.html` silently falls back to fundamentals-currency / ticker-suffix inference instead, which
-happens to agree with the true market for every ticker live today. Surfaced during the 2026-07-01
-refactor audit (issue #27); left unfixed there because adding the field is a behavior change, not
-cleanup. **Two ways to close this doc-vs-code gap, pending a ruling on issue #31:** (1) add `market` to
-the snapshot write and make §4.7 read it as documented, or (2) formally document the fallback-inference
-path as the real mechanism and drop the `snap.market` description. Until ruled, treat §4.7's
-"derived from `watchlist.market`" framing as aspirational, not as what's actually running.
+**`market` is written (issue #31, resolved 2026-07-02, ruling: "make the field real").** `state._snapshot()`
+writes `market` (`"US"`/`"TSX"`/`"NSE"`) from ingest's per-ticker resolution (`ingest._market_for`,
+carried on the `data` dict), on both the watchlist and discovery write paths. §4.7's detail-page
+badge/currency logic reads `snap.market` as documented. The gap was surfaced during the 2026-07-01
+refactor audit (issue #27) and left unfixed there because adding the field is a behavior change, not
+cleanup; the ruling closed it in favor of the documented mechanism (option 1). `detail.html`'s
+fundamentals-currency / ticker-suffix fallbacks now only cover legacy rows written before the field
+existed — they are no longer the live mechanism.
 
 **Supabase objects.** Functions: `dispatch_github_workflow` (live), `dispatch_watchlist_if_open`
 (**live** — ET-aware dispatch gate, §4.1), `dispatch_watchlist_nse_if_open` (**live, v14** — IST gate,
@@ -836,7 +838,7 @@ stock-advisory-analysis/                # actual repo name
 | — | **Scheduling migration (cross-cutting)** | ✅ Done — pg_cron + `workflow_dispatch` replaced GitHub native cron (§4.1) |
 | 6 | **India NSE — watchlist + discovery** | ✅ **Done, live (v14).** §12. 10 NSE tickers on the IST watchlist dispatch + monitor window; NSE discovery live on its own NSE-close-timed dispatch (region=in, NSE-only, INR-thresholded); separate NSE ntfy topic (D7); INR rendering per UI handoff. Go-live (alerts on) landed same day as build; cold-start silence meant no alert dump on activation. |
 | 7 | **Read-only dashboard** | ✅ **Done, live (v14).** §13. Built (#22) against the original direct-Yahoo-fetch design; **reworked (#24) after issue #18's CORS smoke test proved that design infeasible** — live price now reads a server-published `pages/prices.json` (same-origin) instead. All other FR19–22 behavior (market grouping, conditional last-run block, access gate, FR23 timestamps) unchanged from the original build. |
-| — | **Behavior-preserving refactor (v15, issue #27/PR #28)** | ✅ Done — dead-code removal, deduplication (`textutil.clip()`, `missing_verdict()`), naming-collision fix, `candidate_universe` dropped. Zero behavior change to any live pipeline; net −31 lines. Surfaced one real doc-vs-code gap (`data_snapshot.market`, issue #31, open). |
+| — | **Behavior-preserving refactor (v15, issue #27/PR #28)** | ✅ Done — dead-code removal, deduplication (`textutil.clip()`, `missing_verdict()`), naming-collision fix, `candidate_universe` dropped. Zero behavior change to any live pipeline; net −31 lines. Surfaced one real doc-vs-code gap (`data_snapshot.market`, issue #31, resolved 2026-07-02). |
 
 ---
 

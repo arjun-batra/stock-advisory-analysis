@@ -152,6 +152,11 @@ def build_position(holding: dict | None, data: dict) -> dict | None:
 
 def _snapshot(data: dict, ai: dict, position: dict | None = None) -> dict:
     snap = {
+        # Market ("US"/"TSX"/"NSE") anchors the detail page's currency symbol and
+        # market badge (SD §4.7, UI-handoff v3). Populated from ingest's
+        # _market_for(ticker); detail.html's ticker-suffix/fundamentals-currency
+        # fallbacks are now a legacy-row safety net, not the live mechanism (#31).
+        "market": data.get("market"),
         "price": data.get("price"),
         "pct_change_1d": data.get("pct_change_1d"),
         "pct_change_5d": data.get("pct_change_5d"),

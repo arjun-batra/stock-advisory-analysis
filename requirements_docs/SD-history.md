@@ -1,9 +1,27 @@
 # Stock Advisory Agent — Solution Design: change history
 
-Archived change-note stack (v2 → v15), split out of the working Solution Design for token hygiene. The
+Archived change-note stack (v2 → v16), split out of the working Solution Design for token hygiene. The
 working document (`stock-advisory-agent-solution-design.md`) carries the current-state design plus a
 distilled **Load-bearing decisions** list; this file preserves the full provenance — what changed in
 each revision and why. Read newest-first.
+
+---
+
+> **v16 note — `data_snapshot.market` made real (issue #31), 2026-07-02.** Ruling (Arjun,
+> 2026-07-02): *"make the field real"* — fix the code to populate the field the docs already
+> described, not the reverse (option 1 of the two the v15 note laid out). `state._snapshot()` now
+> writes a `market` key (`"US"`/`"TSX"`/`"NSE"`) sourced from `ingest._market_for(ticker)` via the
+> `data` dict, on both the watchlist (`process_ticker`) and discovery (`process_candidate`) write
+> paths. `detail.html`'s currency-symbol and market-badge logic (§4.7, UI-handoff v3) now runs on the
+> documented `snap.market` read; the prior fundamentals-currency / ticker-suffix fallbacks were
+> coincidentally correct for every live ticker and now serve only as a legacy-row safety net, not the
+> live mechanism.
+>
+> **Docs touched:** §5's `data_snapshot` jsonb contract gains the `market` key and its "known gap /
+> pending ruling" block becomes a "resolved" note; §4.7's "known gap" note becomes "resolved"; the
+> v15 intro note and the §14 build-phases row flip #31 from *open* to *resolved*. No change to the
+> currency-from-market *mechanism* wording — that spec was already correct, which is why the ruling
+> fixed code, not docs. Requirements and UI-handoff untouched.
 
 ---
 
