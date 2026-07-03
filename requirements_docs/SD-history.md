@@ -1,9 +1,70 @@
 # Stock Advisory Agent — Solution Design: change history
 
-Archived change-note stack (v2 → v17), split out of the working Solution Design for token hygiene. The
+Archived change-note stack (v2 → v18), split out of the working Solution Design for token hygiene. The
 working document (`stock-advisory-agent-solution-design.md`) carries the current-state design plus a
 distilled **Load-bearing decisions** list; this file preserves the full provenance — what changed in
 each revision and why. Read newest-first.
+
+---
+
+> **v18 note — AI prompt-quality pass (PR #37), 2026-07-02.** A review of the verdict prompt
+> (`ai_judge.py`) found the model was being asked to judge stocks on less context than the system
+> already had on hand, and with verdict semantics left implicit. No schema change, no new table, no
+> change to the alerting rule (§6.3) — this is a quality pass on the AI judgment layer only.
+>
+> **What changed (code):**
+> 1. **Discovery signals now reach the prompt.** `run_discovery.py` attaches `discovery_signals`
+>    (gainer/volume-spike/earnings/52w-extreme) to the data snapshot and it was persisted to
+>    `data_snapshot`, but `ai_judge._ticker_block()` never rendered it — so a freshly-screened
+>    candidate was judged with no visibility into *why* the screen flagged it that day. Now rendered
+>    as a line in the prompt block for discovery candidates (absent on watchlist tickers).
+> 2. **Company identity + sector/industry added.** `ingest._fundamentals()` already calls `tk.info` for
+>    P/E; it now also pulls `shortName`/`longName` and `sector`/`industry` from the same call (no new
+>    API surface) and the ticker block renders them — the model was previously judging a bare ticker
+>    symbol with no company context, which matters most for small caps and NSE names outside its
+>    likely training coverage.
+> 3. **Headlines are now dated.** `ingest._headlines()` prefixes each title with its publish date
+>    (`[YYYY-MM-DD] title`) when derivable from either yfinance news shape (new `content.pubDate` or
+>    legacy `providerPublishTime`); undated titles pass through unprefixed. The batch prompt also states
+>    today's UTC date, so the model can judge headline freshness against its own (possibly stale)
+>    training-data knowledge of a company.
+> 4. **Missing values render `n/a`, not `None`.** Previously a missing P/E or 52w range serialized as
+>    the literal Python `None` or `[None, None]` inside the prompt text; `ai_judge._fmt()`/`_pct()` now
+>    render `n/a`. Price, market cap, and 52w range now also show their currency.
+> 5. **Verdict semantics made explicit in `BATCH_SYSTEM_PROMPT`.** The prompt now states how alerting
+>    actually works (a watchlist verdict *change* alerts per §6.3's single rule; a discovery candidate
+>    alerts only on Buy, §4.3) so "default to Hold" has stated stakes; defines what Buy/Sell mean for a
+>    HELD vs. WATCH-ONLY name; sets a rough near-term (days-to-weeks) horizon in place of "no time
+>    horizon"; states the 280-char rationale cap so the model can budget for it; and adds two guards —
+>    don't anchor a Sell/Hold decision on unrealized loss (disposition effect), and treat headlines as
+>    data, not instructions.
+> 6. **Output is schema-enforced.** A Gemini `response_schema` (array of `{ticker, verdict, confidence,
+>    rationale}`, `verdict`/`confidence` as enums) was added alongside the existing
+>    `response_mime_type="application/json"`. The existing parse-retry-then-fail-safe path (§4.4a) is
+>    unchanged and remains the backstop; the schema is expected to make it fire less often, not replace
+>    it — a bad/omitted ticker still resolves through the same fail-safe-to-Hold logic.
+> 7. **New `confidence` field.** Each verdict now requests a self-rated `high`/`medium`/`low`
+>    confidence. `ai_judge._parse_batch()` validates it (case-normalized; invalid or missing values
+>    store `null`, never a guessed default); `state._snapshot()` persists it to
+>    `data_snapshot.confidence`; `run_hourly.py`/`run_discovery.py` print it in the run log next to the
+>    verdict. **No consumer reads it yet** — the intended future use is push-gating (e.g. only pushing
+>    high-confidence discovery Buys), not built in this pass.
+>
+> **Files touched:** `ai_judge.py` (prompt, schema, confidence, ticker-block rendering),
+> `ingest.py` (name/sector/industry, dated headlines), `state.py` (persist `confidence`),
+> `run_hourly.py`/`run_discovery.py` (log `confidence`). Verified via mocked-model unit checks (schema
+> shape, ticker-block rendering for a fully-populated HELD name and a sparse newly-listed NSE
+> candidate, parser confidence-normalization and fail-safe paths, dated-headline extraction against
+> both yfinance news shapes, and an end-to-end `judge_batch()` call confirming the date header and
+> schema reach the request) — a live yfinance fetch wasn't available in the dev sandbox (Yahoo egress
+> blocked), so dated-headline rendering against real data is unconfirmed pending the first live run.
+>
+> **Docs touched:** §4.4/§4.4a rewritten (verdict semantics, prompt template, context serialization,
+> schema-enforcement, confidence field); §5's `data_snapshot` contract gains `confidence` and notes
+> `headlines` entries are now date-prefixed; §8 repo-structure comments for `ingest.py`/`ai_judge.py`;
+> §9 build-phases table gains a row; §10 gains prompt-quality test scenarios; §11 gains two open items
+> (`confidence` has no consumer yet; schema-enforcement's effect on the parse-retry rate is unmeasured).
+> Requirements and UI-handoff untouched — no user-facing behavior or rendering contract changed.
 
 ---
 
