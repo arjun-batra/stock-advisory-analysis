@@ -31,7 +31,11 @@ select distinct on (ticker)
   label,
   alerted,
   data_snapshot->>'parse_status'                as parse_status,
-  nullif(data_snapshot->>'price', '')::float8   as price
+  nullif(data_snapshot->>'price', '')::float8   as price,
+  -- Model's self-rated confidence (high/medium/low; null on fail-safes and
+  -- pre-confidence rows) — rendered as a pill on the dashboard card.
+  -- Appended last: CREATE OR REPLACE VIEW only allows adding columns at the end.
+  data_snapshot->>'confidence'                  as confidence
 from public.call_log
 order by ticker, "timestamp" desc;
 

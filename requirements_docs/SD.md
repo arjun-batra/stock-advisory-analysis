@@ -1,4 +1,4 @@
-# Stock Advisory Agent — Solution Design (v19)
+# Stock Advisory Agent — Solution Design (v20)
 
 **Owner:** Arjun (solo build reference)
 **Status:** Phases 0–7 all live. **v15 documents the 2026-07-01 behavior-preserving refactor**
@@ -77,6 +77,32 @@ closed). Summary:
   to v4 (prices.json source, dated headlines, no-data rendering). No change to the alerting rule
   (§6.3), the prompt (§4.4a), or any schema table; the only new DB objects are the view and two
   heartbeat rows.
+
+**v20 (2026-07-03)** implements findings 3 and 4 of the hourly-run data-quality review, plus
+confidence on the dashboard/detail cards. No change to the alerting rule (§6.3) or any schema table;
+the only DB change is one appended view column. Summary:
+- **Headline relevance filter (review finding 3).** Yahoo's per-ticker news feed mixes in unrelated
+  companies — `SBIN.NS` carried SBI Holdings (Japan) crypto stories and the model's rationale visibly
+  absorbed them ("the parent company's crypto-related activities"). `ingest._headlines()` now drops
+  titles that mention neither the company name (distinctive tokens, generic words like
+  bank/india/industries stop-listed) nor the ticker, *before* the 5-title cap, so junk can't crowd out
+  relevant stories. Matching is alnum-normalized with word-prefix support (`goog`→Google,
+  `scotia`→Scotiabank, `L&T`→lt); **fail-open** when no company name is available (the base symbol
+  alone can't prove irrelevance). Dropped counts go to `notes`; the system prompt additionally tells
+  the model to ignore stories about acronym-sharing companies.
+- **Session-aware price/volume (review finding 4).** Mid-session, yfinance's last daily bar is live
+  and partial, but the prompt labeled it "last close" and divided partial-day volume by full-day
+  20d averages — the whole NSE watchlist read "volume vs avg 0.07–0.30" 45 min after the open, every
+  morning. `ingest._session_state()` (strict session bounds on purpose — NOT the
+  `RUNTIME_CLOSE_GRACE_MIN`-extended dispatch gates) now flags `session_live` and pro-rates
+  `volume_vs_avg` by the elapsed session fraction (marked `volume_pro_rated`; `n/a` in the first 10%
+  of the session where the open auction dominates). The prompt renders "live price (session in
+  progress)" / "today so far" during a session and "last close" / "1d" otherwise; both flags persist
+  to `data_snapshot` and the detail page labels its stat cards accordingly.
+- **Confidence surfaced on the cards.** `latest_call_per_ticker` gained a `confidence` column
+  (migration `latest_call_view_add_confidence`, column appended last per `CREATE OR REPLACE VIEW`
+  rules); the dashboard card renders it as a subtle pill next to the verdict, and the detail page
+  next to the verdict headline. Null (fail-safe or pre-v18 rows) renders nothing.
 
 **Companion docs:** `stock-advisory-agent-requirements.md` (**v5 — source of truth**);
 `stock-advisor-ui-handoff-v3-spec.md` (**v4 — rendering authority**; file keeps its `-v3-` slug for
