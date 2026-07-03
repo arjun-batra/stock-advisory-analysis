@@ -156,7 +156,7 @@
 
   // ─── State ──────────────────────────────────────────────────────────────────
   let WATCHLIST = [];        // rows from watchlist
-  let LATEST = {};           // ticker -> latest call_log row (any alerted value)
+  let LATEST = {};           // ticker -> latest call row (any alerted value), from the view
   let PRICES = {};           // ticker -> {price, chg}
   let lastPriceFetch = 0;
 
@@ -168,11 +168,16 @@
     return res.json();
   }
 
-  // Latest call_log per ticker, regardless of `alerted` (SD §13: what the system last *thought*).
+  // Latest call per ticker, regardless of `alerted` (SD §13: what the system last
+  // *thought*). Reads the latest_call_per_ticker view (DISTINCT ON server-side,
+  // security_invoker so call_log's RLS applies) — one slim row per ticker, instead
+  // of the old client-side scan of the newest 1000 full call_log rows, which
+  // dragged megabytes of data_snapshot (incl. raw_model_response) per refresh and
+  // could age a quiet ticker's latest row out of the window (2026-07-03 review gap 3).
   async function loadLatestCalls(){
-    const rows = await sb("call_log?select=*&order=timestamp.desc&limit=1000");
+    const rows = await sb("latest_call_per_ticker?select=*");
     const out = {};
-    for(const r of rows) if(!(r.ticker in out)) out[r.ticker] = r;   // first = most recent
+    for(const r of rows) out[r.ticker] = r;
     LATEST = out;
   }
 
@@ -217,14 +222,19 @@
     const v = VERDICT[row.verdict] || VERDICT.Hold;
     const scan = row.label === "new-candidate"
       ? `<span class="pill" style="background:var(--candidate-bg);color:var(--candidate-text)">discovery scan</span>` : "";
-    const lastPrice = row?.data_snapshot?.price;
+    // A skipped cycle (parse_status=='no_data') is "no reading," not a verdict —
+    // its placeholder Hold must not render as a real Hold pill (UI handoff v4).
+    const verdictPill = row.parse_status === "no_data"
+      ? `<span class="pill" style="background:var(--bg-subtle);color:var(--text-secondary)">no data</span>`
+      : `<span class="pill" style="background:${v.bg};color:${v.text}">${esc(row.verdict)}</span>`;
+    const lastPrice = row.price;                     // extracted from data_snapshot by the view
     const atPrice = (typeof lastPrice === "number")
       ? `<span class="at-price">at ${esc(curSym(w.market))}${lastPrice.toFixed(2)}</span>` : "";
     const href = `detail.html?log_id=${encodeURIComponent(row.id)}`;
     return `
       <a class="tc-bot" href="${href}">
         <div class="bot-head">
-          <span class="pill" style="background:${v.bg};color:${v.text}">${esc(row.verdict)}</span>
+          ${verdictPill}
           ${scan}
           ${atPrice}
         </div>

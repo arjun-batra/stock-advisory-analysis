@@ -1,7 +1,18 @@
-# Stock Advisory Agent — Requirements Document (v4)
+# Stock Advisory Agent — Requirements Document (v5)
  
 **Owner:** Arjun (solo build reference)
-**Status:** Phases 0–5 code-complete; QA batch issues #6–#12 resolved
+**Status:** Phases 0–7 live; QA batch issues #6–#12 resolved
+ 
+---
+ 
+## v5 Change Note
+ 
+*Alignment pass from the 2026-07-03 requirements-vs-codebase review (`codebase-review-2026-07-03.md`). One requirement amended to match a decision the build had already made and the SD had already documented; no new scope, no FR renumbering.*
+ 
+| Change | What updated | Why |
+|---|---|---|
+| FR21 price-freshness wording amended | FR21 (§5.7), §3 scope bullet | "Live-pulled on each refresh cycle" described the original direct-browser-fetch design, which SD issue #18 proved infeasible (Yahoo's price API is browser-CORS-blocked for all three markets). As built, the current price is a server-published snapshot (`prices.json`) refreshed on the ~30-min market cadence and read same-origin; the dashboard's "prices updated" age keys off the snapshot's own generation time. The SD documented this accepted downgrade in v14; this note brings the source-of-truth requirement into agreement. |
+| Dashboard price-freshness decision recorded | Decisions Log row #18 (new) | Makes the accepted publish-cadence freshness posture a Product decision, not only an SD-side architecture note — consistent with how Decision #11/#17 ratified other SD-side calls. |
  
 ---
  
@@ -64,7 +75,7 @@ Manual stock-checking is inconsistent and emotion-driven. The goal is a system t
 - Buy / Sell / Hold verdict + one-line rationale per alert
 - Push notification delivery — US/TSX and NSE on separate ntfy topics
 - AI judgment grounded in price/volume, news, and fundamentals — no fixed buy/sell rules, no fixed investment style
-- Read-only dashboard (GitHub Pages) showing all tickers grouped by market with live price and last run verdict
+- Read-only dashboard (GitHub Pages) showing all tickers grouped by market with a near-live price (server-published snapshot, refreshed on the market cadence — see FR21/Decision #18) and last run verdict
 ### Out of scope (explicit)
 - Trade execution or order placement of any kind
 - Brokerage account integration or read access — holdings are entered manually
@@ -102,7 +113,7 @@ One user: Arjun. No external users, no handoff to another team — this doc exis
 ### 5.7 Dashboard
 - **FR19** — A read-only dashboard is hosted on GitHub Pages (same host as the detail page, FR14). It is access-controlled via a client-side JS password gate — accepted as sufficient for v1 given the dashboard's data is informational, read-only, and RLS-scoped to two tables; unauthenticated public access is not acceptable.
 - **FR20** — Tickers are grouped by market: US/TSX in one group, NSE in a separate group. Within each group, holdings and watch-only tickers are visually differentiated via a badge or label on each row — not by position or color alone, so the distinction is legible at a glance.
-- **FR21** — Each ticker row displays: current price (live-pulled on each refresh cycle) and last run price, verdict, rationale, and relative time (e.g. "2 hours ago", "3 days ago") sourced from the most recent call log entry for that ticker, regardless of whether an alert was sent. The last-run columns are hidden entirely for a ticker until at least one check has completed for it — no placeholder, no empty cells.
+- **FR21** — Each ticker row displays: current price — refreshed from a server-published snapshot on the ~30-min market cadence (the browser cannot fetch the price source directly; accepted freshness posture, Decision #18 / SD §13) — and last run price, verdict, rationale, and relative time (e.g. "2 hours ago", "3 days ago") sourced from the most recent call log entry for that ticker, regardless of whether an alert was sent. The dashboard's "prices updated" indicator reflects the snapshot's own generation time, so the displayed age is the real data age. The last-run columns are hidden entirely for a ticker until at least one check has completed for it — no placeholder, no empty cells.
 - **FR22** — The dashboard auto-refreshes on a configurable timer while the page is open. The refresh interval is a build-time configuration, not hardcoded.
 ### 5.8 Timestamps & Timezone
 - **FR23** — Timestamps behave differently across surfaces because push notifications are formatted server-side (no device timezone available) while the detail page and dashboard are client-rendered (device timezone is available via the browser).
@@ -144,6 +155,7 @@ One user: Arjun. No external users, no handoff to another team — this doc exis
 | 15 | Timestamp display | Notifications: single timezone, market-specific (ET for US/TSX, IST for NSE). Detail page + dashboard: device auto-detect as primary, IST as secondary in brackets; dedup if device is already IST | Server can't detect device timezone at send time; market timezone is the correct anchor for notifications. Client-rendered surfaces can do auto-detect so both timezones are always visible |
 | 16 | Discovery verdict suppression | Buys only generate a push notification from discovery; Hold and Sell verdicts are logged silently | A Sell on a stock you don't own is noise; Hold from discovery is not actionable; only Buy surfaces a new candidate worth knowing about |
 | 17 | Detail-page access control | Unguessable UUID URL only, no auth gate. FR19's access-control requirement applies to the dashboard, not the detail page. | Detail page is read-only/informational (NFR3); UUID-only is a deliberate accepted posture for this surface, not an oversight |
+| 18 | Dashboard "current price" freshness | Server-published snapshot (`prices.json`) refreshed on the ~30-min market cadence, read same-origin by the dashboard; the "prices updated" age keys off the snapshot's `generated_at`. | Yahoo's price API is browser-CORS-blocked for all three markets (SD issue #18) — a direct client fetch is infeasible, not merely inconvenient. Publish-cadence freshness matches the system's own 30-min cadence posture (NFR4); the honest data-age indicator was preferred over a refresh-tick illusion of liveness |
  
 ## 9. Out of Scope — Explicit Confirmation
  

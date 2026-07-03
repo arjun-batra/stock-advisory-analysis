@@ -131,7 +131,12 @@
     const v = VERDICT[row.verdict] || VERDICT.Hold;
     const pill = pillFor(row);
     const ts = fmtTs(row.timestamp);
-    const failNote = (snap.parse_status === "failed" || snap.parse_status === "api_error")
+    // Fail-safe / skip callouts (UI handoff v4): a no_data row is a skipped
+    // cycle (no verdict was made at all), distinct from a failed/api_error row
+    // (the model was asked but the reply was unusable -> fail-safe Hold).
+    const failNote = snap.parse_status === "no_data"
+      ? `<div class="note">No usable market data this cycle — the ticker was skipped and no verdict was made.</div>`
+      : (snap.parse_status === "failed" || snap.parse_status === "api_error")
       ? `<div class="note">Model response couldn't be parsed — showing fail-safe Hold.</div>` : "";
 
     const heads = (snap.headlines || []).slice(0,5)

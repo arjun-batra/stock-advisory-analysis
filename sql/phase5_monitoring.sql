@@ -90,6 +90,13 @@ begin
 end; $$;
 
 -- --- the monitor (p_now injectable for testing) ----------------------
+-- 2026-07-03 review (gap 2 + improvement 1, applied via Supabase migration
+-- monitor_nse_discovery_and_publish_prices): adds (a) an NSE-discovery check —
+-- run_discovery now writes a per-region 'daily-discovery-in' heartbeat, watched
+-- after 11:00 UTC, so a dead region=in dispatch alerts instead of hiding behind
+-- the shared key the NA run overwrote — and (b) a publish-prices staleness
+-- check during either session, so a dead prices pipeline pushes an alert
+-- instead of only aging the dashboard's "prices updated" line.
 create or replace function public.check_pipeline_health(p_now timestamptz default now())
 returns void
 language plpgsql security definer set search_path = '' as $$
@@ -100,6 +107,8 @@ declare
   ist time := (p_now at time zone 'Asia/Kolkata')::time;      -- Phase 6 D4: NSE/IST watchlist window
   wl_last timestamptz; wl_status text;
   disc_last timestamptz; disc_status text;
+  disc_in_last timestamptz;
+  pp_last timestamptz;
   mins numeric;
 begin
   if dow > 5 then
@@ -166,7 +175,7 @@ begin
     end if;
   end if;
 
-  -- ===== DISCOVERY: did it run in today's window? (check after 23:00 UTC) =====
+  -- ===== DISCOVERY (US/TSX): did it run in today's window? (check after 23:00 UTC) =====
   if t >= time '23:00' then
     select last_run_at, status into disc_last, disc_status
       from public.run_heartbeat where workflow_name = 'daily-discovery';
@@ -180,6 +189,53 @@ begin
     else
       perform public._clear_monitor('discovery', '✅ Discovery recovered',
         format('daily-discovery ran (last run %s).', to_char(disc_last,'Mon DD HH24:MI UTC')));
+    end if;
+  end if;
+
+  -- ===== DISCOVERY (NSE, region=in): dispatched 10:00 UTC; check after 11:00 UTC =====
+  -- 2026-07-03 review gap 2 (NFR2): the two regional runs previously shared one
+  -- 'daily-discovery' heartbeat key, so only the 22:00 UTC NA run was ever
+  -- validated — a silently-dead NSE dispatch never alerted, and the NA run
+  -- overwrote its heartbeat evidence the same day. Expect today's region=in run
+  -- after 09:30 UTC (the dispatch fires at 10:00).
+  if t >= time '11:00' then
+    select last_run_at into disc_in_last
+      from public.run_heartbeat where workflow_name = 'daily-discovery-in';
+
+    if disc_in_last is null or disc_in_last < date_trunc('day', p_now) + interval '9 hours 30 minutes' then
+      perform public._raise_monitor(
+        'discovery-in', 'stale', '⚠️ NSE discovery did not run',
+        format('No daily-discovery (region=in) run in today''s window (last: %s).',
+               coalesce(to_char(disc_in_last,'Mon DD HH24:MI UTC'),'never')),
+        4, interval '6 hours');
+    else
+      perform public._clear_monitor('discovery-in', '✅ NSE discovery recovered',
+        format('daily-discovery (region=in) ran (last run %s).',
+               to_char(disc_in_last,'Mon DD HH24:MI UTC')));
+    end if;
+  end if;
+
+  -- ===== PUBLISH-PRICES: dashboard price snapshot stale during a session =====
+  -- 2026-07-03 review improvement 1 (NFR2): publish_prices.py now writes a
+  -- 'publish-prices' heartbeat. It runs */30 across both sessions; older than
+  -- 70 min (~2 missed ticks) while a session is open means pages/prices.json is
+  -- not refreshing — previously that failed silently (the dashboard just showed
+  -- an ever-growing "prices updated Nh ago").
+  if (et >= time '10:15' and et <= time '16:00')
+     or (ist >= time '10:00' and ist <= time '15:30') then
+    select last_run_at into pp_last
+      from public.run_heartbeat where workflow_name = 'publish-prices';
+
+    if pp_last is null or p_now - pp_last > interval '70 minutes' then
+      perform public._raise_monitor(
+        'publish-prices', 'stale', '⚠️ Dashboard prices stale',
+        format('No publish-prices run since %s — pages/prices.json is not refreshing.',
+               coalesce(to_char(pp_last,'Mon DD HH24:MI UTC'),'never')),
+        3, interval '6 hours');
+    else
+      perform public._clear_monitor('publish-prices', '✅ Dashboard prices recovered',
+        format('publish-prices running again (last run %s).',
+               to_char(pp_last,'Mon DD HH24:MI UTC')));
     end if;
   end if;
 end; $$;
@@ -235,8 +291,21 @@ select cron.alter_job(
 );
 
 -- --- schedule: :20 and :50 past the hour, weekdays -------------------
--- Covers BOTH sessions' watchlist windows (IST 04-10 UTC + ET 14-23 UTC) and the
--- post-22:00 discovery check. Phase 6 D4 widened this from '14-23' to add '4-10'
--- so the IST watchlist window in check_pipeline_health actually gets evaluated.
-select cron.schedule('health-monitor', '20,50 4-10,14-23 * * 1-5',
+-- Covers BOTH sessions' watchlist windows (IST 04-10 UTC + ET 14-23 UTC), the
+-- post-22:00 US/TSX discovery check, and the post-11:00 NSE discovery check.
+-- Phase 6 D4 widened this from '14-23' to add '4-10'; the 2026-07-03 review
+-- (gap 2) widened '4-10' to '4-11' so the 11:00 UTC NSE-discovery window in
+-- check_pipeline_health actually gets evaluated (applied live via cron.alter_job
+-- in migration monitor_nse_discovery_and_publish_prices).
+select cron.schedule('health-monitor', '20,50 4-11,14-23 * * 1-5',
   $cron$ select public.check_pipeline_health(); $cron$);
+
+-- --- heartbeat seeds (one-time, migration monitor_nse_discovery_and_publish_prices) ---
+-- The 'daily-discovery-in' and 'publish-prices' keys are written by the
+-- workflows from 2026-07-03 on; seeded once at migration time (on conflict do
+-- nothing) so the first in-session monitor tick after rollout didn't fire a
+-- false 'never ran' stale alert before the workflows completed one cycle.
+insert into public.run_heartbeat (workflow_name, last_run_at, status)
+values ('daily-discovery-in', now(), 'ok'),
+       ('publish-prices', now(), 'ok')
+on conflict (workflow_name) do nothing;

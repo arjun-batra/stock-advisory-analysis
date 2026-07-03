@@ -1,7 +1,8 @@
 """Discovery prefilter (Phase 4) — reactive movers via Yahoo's screener.
 
-Pulls the day's gainers / losers / most-active (US predefined screens + a custom
-region=ca query for Canada), applies quality gates, tags each survivor with the
+Pulls the day's gainers / losers / most-active (US predefined screens; custom
+region=ca and region=in gainers/losers plus a most-actives-style volume query
+for Canada and India), applies quality gates, tags each survivor with the
 signal(s) it tripped (mover / volume spike / earnings proximity / 52-week extreme),
 excludes watchlist names up front, ranks, and returns a shortlist for the AI.
 
@@ -57,6 +58,25 @@ def _region_query(region_code: str, op: str, pct: float, min_mcap: float, min_pr
         EQ("eq", ["region", region_code]),
         EQ("gt", ["intradaymarketcap", min_mcap]),
         EQ("gt", ["intradayprice", min_price]),
+    ])
+
+
+def _volume_query(region_code: str, min_mcap: float, min_price: float):
+    """Most-actives-style EquityQuery for a region (ca or in), sorted by day
+    volume at the call site (2026-07-03 review improvement 2). The US path gets
+    volume-driven names from the predefined `most_actives` screen, but ca/in
+    previously sourced only ±move screens — so a pure volume-spike candidate
+    (heavy volume, small move) was unreachable there, narrowing FR4's
+    "trips >=1 of four signals" to movers-only for those regions. This query
+    makes the volume/earnings/52w signals reachable without a big move; the
+    local signal tagging in _signals() still decides what actually qualifies.
+    """
+    EQ = _EQ()
+    return EQ("and", [
+        EQ("eq", ["region", region_code]),
+        EQ("gt", ["intradaymarketcap", min_mcap]),
+        EQ("gt", ["intradayprice", min_price]),
+        EQ("gt", ["dayvolume", config.DISCOVERY_MIN_VOLUME]),
     ])
 
 
@@ -162,8 +182,9 @@ def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], 
         return quotes
 
     if region == "in":
-        # India (NSE): region=in custom gainers/losers. No US predefined screens
-        # apply. BSE duplicates are dropped later by the NSI-only quality gate.
+        # India (NSE): region=in custom gainers/losers + a most-actives-style
+        # volume screen. No US predefined screens apply. BSE duplicates are
+        # dropped later by the NSI-only quality gate.
         raw += _collect("in_gainers",
                         _region_query("in", "gt", config.DISCOVERY_GAINER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
@@ -173,6 +194,10 @@ def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], 
                         _region_query("in", "lt", config.DISCOVERY_LOSER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=True, size=50)
+        time.sleep(1)
+        raw += _collect("in_actives",
+                        _volume_query("in", profile["min_mcap"], profile["min_price"]),
+                        sortField="dayvolume", sortAsc=False, size=50)
     else:
         for label in ("day_gainers", "day_losers", "most_actives"):
             raw += _collect(label, label, size=50)
@@ -186,6 +211,12 @@ def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], 
                         _region_query("ca", "lt", config.DISCOVERY_LOSER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=True, size=50)
+        time.sleep(1)
+        # Canada volume screen — same reachability fix as in_actives above; the
+        # US predefined most_actives already covers volume-driven US names.
+        raw += _collect("ca_actives",
+                        _volume_query("ca", profile["min_mcap"], profile["min_price"]),
+                        sortField="dayvolume", sortAsc=False, size=50)
 
     funnel = {"raw": len(raw), "after_dedup": 0, "passed_quality": 0, "passed_signal": 0}
 

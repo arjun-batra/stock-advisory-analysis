@@ -153,10 +153,11 @@ select cron.schedule('publish-prices', '*/30 3-10,13-21 * * 1-5',
   $cron$ select public.dispatch_github_workflow('publish-prices.yml'); $cron$);
 
 -- =====================================================================
--- Live cron inventory (post Phase-6 activation):
+-- Live cron inventory (post Phase-6 activation; health-monitor hours widened
+-- 2026-07-03, migration monitor_nse_discovery_and_publish_prices):
 --   watchlist-dispatch      */30 13-21 * * 1-5   -> dispatch_watchlist_if_open()        [US/TSX, live]
 --   discovery-dispatch      0 22 * * 1-5         -> dispatch_github_workflow(daily-discovery.yml)  [US, live]
---   health-monitor          20,50 4-10,14-23 * * 1-5 -> check_pipeline_health()         [both sessions]
+--   health-monitor          20,50 4-11,14-23 * * 1-5 -> check_pipeline_health()         [both sessions + NSE-discovery window]
 --   nse-watchlist-dispatch  */30 3-10 * * 1-5    -> dispatch_watchlist_nse_if_open()    [NSE, LIVE]
 --   discovery-dispatch-nse  0 10 * * 1-5         -> daily-discovery.yml region=in       [NSE, LIVE]
 --   publish-prices          */30 3-10,13-21 * * 1-5 -> publish-prices.yml               [prices.json]

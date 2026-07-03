@@ -1,6 +1,8 @@
-# Stock Advisory Agent — UI handoff v3 (spec extract)
+# Stock Advisory Agent — UI handoff v4 (spec extract)
  
-**This is the rendering authority** for all user-facing output (notification copy, detail page, dashboard). Where this and the Solution Design describe the same surface, **this wins**. It's a text extract of the visual handoff (`stock-advisor-ui-handoff-v3.html`) — same rules, no mockup markup. Pull the HTML only when you need to see a rendered mockup.
+**This is the rendering authority** for all user-facing output (notification copy, detail page, dashboard). Where this and the Solution Design describe the same surface, **this wins**. It's a text extract of the visual handoff (`stock-advisor-ui-handoff-v3.html`) — same rules, no mockup markup. Pull the HTML only when you need to see a rendered mockup. *(The file keeps its `-v3-` slug so existing repo links stay valid; the content version is the header above.)*
+ 
+*v4 deltas (2026-07-03 review): dashboard live-price source corrected to the server-published `prices.json` (SD issue #18 — the v3 "browser fetches Yahoo directly" line described a design proven infeasible) · headlines date-prefixed where known (SD v18) · no-data (skipped-cycle) rendering rules added for detail page + dashboard · dashboard last-run read moves to the `latest_call_per_ticker` view (same binding, slimmer source). Tokens unchanged.*
  
 *v3 deltas: FR23 notification fix · NSE badge · Dashboard FR19–22 · reminder state retired · rationale length reconciled to SD v9 (280 stored / 150 push). Tokens unchanged from v1.*
  
@@ -66,7 +68,7 @@ Device already IST:         "Jun 19 · 8:34 PM IST"                  single time
 | **Your position** | `holdings.{shares,cost_basis}` · `data_snapshot.price` · computed P/L. **Omit the entire block when `watchlist.status=='watch-only'`** (FR3) — not hidden, not empty |
 | Price & volume | `data_snapshot.{price,pct_change_1d,pct_change_5d,volume_vs_avg}` |
 | Fundamentals | `data_snapshot.fundamentals` (P/E, market cap, 52w range); **missing field → em-dash (—)**, never "0"/blank |
-| Headlines | `data_snapshot.headlines` · titles only, max 5 |
+| Headlines | `data_snapshot.headlines` · titles, date-prefixed `[YYYY-MM-DD]` where the source provided a publish date (SD v18), max 5 |
 | Footer | NFR3 disclaimer (static) · `call_log.id` (UUID, not serial) |
  
 **Currency:** symbol per market — `$` (US) · `CA$` (TSX) · `₹` (NSE). Derived from `watchlist.market`, **not** the ticker suffix. No FX conversion.
@@ -78,7 +80,8 @@ Device already IST:         "Jun 19 · 8:34 PM IST"                  single time
 - **New candidate** — bare verdict headline (no "Changed to" prefix); label drives this.
 - **New-candidate simplified** — discovery tickers have no `watchlist` row: no market badge on the ticker row, no position block (not watch-only — simply not on the watchlist); market inferred client-side from suffix (`.NS→NSE, .TO→TSX, bare→US`) for display only.
 - **Missing fundamentals** — em-dash for any missing field.
-- **AI parse failure** — `parse_status=='failed'` → forced **Hold**, no alert; only reachable by direct URL; show "Model response couldn't be parsed — showing fail-safe Hold."
+- **AI parse failure** — `parse_status=='failed'` (or `'api_error'`) → forced **Hold**, no alert; only reachable by direct URL; show "Model response couldn't be parsed — showing fail-safe Hold."
+- **Skipped cycle (v4)** — `parse_status=='no_data'` → the ticker was skipped in ingestion and **no verdict was made** (distinct from a parse failure, where the model was asked). Show "No usable market data this cycle — the ticker was skipped and no verdict was made." The row's placeholder Hold must never read as a real judgment.
 ---
  
 ## Deliverable 3 — Dashboard (Phase 7, not yet built)
@@ -86,9 +89,9 @@ Device already IST:         "Jun 19 · 8:34 PM IST"                  single time
 **Layout:** mobile-first, ~480px cap, same card aesthetic as the detail page. One **card per ticker**. **Card top always renders** (ticker + live price + 1d change + market badge + held/watching badge). **Card bottom (`tc-bot`) renders only when `call_log` has ≥1 row for that ticker** — not CSS-hidden, **not in the DOM** at all. No placeholder/dashes/"N/A".
  
 **Two distinct freshness signals — keep visually separate:**
-1. **Live price** — header "Prices updated 43s ago" (relative only, no absolute); resets each auto-refresh tick (FR22). Browser fetches Yahoo directly (anon key has no price data).
+1. **Live price (v4, corrected per SD issue #18)** — header "Prices updated 43s ago" (relative only, no absolute). The browser **cannot** fetch Yahoo directly (CORS-blocked for all three markets); prices come from the server-published, same-origin `pages/prices.json`, refreshed on the market cadence. The header age keys off `prices.json`'s own `generated_at` — the honest data age, not the browser fetch tick.
 2. **AI verdict age** — per-card "2h ago / 6h ago"; driven by check cadence, does **not** reset on price refresh.
-**Last-run block (`tc-bot`, when present):** most-recent `call_log` row regardless of `alerted` (shows what the system last *thought*, not only what it pushed) — verdict pill + "at {last-run price}" + rationale + relative time. A row with `label=='new-candidate'` adds a "discovery scan" badge beside the verdict pill (transitional; disappears after the first watchlist run covers it).
+**Last-run block (`tc-bot`, when present):** most-recent call row regardless of `alerted` (shows what the system last *thought*, not only what it pushed) — read via the `latest_call_per_ticker` view (v4; same binding as the raw `call_log` scan it replaces) — verdict pill + "at {last-run price}" + rationale + relative time. A row with `label=='new-candidate'` adds a "discovery scan" badge beside the verdict pill (transitional; disappears after the first watchlist run covers it). **Skipped cycle (v4):** a row with `parse_status=='no_data'` renders a neutral "no data" pill (subtle bg / secondary text) in place of the verdict pill — a skipped cycle is not a Hold.
  
 **FR23 on dashboard:** relative time is **primary** ("2h ago"); absolute dual-tz is a small **secondary** ("10:04 AM ET (8:34 PM IST)"; single tz if device is IST). The "last refreshed" line is relative only.
  
@@ -110,7 +113,9 @@ Device already IST:         "Jun 19 · 8:34 PM IST"                  single time
 - Fundamentals/missing field → em-dash; never "0"/null/blank.
 - Currency symbols `$`/`CA$`/`₹` from `watchlist.market`; no FX.
 - Detail footer: NFR3 disclaimer + UUID log id.
-- Dashboard: `tc-bot` absent (not hidden) when zero `call_log` rows; live price always renders; latest `call_log` row shown regardless of `alerted`; "discovery scan" badge when latest row is `new-candidate`.
+- Detail no-data note: `parse_status=='no_data'` shows the skipped-cycle message, not the parse-failure one (v4).
+- Dashboard: `tc-bot` absent (not hidden) when zero call rows; live price always renders; latest call row shown regardless of `alerted`; "discovery scan" badge when latest row is `new-candidate`; "no data" pill (not a Hold pill) when latest row is a skip (v4).
+- Dashboard prices: served from same-origin `prices.json`; "Prices updated Ns ago" counts from `generated_at`, never from the browser tick (v4).
 - Dashboard: Held/Watching from `watchlist.status` by text+icon; US/TSX and NSE groups separately labelled; ~480px cap; disclaimer footer; auto-refresh interval configurable.
 - **Reminder state ("Still Buy" / "weekly reminder" pill) absent everywhere.**
  
