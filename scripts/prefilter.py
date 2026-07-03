@@ -6,7 +6,7 @@ for Canada and India), applies quality gates, tags each survivor with the
 signal(s) it tripped (mover / volume spike / earnings proximity / 52-week extreme),
 excludes watchlist names up front, ranks, and returns a shortlist for the AI.
 
-Screener shape was verified by scripts/phase4_screener_smoke.py: US gainers/
+Screener shape was verified (Phase 4 smoke test, since removed): US gainers/
 losers/most-active and a custom region=ca query all return, with marketCap,
 regularMarketPrice, regularMarketChangePercent, regularMarketVolume,
 averageDailyVolume3Month, and exchange populated; Canadian symbols come back
