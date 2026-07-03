@@ -227,6 +227,10 @@
     const verdictPill = row.parse_status === "no_data"
       ? `<span class="pill" style="background:var(--bg-subtle);color:var(--text-secondary)">no data</span>`
       : `<span class="pill" style="background:${v.bg};color:${v.text}">${esc(row.verdict)}</span>`;
+    // Model's self-rated confidence in this verdict (from the view; null on
+    // fail-safe rows and rows predating the confidence field — pill omitted).
+    const confPill = (row.confidence && row.parse_status !== "no_data")
+      ? `<span class="pill" style="background:var(--bg-subtle);color:var(--text-secondary)">${esc(row.confidence)} confidence</span>` : "";
     const lastPrice = row.price;                     // extracted from data_snapshot by the view
     const atPrice = (typeof lastPrice === "number")
       ? `<span class="at-price">at ${esc(curSym(w.market))}${lastPrice.toFixed(2)}</span>` : "";
@@ -235,6 +239,7 @@
       <a class="tc-bot" href="${href}">
         <div class="bot-head">
           ${verdictPill}
+          ${confPill}
           ${scan}
           ${atPrice}
         </div>

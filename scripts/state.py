@@ -166,6 +166,12 @@ def _snapshot(data: dict, ai: dict, position: dict | None = None) -> dict:
         "pct_change_5d": data.get("pct_change_5d"),
         "pct_change_20d": data.get("pct_change_20d"),
         "volume_vs_avg": data.get("volume_vs_avg"),
+        # Session context for the price/volume fields above: session_live=true
+        # means `price` was a LIVE mid-session price (not a settled close) and
+        # volume_pro_rated=true means volume_vs_avg was scaled up for the
+        # elapsed session fraction. The detail page labels both accordingly.
+        "session_live": data.get("session_live", False),
+        "volume_pro_rated": data.get("volume_pro_rated", False),
         "fundamentals": data.get("fundamentals", {}),
         "headlines": data.get("headlines", []),
         "raw_model_response": ai.get("raw_model_response"),
