@@ -6,7 +6,7 @@ sensitive is ever hardcoded here — this file is in a public repo.
 """
 
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 # --- Secrets / config (set as GitHub Actions secrets; see workflow) -----------
@@ -132,12 +132,31 @@ MARKET_TZ    = ZoneInfo("America/New_York")
 MARKET_OPEN  = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 
+# Runtime close grace, in MINUTES (design §0 item 9 / §4.1). The SQL dispatch
+# gates absorb pg_cron's SUB-SECOND jitter with a +5 min bound (16:05 ET /
+# 15:35 IST, migration fix_market_close_boundary_jitter) — but this Python gate
+# runs MINUTES after dispatch (runner queue + checkout + pip install), so with
+# an exact-close bound the correctly-dispatched final slot of every trading day
+# arrived here at ~16:01-16:03 ET and was silently no-op'd — the very defect the
+# SQL fix targeted, one layer down. The grace is wider than the SQL slack
+# because it absorbs dispatch-to-execution latency, not scheduler jitter. The
+# open bound stays exact; the next */30 slot (16:30 ET / 16:00 IST) is never
+# dispatched by the SQL gates, so this grace admits no post-close run.
+RUNTIME_CLOSE_GRACE_MIN = int(os.environ.get("RUNTIME_CLOSE_GRACE_MIN", "10"))
+
+
+def _is_open(now: datetime, open_t: time, close_t: time) -> bool:
+    """Weekday + session-hours gate, close extended by RUNTIME_CLOSE_GRACE_MIN."""
+    if now.weekday() >= 5:                  # Saturday / Sunday
+        return False
+    latest = (datetime.combine(now.date(), close_t)
+              + timedelta(minutes=RUNTIME_CLOSE_GRACE_MIN)).time()
+    return open_t <= now.time() <= latest
+
 
 def is_market_open(now_et: datetime | None = None) -> bool:
     now = now_et or datetime.now(MARKET_TZ)
-    if now.weekday() >= 5:                  # Saturday / Sunday
-        return False
-    return MARKET_OPEN <= now.time() <= MARKET_CLOSE
+    return _is_open(now, MARKET_OPEN, MARKET_CLOSE)
 
 
 # --- NSE market hours (Phase 6, design §12) -----------------------------------
@@ -152,10 +171,11 @@ NSE_MARKET_CLOSE = time(15, 30)
 
 
 def is_nse_open(now_ist: datetime | None = None) -> bool:
+    # Same runtime close grace as the ET gate (15:30 + grace): the NSE SQL gate's
+    # 15:35 bound saves the exact-close dispatch, and this keeps the workflow's
+    # own gate from dropping it a minute later.
     now = now_ist or datetime.now(NSE_MARKET_TZ)
-    if now.weekday() >= 5:                  # Saturday / Sunday
-        return False
-    return NSE_MARKET_OPEN <= now.time() <= NSE_MARKET_CLOSE
+    return _is_open(now, NSE_MARKET_OPEN, NSE_MARKET_CLOSE)
 
 
 def require_secrets() -> None:

@@ -38,6 +38,7 @@ def main() -> None:
     sb = state.client()
     watchlist = state.get_watchlist(sb)
     prices: dict[str, dict] = {}
+    skipped = 0
     for i, row in enumerate(watchlist):
         ticker = row["ticker"]
         if i > 0:
@@ -53,15 +54,24 @@ def main() -> None:
                 }
             else:
                 print(f"  skip {ticker}: no price ({'; '.join(data['notes'])})")
+                skipped += 1
         except Exception as e:
             print(f"  skip {ticker}: {type(e).__name__}: {e}")
+            skipped += 1
 
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     with open(OUT_PATH, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True)
+
+    # Heartbeat (NFR2; 2026-07-03 review). Without it a silently-dead
+    # publish-prices pipeline only showed as an ever-growing "prices updated Nh
+    # ago" on the dashboard — visible if someone happened to look, alerting no
+    # one. check_pipeline_health() now watches this key during either session.
+    status = "partial" if skipped else "ok"
+    state.write_heartbeat(sb, "publish-prices", status)
     print(f"Wrote {OUT_PATH} with {len(prices)}/{len(watchlist)} tickers priced "
-          f"at {out['generated_at']}")
+          f"at {out['generated_at']} [{status}]")
 
 
 if __name__ == "__main__":

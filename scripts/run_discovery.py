@@ -33,6 +33,12 @@ def main() -> None:
     # post-US-close dispatch); "in" = India NSE (a separate NSE-close-timed dispatch,
     # ~10:00 UTC / 15:30 IST). Defaults to "na" so the existing dispatch is unchanged.
     region = (os.environ.get("DISCOVERY_REGION", "na") or "na").lower()
+    # Per-region heartbeat key (NFR2; 2026-07-03 review gap 2). The two regional
+    # runs previously shared one 'daily-discovery' key, so the monitor could only
+    # validate the 22:00 UTC NA run — a silently-dead NSE dispatch never alerted,
+    # and its heartbeat evidence was overwritten by the NA run the same day.
+    # check_pipeline_health() now watches 'daily-discovery-in' in its own window.
+    heartbeat_key = "daily-discovery" if region == "na" else f"daily-discovery-{region}"
 
     watchlist = state.get_watchlist_tickers(sb)
     candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(
@@ -51,11 +57,11 @@ def main() -> None:
         # from a silent screener failure (screens errored) — the latter must not
         # report a clean 'ok' (issue #2 principle applied to discovery).
         if screens_errored:
-            state.write_heartbeat(sb, "daily-discovery", "partial")
+            state.write_heartbeat(sb, heartbeat_key, "partial")
             print(f"Done [partial]. 0 candidates but {screens_errored}/{screens_attempted} "
                   f"screens errored — treat as screener failure, NOT a quiet day.")
         else:
-            state.write_heartbeat(sb, "daily-discovery", "ok")
+            state.write_heartbeat(sb, heartbeat_key, "ok")
             print("Done [ok]. No candidates today (all screens ran, nothing passed gates).")
         return
 
@@ -72,6 +78,11 @@ def main() -> None:
             if not data["has_price"]:
                 reason = "rate-limited" if data.get("rate_limited") else "no data"
                 print(f"  skip {c['ticker']} ({reason})")
+                # Skip-with-log, same as the hourly loop (FR15): a candidate that
+                # passed the screen but failed ingest still leaves a track-record row.
+                state.log_skip(sb, c["ticker"], data["notes"],
+                               rate_limited=data.get("rate_limited", False),
+                               label="new-candidate")
                 outcomes["skip"] += 1
                 continue
             data["discovery_signals"] = c["signals"]   # carried into the stored snapshot
@@ -102,7 +113,7 @@ def main() -> None:
 
     degraded = outcomes["skip"] + outcomes["error"] + screens_errored
     status = "partial" if degraded else "ok"
-    state.write_heartbeat(sb, "daily-discovery", status)
+    state.write_heartbeat(sb, heartbeat_key, status)
     print(f"Done [{status}]. {dict(outcomes)}"
           + (f" ({screens_errored}/{screens_attempted} screens errored)" if screens_errored else ""))
 

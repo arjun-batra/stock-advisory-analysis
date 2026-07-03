@@ -1,4 +1,4 @@
-# Stock Advisory Agent — Solution Design (v18)
+# Stock Advisory Agent — Solution Design (v19)
 
 **Owner:** Arjun (solo build reference)
 **Status:** Phases 0–7 all live. **v15 documents the 2026-07-01 behavior-preserving refactor**
@@ -43,9 +43,45 @@ shown to the model judging that same candidate. Summary (full detail in §4.4a):
   verdict, validated, persisted in `data_snapshot`, and printed in run logs — not yet consumed by any
   gating logic (§11).
 
-**Companion docs:** `stock-advisory-agent-requirements.md` (**v4 — source of truth**);
-`stock-advisor-ui-handoff-v3-spec.md` (**v3 — rendering authority**);
-`stock-advisory-agent-solution-design-history.md` (change history). **All four docs live in the
+**v19 (2026-07-03)** implements the full findings of the requirements-vs-codebase review
+(`requirements_docs/codebase-review-2026-07-03.md` — six gaps + improvement opportunities, all now
+closed). Summary:
+- **The v17 close-boundary fix is completed at the runtime layer (gap 1, the review's HIGH finding).**
+  v17 widened only the SQL dispatch gates; the Python gates (`is_market_open`/`is_nse_open`) still
+  tested the exact close, so the correctly-dispatched final slot of every trading day arrived at the
+  workflow ~1–3 min post-close and was silently no-op'd — the original defect, one layer down. Both
+  Python gates now extend the close by **`RUNTIME_CLOSE_GRACE_MIN` (default 10 min, env-tunable)** —
+  wider than the SQL +5 min because it absorbs dispatch-to-execution latency (runner queue + checkout
+  + pip install), not scheduler jitter. See §0 item 9, §4.1.
+- **NSE discovery is now monitored (gap 2, NFR2).** `run_discovery` writes a per-region heartbeat
+  (`daily-discovery-in` for region=in); `check_pipeline_health()` gained a post-11:00 UTC check for it,
+  and the `health-monitor` cron widened to `4-11,14-23` UTC. Migration
+  `monitor_nse_discovery_and_publish_prices`. §4.8.
+- **`publish-prices` is now monitored (review improvement 1, NFR2).** It writes a `publish-prices`
+  heartbeat; the monitor raises "Dashboard prices stale" if it's >70 min old during either session —
+  previously a dead prices pipeline only aged the dashboard's "prices updated" line silently. §4.8, §13.
+- **Dashboard read 2 moved to a server-side view (gap 3, NFR1 + FR21).** New
+  `latest_call_per_ticker` view (`security_invoker`, slim columns only) replaces the client-side scan
+  of the newest 1000 full `call_log` rows, which shipped `raw_model_response` at multi-MB per refresh
+  and could age a quiet ticker's latest row out of the window. Migration `latest_call_per_ticker_view`;
+  DDL mirrored at `sql/dashboard_latest_call_view.sql`. §5, §13.
+- **Skipped cycles render honestly (gap 5).** A `parse_status=='no_data'` row shows a "skipped, no
+  verdict was made" note on the detail page and a neutral "no data" pill (not a Hold pill) on the
+  dashboard. Rendering rules owned by UI handoff v4.
+- **Discovery ingest skips are logged (gap 6, FR15).** `run_discovery` now writes the same
+  skip-with-log `call_log` row as the hourly loop (`label='new-candidate'`).
+- **CA/IN volume screens (review improvement 2, FR4).** `prefilter` adds a most-actives-style,
+  day-volume-sorted EquityQuery for `region=ca` and `region=in`, making the volume/earnings/52w
+  signals reachable without a ±5% move (the US path already had `most_actives`). §4.3.
+- **Doc alignment:** Requirements bumped to v5 (FR21 price freshness; Decision #18); UI handoff bumped
+  to v4 (prices.json source, dated headlines, no-data rendering). No change to the alerting rule
+  (§6.3), the prompt (§4.4a), or any schema table; the only new DB objects are the view and two
+  heartbeat rows.
+
+**Companion docs:** `stock-advisory-agent-requirements.md` (**v5 — source of truth**);
+`stock-advisor-ui-handoff-v3-spec.md` (**v4 — rendering authority**; file keeps its `-v3-` slug for
+link stability); `stock-advisory-agent-solution-design-history.md` (change history);
+`codebase-review-2026-07-03.md` (the review this version implements). **All docs live in the
 repo** at `requirements_docs/`, committed 2026-07-01 so Claude Code sessions can read them directly.
 
 > **Change history moved out (token hygiene).** The full v2–v14 dated change-note stack lives in
@@ -98,6 +134,14 @@ provenance is in the history file; the short version:
    Applied as Supabase migration `fix_market_close_boundary_jitter`. **Don't tighten either bound back
    to the exact close** — the jitter is real and the last dispatch is the most decision-relevant of the
    day. (The monitor's own `<= 16:00 / 15:30` staleness window is a *different* check and unchanged.)
+   **v19 completion:** the SQL slack alone was not enough — the Python runtime gates
+   (`is_market_open`/`is_nse_open`) still tested the exact close, and the workflow executes **minutes**
+   after dispatch (runner queue + checkout + pip install), so the rescued exact-close dispatch was
+   still no-op'd at the Python layer. Both runtime gates now extend the close by
+   **`RUNTIME_CLOSE_GRACE_MIN` (default 10 min)** — deliberately wider than the SQL +5 min because the
+   two layers absorb different delays (dispatch-to-execution latency vs. scheduler jitter). Neither
+   grace admits the next `*/30` slot: the SQL gates never dispatch it. **Don't "simplify" the two
+   bounds into one number** — they protect against different failure modes.
 ## 1. Purpose of This Document
 
 The requirements doc closes the product questions. This doc closes the engineering ones — how the
@@ -267,9 +311,16 @@ was post-close no-op dispatches (#9) and a daily false "watchlist stalled" alert
 - The wide `*/30 13-21 UTC` cron **stays as the DST superset** — it fires more often than needed and
   the ET gate trims it down to the live session, so the schedule never has to be edited twice a year.
   This is the "schedule fires loosely, the gate is the authority" principle made concrete.
-- Python `is_market_open()` **remains as execution-time defense-in-depth** — the dispatch gate and the
-  runtime gate now agree, both computed in `America/New_York`. **All market-hour gating is computed in
-  ET, never in fixed UTC offsets.** (§12 extends this to a per-market gate with a second IST window.)
+- Python `is_market_open()` **remains as execution-time defense-in-depth**, computed in
+  `America/New_York` like the dispatch gate. **The two layers carry different close bounds on purpose
+  (v19):** the SQL gate closes at **16:05** (absorbs pg_cron's sub-second jitter); the Python gate
+  closes at **16:00 + `RUNTIME_CLOSE_GRACE_MIN` (default 10 min → 16:10)**, because the workflow runs
+  minutes after dispatch (runner queue + checkout + `pip install`) — with an exact-close Python bound,
+  the exact-close dispatch v17 rescued arrived at the runtime gate ~16:01–16:03 and was silently
+  no-op'd (2026-07-03 review gap 1). The open bound stays exact. Neither layer admits the 16:30 slot —
+  the SQL gate never dispatches it. **All market-hour gating is computed in ET, never in fixed UTC
+  offsets.** (§12 extends this to a per-market gate with a second IST window; `is_nse_open()` carries
+  the same runtime grace on the 15:30 IST close.)
 - Migration `issue_9_12_et_aware_gating` + a `cron.alter_job` re-point; commits `07d10e7f`, `516cbba0`.
 **Safe forced-test pattern (live — issue #7).** `FORCE_RUN=true` bypasses the market gate; if
 `ALERTS_ENABLED=true` at the same time, it fires **real** ntfy pushes regardless of market hours (one
@@ -296,9 +347,13 @@ SD previously described a maintained `candidate_universe` table pulled via `yf.d
 **not** how it works. The code (`prefilter.py`) sources candidates from **Yahoo's live server-side
 screener** and applies quality gates + signals locally:
 - **Sourcing — live screener, not a static universe.** Each day it pulls Yahoo's predefined screens
-  `day_gainers`, `day_losers`, `most_actives` (US) plus a custom `region=ca` EquityQuery for Canada
-  and (v14, live) a `region=in` EquityQuery for NSE — see §12 D5 for the India-specific corrections
-  (NSE-only filtering, INR thresholds). There is **no maintained universe table**; the
+  `day_gainers`, `day_losers`, `most_actives` (US) plus custom EquityQueries for Canada (`region=ca`)
+  and (v14, live) NSE (`region=in`) — see §12 D5 for the India-specific corrections (NSE-only
+  filtering, INR thresholds). **v19:** the ca/in queries are gainers/losers **plus a
+  most-actives-style, day-volume-sorted query** (`_volume_query`, floored at `DISCOVERY_MIN_VOLUME`) —
+  previously those regions sourced only ±move screens, so a pure volume-spike candidate (heavy volume,
+  small move) was unreachable outside the US and FR4's "trips ≥1 of four signals" was effectively
+  movers-only there (2026-07-03 review improvement 2). There is **no maintained universe table**; the
   `candidate_universe` table has been **dropped** (v15, §5) — this removes the "seed-and-quarterly-
   refresh" ownership burden the old SD invented — there's nothing to maintain.
 - **Quality gates (all tunable, per-region):** minimum market cap (~$2B US/CA; **₹5e10 for NSE, v14** —
@@ -432,8 +487,9 @@ Give your verdict as JSON per the schema.
   provides one (v18 — `[2026-06-30] Headline text`), covering both the new `content.pubDate` and
   legacy `providerPublishTime` shapes the API has used. Titles-only headlines with no derivable date
   are passed through unprefixed rather than dropped.
-- `discovery_signals` (discovery candidates only, v18): the same signal tags (`mover`/`volume-spike`/
-  `earnings`/`52w-extreme`) already written to `data_snapshot.discovery_signals` (§5) — previously
+- `discovery_signals` (discovery candidates only, v18): the same signal tags — the literal code values
+  are **`mover` / `volume` / `earnings` / `52w-high` / `52w-low`** (`prefilter._signals`; tag names
+  aligned doc-to-code in v19) — already written to `data_snapshot.discovery_signals` (§5) — previously
   computed and stored but never surfaced to the model judging that candidate, so a Buy/Hold call on a
   freshly-screened name carried no visibility into *why* it was screened today. Absent on watchlist
   tickers (they weren't screened).
@@ -596,7 +652,8 @@ disabled workflow). A passive heartbeat row no one reads is not a monitor.
 - A third pg_cron job, **`health-monitor`**, runs **`check_pipeline_health()`** on a schedule
   independent of the two workflows.
 - It actively raises an **ntfy alert** (via `send_ntfy`) when: the watchlist heartbeat is **stale
-  during market hours**, the daily **discovery run didn't fire**, or a run **completed degraded**.
+  during market hours**, a daily **discovery run didn't fire** (either region, v19), the **dashboard
+  price snapshot stops refreshing** during a session (v19), or a run **completed degraded**.
 - **`monitor_alerts`** (state table) dedups: alert on **state change** into a bad state, **re-alert
   per cooldown** while it stays bad, and emit **one recovery notice** when it clears. Helpers
   `_raise_monitor` / `_clear_monitor` encapsulate the transitions.
@@ -613,6 +670,25 @@ watchlist window, sharing the same `hourly-watchlist` heartbeat key as US/TSX (t
 overlap, §12 D2, so one heartbeat correctly represents both). The `health-monitor` cron itself was
 widened (`4-10,14-23` UTC) so the IST window actually gets evaluated.
 
+**Per-region discovery heartbeats + NSE discovery window (v19, live — 2026-07-03 review gap 2).**
+The two regional discovery runs previously shared one `daily-discovery` heartbeat key, so the monitor
+(which checks after 23:00 UTC against a "ran after 21:00 UTC today" bound) only ever validated the
+22:00 UTC US/TSX run — a silently-dead 10:00 UTC `region=in` dispatch never alerted, and the NA run
+overwrote its heartbeat evidence the same day. Now: `run_discovery` writes **`daily-discovery-in`**
+for region=in (`daily-discovery` unchanged for NA), and `check_pipeline_health()` has a matching
+check — after **11:00 UTC**, expect today's region=in run after 09:30 UTC; monitor key
+`discovery-in`. The `health-monitor` cron was widened `4-10` → **`4-11`** UTC so the new window gets
+evaluated. Migration `monitor_nse_discovery_and_publish_prices` (which also seeded the two new
+heartbeat keys once, `on conflict do nothing`, so rollout didn't fire a false "never ran" alert).
+
+**publish-prices staleness check (v19, live — review improvement 1).** `publish_prices.py` now writes
+a **`publish-prices`** heartbeat (`ok`/`partial`, mirroring the other runners); the monitor raises
+**"Dashboard prices stale"** (key `publish-prices`, priority 3, 6 h cooldown, one recovery notice)
+when that heartbeat is >70 min old (~2 missed `*/30` ticks) while either session's window is open.
+Previously a dead prices pipeline had **no** active signal — the dashboard's "prices updated Nh ago"
+just grew, visible only if someone happened to look (exactly the passive-heartbeat anti-pattern this
+section exists to kill).
+
 **Known limit (see §2 item 6):** the monitor lives in the same Supabase pg_cron that triggers the
 workflows, so it cannot catch a total Supabase/pg_cron outage. An out-of-band uptime ping is the
 documented (unbuilt) mitigation.
@@ -628,7 +704,15 @@ documented (unbuilt) mitigation.
 | `verdict_state` | ticker, current_verdict, last_checked_at | Change-detection for the single rule (§6.3) |
 | `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp, label (watchlist/new-candidate), alert_type (**change/null**, CHECK tightened v14), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source |
 | `monitor_alerts` | check_name (PK), last_state, last_alerted_at, updated_at | Dead-man monitor dedup state (§4.8) |
-| `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat the monitor reads (NFR2) |
+| `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat the monitor reads (NFR2). Keys (v19): `hourly-watchlist` (shared across sessions), `daily-discovery` (NA), `daily-discovery-in` (NSE), `publish-prices` |
+
+**`latest_call_per_ticker` — VIEW (v19, migration `latest_call_per_ticker_view`,
+DDL at `sql/dashboard_latest_call_view.sql`).** Most recent `call_log` row per ticker
+(`DISTINCT ON (ticker) … ORDER BY ticker, timestamp DESC`), exposing only what the dashboard renders:
+`id, ticker, verdict, rationale, timestamp, label, alerted`, plus `parse_status` and `price` extracted
+from `data_snapshot`. `security_invoker = true`, so the publishable key is still governed by
+`call_log`'s RLS SELECT policy — same exposure as before, minus the multi-MB `raw_model_response`
+payloads the old client-side scan shipped on every refresh (§13, 2026-07-03 review gap 3).
 
 **`candidate_universe` — DROPPED (v15, issue #27/PR #28).** Confirmed vestigial before dropping
 (0 rows, zero references from code, DB functions, views, cron jobs, or FKs — load-bearing decision #7
@@ -695,7 +779,8 @@ existed — they are no longer the live mechanism.
 
 **Supabase objects.** Functions: `dispatch_github_workflow` (live), `dispatch_watchlist_if_open`
 (**live** — ET-aware dispatch gate, §4.1), `dispatch_watchlist_nse_if_open` (**live, v14** — IST gate,
-§12 D1/D2), `send_ntfy`, `_raise_monitor`, `_clear_monitor`, `check_pipeline_health`. Extensions:
+§12 D1/D2), `send_ntfy`, `_raise_monitor`, `_clear_monitor`, `check_pipeline_health`. Views:
+`latest_call_per_ticker` (**live, v19** — dashboard read 2, above). Extensions:
 `pg_cron`, `pg_net`. Vault secrets: `github_workflow_pat`, `ntfy_topic`.
 
 **Timestamps are stored in UTC; rendering is per-surface (FR23, v8):**
@@ -932,7 +1017,8 @@ stock-advisory-analysis/                # actual repo name
 │   └── cors_smoke_test.py        # v14: issue #18 probe script
 ├── sql/
 │   ├── scheduler_pgcron.sql      # dispatch fns (incl. NSE, v14) + all cron jobs; matches live cron
-│   └── phase5_monitoring.sql     # monitor_alerts, send_ntfy, check_pipeline_health, ET+IST gates
+│   ├── phase5_monitoring.sql     # monitor_alerts, send_ntfy, check_pipeline_health (v19: + discovery-in, publish-prices), ET+IST gates
+│   └── dashboard_latest_call_view.sql  # v19: latest_call_per_ticker view (dashboard read 2, §13)
 ├── pages/
 │   ├── detail.html               # GitHub Pages detail view
 │   ├── dashboard.html            # v14: Phase 7 read-only dashboard, live (§13)
@@ -958,6 +1044,7 @@ stock-advisory-analysis/                # actual repo name
 | 7 | **Read-only dashboard** | ✅ **Done, live (v14).** §13. Built (#22) against the original direct-Yahoo-fetch design; **reworked (#24) after issue #18's CORS smoke test proved that design infeasible** — live price now reads a server-published `pages/prices.json` (same-origin) instead. All other FR19–22 behavior (market grouping, conditional last-run block, access gate, FR23 timestamps) unchanged from the original build. |
 | — | **Behavior-preserving refactor (v15, issue #27/PR #28)** | ✅ Done — dead-code removal, deduplication (`textutil.clip()`, `missing_verdict()`), naming-collision fix, `candidate_universe` dropped. Zero behavior change to any live pipeline; net −31 lines. Surfaced one real doc-vs-code gap (`data_snapshot.market`, issue #31, resolved 2026-07-02). |
 | — | **AI prompt-quality pass (v18, PR #37)** | ✅ Done — richer context (discovery signals, company/sector, dated headlines, today's date, `n/a`/currency rendering), explicit verdict semantics + anchoring/headline-injection guards in the system prompt, schema-enforced JSON output, and a new persisted `confidence` field. No schema/table change; alerting rule (§6.3) unchanged. `confidence` has no consumer yet (§11). |
+| — | **Review-implementation pass (v19, 2026-07-03)** | ✅ Done — runtime close grace completing the v17 fix (§4.1); NSE-discovery + publish-prices monitoring (§4.8, migration `monitor_nse_discovery_and_publish_prices`); `latest_call_per_ticker` dashboard view (§13, migration `latest_call_per_ticker_view`); honest no-data rendering; discovery skip logging; ca/in volume screens (§4.3); Requirements v5 + UI-handoff v4 alignment. Alerting rule (§6.3) and prompt (§4.4a) unchanged. |
 
 ---
 
@@ -1021,6 +1108,29 @@ stock-advisory-analysis/                # actual repo name
 - **No behavior change to alerting:** the single-rule change logic (§6.3) and discovery Buy-only push
   policy (§4.3) are unaffected by any of the above — confirm a run with the new prompt still alerts on
   exactly the same conditions as before.
+**Review-implementation pass (v19):**
+- **Close-slot run survives both gates:** the ~16:00 ET (15:30 IST) dispatch reaches Python ~1–3 min
+  post-close and still runs — `is_market_open()`/`is_nse_open()` admit close + `RUNTIME_CLOSE_GRACE_MIN`.
+  A dispatch arriving past the grace (e.g. 16:15 ET) still no-ops. Neither gate ever admits the next
+  `*/30` slot (the SQL gates don't dispatch it).
+- **NSE discovery no-show alerts:** with no `daily-discovery-in` heartbeat after 09:30 UTC, the first
+  monitor tick after 11:00 UTC raises "NSE discovery did not run"; a normal 10:00 UTC run keeps it
+  silent; the NA run writing `daily-discovery` does **not** satisfy the NSE check (separate keys).
+- **Stale prices alert:** stop publish-prices for >70 min during a session → one "Dashboard prices
+  stale" push, cooldown-deduped, one recovery notice when it resumes. Outside both sessions, no alert.
+- **Dashboard view parity:** `latest_call_per_ticker` returns exactly one row per ticker with a
+  `call_log` row, matching the newest row's id/verdict/rationale/timestamp/label; `price` equals the
+  row's `data_snapshot.price`; payload carries no `raw_model_response`. Anon key sees the view but
+  still cannot write, and RLS still governs (security_invoker).
+- **No-data rendering:** a `parse_status=='no_data'` latest row shows the "no data" pill on the
+  dashboard (not a Hold pill) and the skipped-cycle note on the detail page; `failed`/`api_error` rows
+  keep the parse-failure note.
+- **Discovery skip logging:** a screened candidate whose ingest returns no price writes a
+  `label='new-candidate'`, `parse_status='no_data'`, `alerted=false` row; `verdict_state` untouched.
+- **ca/in volume screens:** funnel `raw` counts include the `ca_actives`/`in_actives` quotes; a
+  volume-spike name with <5% move can now reach the shortlist in those regions; an erroring volume
+  screen degrades (screens_errored) without killing the day's discovery.
+
 **FR23 timestamps (v8):**
 - **US/TSX notification:** timestamp renders in **ET only**, no IST, no brackets.
 - **NSE notification:** timestamp renders in **IST only**, no ET, no brackets.
@@ -1075,7 +1185,23 @@ headlines, and today's date now reach the model; verdict semantics, cost-basis-a
 headline-injection guards are explicit in the system prompt; output is schema-enforced; a `confidence`
 field is persisted. No open item from v17 or earlier was tracking this — it's new scope, not a closure.*
 
+*Closed in v19 (2026-07-03 review implementation): the runtime close-grace completing the v17 fix
+(§0 item 9, §4.1); NSE-discovery and publish-prices monitoring (§4.8); the `latest_call_per_ticker`
+dashboard view (§5, §13); honest no-data rendering (UI handoff v4); discovery skip logging (FR15);
+ca/in volume screens (§4.3); Requirements v5 / UI-handoff v4 doc alignment. Also removed from this
+list: the `data_snapshot.market` doc-vs-code entry — it was resolved 2026-07-02 (issue #31, header
+note + §4.7/§5) but had been left stale here.*
+
 Still open:
+
+- **First close-slot run with the runtime grace not yet observed (v19).** The fix is deterministic
+  (the gate math is unit-checkable), but confirm on the next session close that the ~16:00 ET / 15:30
+  IST dispatch produces a real run — the `[gate]` audit line should show the session open at
+  ~16:01–16:03 ET (or ~15:31–15:33 IST) instead of the "All markets closed - no-op" exit.
+- **ca/in volume screens unvalidated against live screener data (v19).** The `dayvolume`-sorted
+  EquityQuery follows the same shape as the ratified gainers/losers queries, and a failing screen
+  degrades gracefully (counted in `screens_errored`, never fatal) — but watch the next few funnel
+  logs to confirm the new screens return quotes rather than erroring.
 
 - **`confidence` field has no consumer yet (v18).** It's requested, validated, and persisted
   (`data_snapshot.confidence`, §5) but no push/alert/suppression logic reads it. The documented intended
@@ -1088,11 +1214,6 @@ Still open:
   runs; if `retried`/`failed` rows haven't dropped, the schema wiring itself is the first thing to
   re-verify.
 
-- **`data_snapshot.market` doc-vs-code gap (v15, issue #31).** §4.7/§5 describe the detail page's
-  currency/badge logic as reading `snap.market`; the live code never writes that field, so the real
-  mechanism is a fundamentals/suffix fallback that happens to agree today. Needs a ruling: write the
-  field to match the doc, or rewrite the doc to match the fallback. Not urgent — no live ticker
-  currently exposes a mismatch — but the doc and code should stop disagreeing.
 - **Supabase single-point-of-failure** (§2 item 6) — scheduling *and* monitoring both live in
   Supabase pg_cron; an out-of-band uptime ping is the unbuilt mitigation. Decide if it's worth adding.
 - **RPD sustainability — standing ops note, not a defect (#10 Problem 2).** This is *not* the old
@@ -1212,11 +1333,18 @@ grouped by market, each with a live price and (conditionally) its most recent ve
    ago" indicator keys off `prices.json`'s own `generated_at` field, which is an honest data-age
    signal rather than a browser-refresh-tick illusion of liveness. This is a **deliberate, documented
    downgrade from the original spec**, not a silent one — the UI copy reflects it.
-2. **Last-run data** — the **most recent `call_log` row per ticker**, `ORDER BY timestamp DESC LIMIT
-   1` per ticker, read from Supabase via the anon key. **The query does NOT filter on `alerted=true`**
-   — it returns the latest row whatever its alert status, so the dashboard shows **what the system
-   last *thought*, not only what it last *pushed*.** This is "how fresh is the verdict," and is
-   unaffected by the read-1 architecture change — it was never Yahoo-dependent.
+2. **Last-run data** — the **most recent `call_log` row per ticker**, read from Supabase via the anon
+   key **through the `latest_call_per_ticker` view (v19, §5)**: `DISTINCT ON (ticker)` server-side,
+   slim columns only. This replaced the original client-side scan of the newest 1000 full `call_log`
+   rows, which shipped `data_snapshot.raw_model_response` (the whole batch reply, replicated per row)
+   at multi-MB per refresh tick — a needless bite out of the free-tier egress budget (NFR1) — and
+   whose fixed window could age a quiet ticker's newest row out entirely after a long market closure,
+   silently dropping its last-run block against FR21 (2026-07-03 review gap 3). **The read does NOT
+   filter on `alerted=true`** — it returns the latest row whatever its alert status, so the dashboard
+   shows **what the system last *thought*, not only what it last *pushed*.** A latest row with
+   `parse_status=='no_data'` renders a neutral "no data" pill instead of a verdict pill (UI handoff
+   v4) — a skipped cycle is not a Hold. This read is "how fresh is the verdict," and was never
+   Yahoo-dependent.
 
 **Conditional last-run columns (FR21). Live, unchanged from original design.** For a ticker with
 **zero `call_log` rows**, the last-run columns are **not rendered at all** — no placeholder, no empty

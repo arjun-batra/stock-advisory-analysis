@@ -1,5 +1,12 @@
 # Requirements/Design vs. Codebase Review — 2026-07-03
 
+> **Status: IMPLEMENTED (same day).** All six gaps and all improvement opportunities below were
+> fixed in the follow-up change set (SD v19; Requirements v5; UI-handoff v4; Supabase migrations
+> `latest_call_per_ticker_view` + `monitor_nse_discovery_and_publish_prices`). This document is
+> retained as the record of what was found and why each fix took the shape it did. Two follow-up
+> observables remain and are tracked in SD §11: the first live close-slot run under the runtime
+> grace, and live validation of the new ca/in volume screens.
+
 **Scope:** Requirements v4, SD v18, UI-handoff v3 compared against the full codebase
 (`scripts/`, `sql/`, `pages/`, `.github/workflows/`) on `main` at `553a73a`.
 
