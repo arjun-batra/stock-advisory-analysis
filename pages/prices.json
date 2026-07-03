@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-03T04:01:38.689839+00:00",
+  "generated_at": "2026-07-03T04:31:29.755296+00:00",
   "prices": {
     "AAPL": {
       "chg": 4.84,
@@ -23,7 +23,7 @@
       "chg": 1.15,
       "currency": "INR",
       "market": "NSE",
-      "price": 1896.5
+      "price": 1896.6
     },
     "BNS.TO": {
       "chg": -1.74,
@@ -50,28 +50,28 @@
       "price": 356.18
     },
     "HDFCBANK.NS": {
-      "chg": 1.02,
+      "chg": 1.09,
       "currency": "INR",
       "market": "NSE",
-      "price": 804.0
+      "price": 804.55
     },
     "HINDUNILVR.NS": {
-      "chg": 0.59,
+      "chg": 0.22,
       "currency": "INR",
       "market": "NSE",
-      "price": 2223.7
+      "price": 2215.5
     },
     "ICICIBANK.NS": {
-      "chg": 1.39,
+      "chg": 0.91,
       "currency": "INR",
       "market": "NSE",
-      "price": 1419.5
+      "price": 1412.7
     },
     "INFY.NS": {
-      "chg": 1.02,
+      "chg": 0.38,
       "currency": "INR",
       "market": "NSE",
-      "price": 1051.5
+      "price": 1044.9
     },
     "ITC.NS": {
       "chg": 0.21,
@@ -86,10 +86,10 @@
       "price": 62.87
     },
     "LT.NS": {
-      "chg": 0.52,
+      "chg": 0.0,
       "currency": "INR",
       "market": "NSE",
-      "price": 4080.3999
+      "price": 4059.5
     },
     "NFLX": {
       "chg": 4.66,
@@ -104,10 +104,10 @@
       "price": 194.83
     },
     "RELIANCE.NS": {
-      "chg": 0.29,
+      "chg": 0.26,
       "currency": "INR",
       "market": "NSE",
-      "price": 1307.3
+      "price": 1306.9
     },
     "RY.TO": {
       "chg": -1.11,
@@ -116,10 +116,10 @@
       "price": 290.43
     },
     "SBIN.NS": {
-      "chg": -0.29,
+      "chg": -0.69,
       "currency": "INR",
       "market": "NSE",
-      "price": 1048.5
+      "price": 1044.3
     },
     "SHOP.TO": {
       "chg": 4.55,
@@ -134,10 +134,10 @@
       "price": 162.0
     },
     "TCS.NS": {
-      "chg": 1.67,
+      "chg": 1.2,
       "currency": "INR",
       "market": "NSE",
-      "price": 2102.7
+      "price": 2093.0
     },
     "TD.TO": {
       "chg": -1.84,
