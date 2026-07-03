@@ -996,10 +996,7 @@ stock-advisory-analysis/                # actual repo name
 ├── .github/workflows/
 │   ├── hourly-watchlist.yml      # workflow_dispatch ONLY (no schedule:), concurrency group
 │   ├── daily-discovery.yml       # workflow_dispatch ONLY (no schedule:), concurrency group
-│   ├── publish-prices.yml        # v14: writes pages/prices.json (issue #18 fallback, §13)
-│   ├── cors-smoke-test.yml       # v14: issue #18 probe (runner-based, Yahoo egress-blocked locally)
-│   ├── phase0-smoke-test.yml     # Phase-0 yfinance smoke test (manual)
-│   └── phase4-smoke.yml          # Phase-4 screener-shape smoke test (manual)
+│   └── publish-prices.yml        # v14: writes pages/prices.json (issue #18 fallback, §13)
 ├── scripts/
 │   ├── config.py                 # market hours/gate, model Variables, discovery gates/thresholds
 │   ├── ingest.py                 # yfinance wrapper (US bare / .TO / .NS; new-listing handling; v18: name/sector/dated headlines)
@@ -1010,11 +1007,7 @@ stock-advisory-analysis/                # actual repo name
 │   ├── textutil.py               # v15 (refactor, PR #28): shared clip() — was duplicated in ai_judge.py/notify.py
 │   ├── run_hourly.py             # hourly watchlist orchestrator, per-market gate (§6.1)
 │   ├── run_discovery.py          # daily discovery orchestrator, region-aware (§6.2)
-│   ├── publish_prices.py         # v14: fetches watchlist prices, writes pages/prices.json (issue #18)
-│   ├── phase0_smoke_test.py      # Phase-0 data smoke test (NSE exchange-string check added, §12)
-│   ├── phase4_screener_smoke.py  # Phase-4 screener smoke test
-│   ├── india_screener_smoke.py   # v14: region=in screener shape probe (fed §12 D5)
-│   └── cors_smoke_test.py        # v14: issue #18 probe script
+│   └── publish_prices.py         # v14: fetches watchlist prices, writes pages/prices.json (issue #18)
 ├── sql/
 │   ├── scheduler_pgcron.sql      # dispatch fns (incl. NSE, v14) + all cron jobs; matches live cron
 │   ├── phase5_monitoring.sql     # monitor_alerts, send_ntfy, check_pipeline_health (v19: + discovery-in, publish-prices), ET+IST gates
