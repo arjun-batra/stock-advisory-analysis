@@ -46,16 +46,23 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           # Repository variables (Settings -> Secrets and variables -> Actions ->
           # Variables tab), not secrets -- model names aren't sensitive, and this
-          # way you can swap models from the GitHub UI with no commit. Falls back
-          # to the literal on the right if the variable isn't set.
+          # way you can swap models from the GitHub UI with no commit. GEMINI_MODEL
+          # keeps a literal default (the primary must never be empty). The BACKUP,
+          # however, carries NO literal default on purpose: an unset Variable ->
+          # empty env -> config.py's `if m` filter drops it -> NO fallback model.
+          # That is exactly config.py's documented "leave empty to disable the
+          # fallback" behavior. So: BACKUP Variable unset means NO backup model,
+          # NOT a silent 'gemini-3.1-flash-lite' fallback.
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
-          GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
+          GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP }}
           # NSE watchlist model pair (design §12 D3) — same Variable-driven
-          # pattern, own free-tier quota bucket. Unset -> falls back to the US/TSX
-          # models (NSE runs in a separate, non-overlapping session). Explicit
-          # fallback so the env var is never an empty string.
+          # pattern, own free-tier quota bucket. Unset NSE_GEMINI_MODEL -> falls
+          # back to the US/TSX primary (NSE runs in a separate, non-overlapping
+          # session). NSE_GEMINI_MODEL_BACKUP unset AND GEMINI_MODEL_BACKUP unset
+          # -> empty -> config drops it -> no NSE backup, same disable-by-unset
+          # behavior as above (no literal lite fallback).
           NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
-          NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP || 'gemini-3.1-flash-lite' }}
+          NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP }}
           # Live alerting by default. A manual workflow_dispatch can set
           # alerts_enabled=false for a safe dry run (DryRunNotifier logs the
           # composed push instead of sending it). Scheduled pg_cron dispatches
@@ -72,3 +79,34 @@ jobs:
           NSE_NTFY_TOPIC: ${{ secrets.NSE_NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_hourly.py
+
+      # --- Shadow verdict pilot (US/CA, NON-production) --------------------------
+      # Runs as a SEPARATE process AFTER the production step above has already
+      # finished and written its rows. Isolation is structural: production is
+      # complete before this starts, so a hang/timeout/exception here has no code
+      # path back to it. `continue-on-error: true` is the second belt — a shadow
+      # failure never fails the workflow run (production already succeeded).
+      #
+      # Kill switch: default ON for the pilot. Only SHADOW_ENABLED=false (a repo
+      # Variable, zero code change) disables it. The `!= 'false'` gate means unset
+      # -> '' != 'false' -> step runs; this is NOT a `|| 'true'` default, so it
+      # can't be defeated by GitHub-expression truthiness (the empty default is
+      # resolved in config.py, not here). Reuses the SAME model-call config vars
+      # as production (GEMINI_MODEL / _BACKUP / timeout); no NTFY_* passed — this
+      # track never alerts.
+      - name: Run shadow verdict track (US/CA pilot)
+        if: ${{ vars.SHADOW_ENABLED != 'false' }}
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP }}
+          # Empty/unset Variable -> config.py resolves the pilot default (on).
+          # Setting it to 'false' turns the whole track off with no code change.
+          SHADOW_ENABLED: ${{ vars.SHADOW_ENABLED }}
+          # Same market-open gate as production; a force-run dispatch runs the
+          # shadow track too (against the same forced production snapshot).
+          FORCE_RUN: ${{ inputs.force_run }}
+        run: python scripts/run_shadow.py
