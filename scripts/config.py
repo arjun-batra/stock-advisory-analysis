@@ -51,6 +51,32 @@ ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
 # testing or backfill via workflow_dispatch. Leave unset on the scheduled run.
 FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
 
+# --- Shadow verdict pilot kill switch (US/CA, non-production) ------------------
+# Gates the entire shadow verdict track (scripts/run_shadow.py). DEFAULT TRUE for
+# the pilot: turning it off is a zero-code-change GitHub Variable flip
+# (SHADOW_ENABLED=false), checked every cycle before the shadow call fires.
+#
+# The default lives HERE, not as a `|| 'true'` in the workflow: the workflow
+# passes `SHADOW_ENABLED: ${{ vars.SHADOW_ENABLED }}`, so an unset Variable
+# arrives as an EMPTY string, which `(... or "true")` below resolves to on. This
+# avoids the GitHub-expression truthiness trap the ALERTS_ENABLED comment warns
+# about (a `||` default that can't be toggled off). Only the literal string
+# "false" disables it; unset/empty stays on for the pilot.
+SHADOW_ENABLED = (os.environ.get("SHADOW_ENABLED", "").strip().lower() or "true") == "true"
+
+# Prompt variant tag written to call_log_shadow.prompt_variant. A config constant
+# (not hardcoded at the call site) so a future variant is a one-line change and
+# older rows stay queryable by their own tag.
+SHADOW_PROMPT_VARIANT = os.environ.get("SHADOW_PROMPT_VARIANT", "position_aware_v1")
+
+# How far back run_shadow.py looks in call_log for "this cycle's" production
+# market-data snapshot to reuse (so the shadow call judges the SAME data as
+# production, isolating the position-awareness variable). The production batch
+# dispatch cadence is */30 min, so a window under 30 min captures only the run
+# that just finished and never the prior cycle. Generous vs. a fast production
+# run (~1 min) but safely under one cadence step.
+SHADOW_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_SNAPSHOT_LOOKBACK_MIN", "20"))
+
 # --- Tunables (solution design 6.3) ------------------------------------------
 # REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule
 # model has no reminder and no cooldown, so neither constant has a consumer.
