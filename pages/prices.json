@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-06T10:01:33.403329+00:00",
+  "generated_at": "2026-07-06T10:31:29.938963+00:00",
   "prices": {
     "AAPL": {
       "chg": 4.84,
@@ -104,10 +104,10 @@
       "price": 194.83
     },
     "RELIANCE.NS": {
-      "chg": 1.36,
+      "chg": 1.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 1321.7
+      "price": 1321.3
     },
     "RY.TO": {
       "chg": -0.02,
