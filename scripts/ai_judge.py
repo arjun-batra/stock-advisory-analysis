@@ -6,9 +6,11 @@ parse — so a malformed response can only ever MISS a signal, never fabricate o
 """
 
 import json
+import random
 import time
 from datetime import datetime, timezone
 
+import httpx
 from google import genai
 from google.genai import types
 
@@ -162,6 +164,9 @@ def _client():
     token-charged response and fell back to lite. A high explicit timeout lets a
     slow-but-valid response land instead of being thrown away.
     """
+    print(f"  [ai_judge] call config: timeout={config.GEMINI_TIMEOUT_MS}ms, "
+          f"max_retries={config.GEMINI_MAX_RETRIES}, "
+          f"retry_base={config.GEMINI_RETRY_BASE_MS}ms (full jitter)")
     return genai.Client(
         api_key=config.GEMINI_API_KEY,
         http_options=types.HttpOptions(timeout=config.GEMINI_TIMEOUT_MS),
@@ -181,20 +186,62 @@ def _usage(resp) -> dict | None:
     }
 
 
-def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, dict | None]:
-    """Return (text, is_api_error, error_detail, usage).
+# Errors worth retrying are the TRANSIENT transport/capacity ones only
+# (2026-07-07 outage: 503 UNAVAILABLE "high demand" and 504 DEADLINE_EXCEEDED,
+# interleaved with successes all through the window; 429 is the rate-limit case
+# the old single fixed-delay retry targeted). Any other 4xx (bad request, auth,
+# bad model name) is deterministic — retrying just burns quota. A 200 whose
+# JSON doesn't parse is a prompt problem, not a transport one: that stays with
+# the parse-retry in judge_batch and never comes through here.
+_RETRYABLE_CODES = {429, 503, 504}
+_RETRYABLE_STATUSES = {"UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED"}
 
-    error_detail is the real exception (type + message) on failure — previously
-    the caller logged a hardcoded "rate-limited/unavailable" guess, which hid
-    whether the failure was a 429 (ResourceExhausted), a timeout (Deadline
-    Exceeded / read timeout), or a bad model name (NotFound). usage carries the
-    token counts on success.
+
+def _is_retryable(e: Exception) -> bool:
+    """genai raises APIError carrying .code (HTTP int) and .status (canonical
+    name); a CLIENT-side deadline (GEMINI_TIMEOUT_MS expiring locally) surfaces
+    as an httpx timeout — the SDK's transport — or a bare TimeoutError."""
+    if isinstance(e, (httpx.TimeoutException, TimeoutError)):
+        return True
+    return (getattr(e, "code", None) in _RETRYABLE_CODES
+            or getattr(e, "status", None) in _RETRYABLE_STATUSES)
+
+
+def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, dict | None, int]:
+    """One Gemini request with retry-on-transient-error. Returns
+    (text, is_api_error, error_detail, usage, retries_used).
+
+    THE shared call path: production watchlist/discovery (judge_batch) and the
+    shadow pilot (shadow.judge_batch_shadow) funnel every API request through
+    here, so retry behavior is identical across tracks by construction (locked
+    pilot constraint — model/behavior parity). Only _is_retryable errors are
+    retried, up to config.GEMINI_MAX_RETRIES times, sleeping an exponential
+    FULLY-jittered delay (uniform 0..base*2^n) between attempts; every attempt
+    carries the client's GEMINI_TIMEOUT_MS (http_options is per-request), and
+    every retry is logged with attempt number, error, and delay — no silent
+    failures. retries_used is 0 on a first-attempt success.
+
+    error_detail is the real exception (type + message) of the LAST attempt on
+    failure — previously the caller logged a hardcoded "rate-limited/
+    unavailable" guess, which hid whether the failure was a 429
+    (ResourceExhausted), a timeout (Deadline Exceeded / read timeout), or a bad
+    model name (NotFound). usage carries the token counts on success.
     """
-    try:
-        resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
-        return (resp.text or "").strip(), False, None, _usage(resp)
-    except Exception as e:
-        return "", True, f"{type(e).__name__}: {str(e)[:200]}", None
+    retries = 0
+    while True:
+        try:
+            resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
+            return (resp.text or "").strip(), False, None, _usage(resp), retries
+        except Exception as e:
+            err = f"{type(e).__name__}: {str(e)[:200]}"
+            if not _is_retryable(e) or retries >= config.GEMINI_MAX_RETRIES:
+                return "", True, err, None, retries
+            cap_s = config.GEMINI_RETRY_BASE_MS * (2 ** retries) / 1000.0
+            delay_s = random.uniform(0, cap_s)
+            retries += 1
+            print(f"  [ai_judge] {model}: transient error ({err}); retry "
+                  f"{retries}/{config.GEMINI_MAX_RETRIES} in {delay_s:.1f}s (cap {cap_s:.0f}s)")
+            time.sleep(delay_s)
 
 
 def _models_to_try(models: list[str] | None = None) -> list[str]:
@@ -261,9 +308,10 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
     buckets and can't eat into the watchlist's allowance; the watchlist call
     passes nothing and uses config.GEMINI_MODEL / _BACKUP.
     Returns {ticker: {verdict, confidence, rationale, raw_model_response,
-    parse_status, model_used, usage, fallback_from}}. On a hard failure of every model every
-    ticker fails safe to Hold, so a bad batch can only ever MISS signals, never
-    fabricate one.
+    parse_status, model_used, usage, fallback_from, retry_count}}. retry_count
+    is the batch-cumulative transport-retry tally from _generate (0 = clean
+    first-attempt success). On a hard failure of every model every ticker fails
+    safe to Hold, so a bad batch can only ever MISS signals, never fabricate one.
     """
     tickers = [it["data"]["ticker"] for it in items]
     if not items:
@@ -286,45 +334,47 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
         temperature=0.2,
     )
 
-    def _enrich(parsed, usage, fallback_from):
-        # Stamp token usage + the (real) fallback error onto every ticker's
-        # result. usage is the BATCH total for this one API call — identical
-        # across the rows of a run, so sum it once per run, not per ticker.
+    def _enrich(parsed, usage, fallback_from, retry_count):
+        # Stamp token usage + the (real) fallback error + the transport-retry
+        # count onto every ticker's result. usage is the BATCH total for this
+        # one API call — identical across the rows of a run, so sum it once per
+        # run, not per ticker; retry_count is batch-cumulative the same way.
         for v in parsed.values():
             v["usage"] = usage
             v["fallback_from"] = fallback_from
+            v["retry_count"] = retry_count
         return parsed
 
     last_raw = ""
     any_response = False   # did ANY model return text at all (vs pure API/quota errors)?
     notes: list[str] = []  # real errors of any model we fell back from
+    total_retries = 0      # transport retries burned across every attempt this batch
     models = _models_to_try(models)
     last_model = models[0]
 
     for i, model in enumerate(models):
         last_model = model
-        raw, api_err, err, usage = _generate(client, model, user, cfg)
-        if api_err:
-            time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-            raw, api_err, err, usage = _generate(client, model, user, cfg)
+        raw, api_err, err, usage, r = _generate(client, model, user, cfg)
+        total_retries += r
         if api_err:
             last_raw = err or raw
             notes.append(f"{model}: {err}")
             nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
-            print(f"  [ai_judge] {model} failed after retry ({err}){nxt}")
+            print(f"  [ai_judge] {model} failed after {r} transport retries ({err}){nxt}")
             continue   # this model is exhausted; move to the backup, if any
 
         any_response = True
         fb = "; ".join(notes) or None
         parsed = _parse_batch(raw, tickers, model)
         if parsed is not None:
-            return _enrich(parsed, usage, fb)
+            return _enrich(parsed, usage, fb, total_retries)
 
         retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
-        raw2, _, _, usage2 = _generate(client, model, retry, cfg)
+        raw2, _, _, usage2, r2 = _generate(client, model, retry, cfg)
+        total_retries += r2
         parsed = _parse_batch(raw2, tickers, model)
         if parsed is not None:
-            return _enrich(parsed, usage2 or usage, fb)
+            return _enrich(parsed, usage2 or usage, fb, total_retries)
 
         last_raw = f"{raw} || retry: {raw2}"
         notes.append(f"{model}: replied but unparseable")
@@ -335,4 +385,5 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
     status = "failed" if any_response else "api_error"
     fb = "; ".join(notes) or None
     return {t: {**fail, "raw_model_response": last_raw, "parse_status": status,
-               "model_used": last_model, "usage": None, "fallback_from": fb} for t in tickers}
+               "model_used": last_model, "usage": None, "fallback_from": fb,
+               "retry_count": total_retries} for t in tickers}

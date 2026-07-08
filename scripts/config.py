@@ -82,17 +82,35 @@ SHADOW_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_SNAPSHOT_LOOKBACK_MIN"
 # model has no reminder and no cooldown, so neither constant has a consumer.
 MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 
-# On a 429/API error, wait this long before a single retry (rate-limit recovery).
-GEMINI_API_BACKOFF_SECONDS = float(os.environ.get("GEMINI_API_BACKOFF_SECONDS", "20"))
-# Per-request timeout for the Gemini call, in MILLISECONDS. Set high on purpose:
-# 3.5-flash was responding but slowly, and the SDK's default timeout fired first,
-# so we discarded completed (token-billed) responses and fell back to lite. 180s
-# lets a slow-but-valid batch response land instead of being thrown away.
-GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "180000"))
+# Retry-with-backoff for the Gemini call (2026-07-07 outage: ~64% of the day's
+# US/CA calls failed on transient 503 UNAVAILABLE / 504 DEADLINE_EXCEEDED over a
+# ~4.5h high-demand window, with successes interleaved throughout — so retries
+# recover most of them; the old single fixed-20s retry did not). The retry loop
+# lives in ai_judge._generate, the ONE call function every track funnels through
+# (production watchlist, discovery, and the shadow pilot), so all tracks inherit
+# identical behavior — a locked pilot constraint.
+#   GEMINI_MAX_RETRIES: retries AFTER the initial attempt (3 -> up to 4 attempts).
+#   GEMINI_RETRY_BASE_MS: exponential base delay (10s -> 20s -> 40s), slept with
+#   FULL jitter (uniform 0..computed delay) so the 503-retrying calls of nearby
+#   dispatch cycles don't hammer the API in lockstep.
+# Both arrive from workflow `${{ vars.X }}` with NO literal fallback, so an unset
+# Variable is an EMPTY string: `or` (not a get() default) resolves it — the same
+# GitHub-expression trap the SHADOW_ENABLED comment documents. The effective
+# values are logged at call setup (ai_judge._client).
+GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES") or "3")
+GEMINI_RETRY_BASE_MS = int(os.environ.get("GEMINI_RETRY_BASE_MS") or "10000")
+# Per-request timeout for the Gemini call, in MILLISECONDS, honored on EVERY
+# attempt including retries (it's set in the client's http_options, so it
+# applies per request). Set high on purpose: 3.5-flash was responding but
+# slowly, and the SDK's default timeout fired first, so we discarded completed
+# (token-billed) responses and fell back to lite. 180s lets a slow-but-valid
+# batch response land instead of being thrown away. Empty-string-safe like the
+# retry vars above, since it's now also wired as a workflow Variable.
+GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS") or "180000")
 
 # Yahoo Finance (yfinance) has no published rate limit and rate-limited the
 # ingest loop mid-run (issue #1). Pace tickers apart and back off once on a
-# rate-limit error, same shape as the Gemini handling above. Ingest is batched
+# rate-limit error. Ingest is batched
 # into one Gemini call afterward, so a few seconds per ticker here is fine.
 YF_PACING_SECONDS = float(os.environ.get("YF_PACING_SECONDS", "2"))
 YF_BACKOFF_SECONDS = float(os.environ.get("YF_BACKOFF_SECONDS", "10"))

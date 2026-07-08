@@ -188,6 +188,11 @@ def _snapshot(data: dict, ai: dict, position: dict | None = None) -> dict:
         # Real error of any model we fell back from (e.g. a 3.5-flash timeout
         # before lite answered); null on a clean primary success.
         "fallback_from": ai.get("fallback_from"),
+        # Transport retries (503/504/429/timeout, ai_judge._generate) burned to
+        # get this result. 0 = first-attempt success; like `tokens`, the count
+        # is per BATCH call, so it repeats on every row of the run. Null only
+        # on rows that never reached the AI call (skips, missing_verdict).
+        "retry_count": ai.get("retry_count"),
         "discovery_signals": data.get("discovery_signals"),
     }
     # Held-position context (FR2/FR11) so the detail page can render the
