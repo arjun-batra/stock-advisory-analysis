@@ -1,6 +1,18 @@
 {
-  "generated_at": "2026-07-08T10:31:29.529477+00:00",
+  "generated_at": "2026-07-08T13:01:31.119025+00:00",
   "prices": {
+    "AAPL": {
+      "chg": -0.64,
+      "currency": "USD",
+      "market": "US",
+      "price": 310.66
+    },
+    "AMZN": {
+      "chg": 0.75,
+      "currency": "USD",
+      "market": "US",
+      "price": 245.98
+    },
     "BB": {
       "chg": -2.46,
       "currency": "USD",
@@ -79,6 +91,12 @@
       "market": "NSE",
       "price": 3892.1001
     },
+    "NFLX": {
+      "chg": 0.21,
+      "currency": "USD",
+      "market": "US",
+      "price": 76.18
+    },
     "NVDA": {
       "chg": 0.71,
       "currency": "USD",
@@ -126,6 +144,12 @@
       "currency": "CAD",
       "market": "TSX",
       "price": 172.36
+    },
+    "TSLA": {
+      "chg": -4.02,
+      "currency": "USD",
+      "market": "US",
+      "price": 402.9
     }
   }
 }
