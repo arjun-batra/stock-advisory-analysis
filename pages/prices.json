@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-08T20:01:34.962358+00:00",
+  "generated_at": "2026-07-08T20:31:30.917157+00:00",
   "prices": {
     "AAPL": {
       "chg": 0.88,
@@ -14,10 +14,10 @@
       "price": 243.62
     },
     "BB": {
-      "chg": 0.09,
+      "chg": 0.18,
       "currency": "USD",
       "market": "US",
-      "price": 11.11
+      "price": 11.12
     },
     "BHARTIARTL.NS": {
       "chg": 0.01,
@@ -128,10 +128,10 @@
       "price": 168.69
     },
     "SPCX": {
-      "chg": -0.81,
+      "chg": -0.78,
       "currency": "USD",
       "market": "US",
-      "price": 148.26
+      "price": 148.3
     },
     "TCS.NS": {
       "chg": 1.87,
@@ -146,10 +146,10 @@
       "price": 167.86
     },
     "TSLA": {
-      "chg": -2.23,
+      "chg": -2.19,
       "currency": "USD",
       "market": "US",
-      "price": 393.93
+      "price": 394.06
     }
   }
 }
