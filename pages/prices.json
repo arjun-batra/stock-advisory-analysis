@@ -1,18 +1,6 @@
 {
-  "generated_at": "2026-07-08T10:01:31.016697+00:00",
+  "generated_at": "2026-07-08T10:31:29.529477+00:00",
   "prices": {
-    "AAPL": {
-      "chg": -0.64,
-      "currency": "USD",
-      "market": "US",
-      "price": 310.66
-    },
-    "AMZN": {
-      "chg": 0.75,
-      "currency": "USD",
-      "market": "US",
-      "price": 245.98
-    },
     "BB": {
       "chg": -2.46,
       "currency": "USD",
@@ -91,12 +79,6 @@
       "market": "NSE",
       "price": 3892.1001
     },
-    "NFLX": {
-      "chg": 0.21,
-      "currency": "USD",
-      "market": "US",
-      "price": 76.18
-    },
     "NVDA": {
       "chg": 0.71,
       "currency": "USD",
@@ -104,10 +86,10 @@
       "price": 196.93
     },
     "RELIANCE.NS": {
-      "chg": -2.56,
+      "chg": -2.48,
       "currency": "INR",
       "market": "NSE",
-      "price": 1274.9
+      "price": 1275.9
     },
     "RY.TO": {
       "chg": 0.54,
@@ -134,22 +116,16 @@
       "price": 149.47
     },
     "TCS.NS": {
-      "chg": -1.74,
+      "chg": -1.84,
       "currency": "INR",
       "market": "NSE",
-      "price": 2059.6001
+      "price": 2057.5
     },
     "TD.TO": {
       "chg": 0.61,
       "currency": "CAD",
       "market": "TSX",
       "price": 172.36
-    },
-    "TSLA": {
-      "chg": -4.02,
-      "currency": "USD",
-      "market": "US",
-      "price": 402.9
     }
   }
 }
