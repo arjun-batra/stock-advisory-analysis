@@ -13,12 +13,10 @@ pilot isolates the position-awareness variable only. This module imports
 ai_judge but does NOT modify it; the production verdict path is untouched.
 """
 
-import time
 from datetime import datetime, timezone
 
 from google.genai import types
 
-import config
 import ai_judge
 
 
@@ -125,9 +123,10 @@ def judge_batch_shadow(items: list[dict]) -> dict:
     on a bad reply, fail-safe-to-Hold on hard failure so a bad batch can only ever
     MISS a signal) but with the shadow system prompt + shadow blocks. Uses the
     SAME model try-order as production's watchlist call (config.GEMINI_MODEL /
-    _BACKUP via ai_judge._models_to_try) and the same timeout — shared config,
-    not copies. Returns {ticker: {verdict, confidence, rationale,
-    raw_model_response, parse_status, model_used, usage, fallback_from}}.
+    _BACKUP via ai_judge._models_to_try) and the same timeout/retry policy —
+    shared config and shared call function (ai_judge._generate), not copies.
+    Returns {ticker: {verdict, confidence, rationale, raw_model_response,
+    parse_status, model_used, usage, fallback_from, retry_count}}.
     """
     if not items:
         return {}
@@ -150,42 +149,46 @@ def judge_batch_shadow(items: list[dict]) -> dict:
         temperature=0.2,
     )
 
-    def _enrich(parsed, usage, fallback_from):
+    def _enrich(parsed, usage, fallback_from, retry_count):
         for v in parsed.values():
             v["usage"] = usage
             v["fallback_from"] = fallback_from
+            v["retry_count"] = retry_count
         return parsed
 
     last_raw = ""
     any_response = False
     notes: list[str] = []
+    total_retries = 0   # transport retries burned across every attempt this batch
     models = ai_judge._models_to_try(None)   # same order as production's watchlist call
     last_model = models[0]
 
     for i, model in enumerate(models):
         last_model = model
-        raw, api_err, err, usage = ai_judge._generate(client, model, user, cfg)
-        if api_err:
-            time.sleep(config.GEMINI_API_BACKOFF_SECONDS)
-            raw, api_err, err, usage = ai_judge._generate(client, model, user, cfg)
+        # Transient-error retry (exponential backoff + full jitter) happens
+        # INSIDE the shared ai_judge._generate — identical policy to production
+        # by construction, nothing shadow-specific here.
+        raw, api_err, err, usage, r = ai_judge._generate(client, model, user, cfg)
+        total_retries += r
         if api_err:
             last_raw = err or raw
             notes.append(f"{model}: {err}")
             nxt = f", trying {models[i + 1]}" if i + 1 < len(models) else ""
-            print(f"  [shadow] {model} failed after retry ({err}){nxt}")
+            print(f"  [shadow] {model} failed after {r} transport retries ({err}){nxt}")
             continue
 
         any_response = True
         fb = "; ".join(notes) or None
         parsed = ai_judge._parse_batch(raw, tickers, model)
         if parsed is not None:
-            return _enrich(parsed, usage, fb)
+            return _enrich(parsed, usage, fb, total_retries)
 
         retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
-        raw2, _, _, usage2 = ai_judge._generate(client, model, retry, cfg)
+        raw2, _, _, usage2, r2 = ai_judge._generate(client, model, retry, cfg)
+        total_retries += r2
         parsed = ai_judge._parse_batch(raw2, tickers, model)
         if parsed is not None:
-            return _enrich(parsed, usage2 or usage, fb)
+            return _enrich(parsed, usage2 or usage, fb, total_retries)
 
         last_raw = f"{raw} || retry: {raw2}"
         notes.append(f"{model}: replied but unparseable")
@@ -195,4 +198,5 @@ def judge_batch_shadow(items: list[dict]) -> dict:
     status = "failed" if any_response else "api_error"
     fb = "; ".join(notes) or None
     return {t: {**fail, "raw_model_response": last_raw, "parse_status": status,
-                "model_used": last_model, "usage": None, "fallback_from": fb} for t in tickers}
+                "model_used": last_model, "usage": None, "fallback_from": fb,
+                "retry_count": total_retries} for t in tickers}

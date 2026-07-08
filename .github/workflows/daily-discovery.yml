@@ -47,6 +47,14 @@ jobs:
           # Variables); falls back to these if unset.
           DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
           DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
+          # Gemini transport tuning — discovery shares ai_judge._generate with
+          # the watchlist, so it gets the same retry/timeout policy. Unset
+          # Variable -> empty string -> config.py `or`-defaults (3 retries,
+          # 10000 ms base with full jitter, 180000 ms timeout), logged at call
+          # setup. No literal fallbacks here on purpose.
+          GEMINI_MAX_RETRIES: ${{ vars.GEMINI_MAX_RETRIES }}
+          GEMINI_RETRY_BASE_MS: ${{ vars.GEMINI_RETRY_BASE_MS }}
+          GEMINI_TIMEOUT_MS: ${{ vars.GEMINI_TIMEOUT_MS }}
           # Live alerting by default. A manual workflow_dispatch can set
           # alerts_enabled=false for a safe dry run (DryRunNotifier logs the
           # would-be candidate push instead of sending it). Scheduled pg_cron
