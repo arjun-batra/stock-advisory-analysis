@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-10T07:01:33.163831+00:00",
+  "generated_at": "2026-07-10T07:31:33.923829+00:00",
   "prices": {
     "AAPL": {
       "chg": 0.9,
@@ -50,34 +50,34 @@
       "price": 356.24
     },
     "HDFCBANK.NS": {
-      "chg": 0.83,
+      "chg": 0.71,
       "currency": "INR",
       "market": "NSE",
-      "price": 824.3
+      "price": 823.35
     },
     "HINDUNILVR.NS": {
-      "chg": 0.44,
+      "chg": 0.31,
       "currency": "INR",
       "market": "NSE",
-      "price": 2154.0
+      "price": 2151.1001
     },
     "ICICIBANK.NS": {
-      "chg": 1.54,
+      "chg": 1.53,
       "currency": "INR",
       "market": "NSE",
-      "price": 1401.8
+      "price": 1401.7
     },
     "INFY.NS": {
-      "chg": 2.12,
+      "chg": 1.86,
       "currency": "INR",
       "market": "NSE",
-      "price": 1073.1
+      "price": 1070.3
     },
     "ITC.NS": {
-      "chg": -0.32,
+      "chg": -0.27,
       "currency": "INR",
       "market": "NSE",
-      "price": 281.15
+      "price": 281.3
     },
     "L.TO": {
       "chg": -0.83,
@@ -86,10 +86,10 @@
       "price": 63.39
     },
     "LT.NS": {
-      "chg": 1.28,
+      "chg": 1.34,
       "currency": "INR",
       "market": "NSE",
-      "price": 3935.6001
+      "price": 3938.1001
     },
     "NFLX": {
       "chg": -0.16,
@@ -104,10 +104,10 @@
       "price": 202.78
     },
     "RELIANCE.NS": {
-      "chg": 1.74,
+      "chg": 1.63,
       "currency": "INR",
       "market": "NSE",
-      "price": 1302.1
+      "price": 1300.6
     },
     "RY.TO": {
       "chg": 1.45,
@@ -116,10 +116,10 @@
       "price": 295.84
     },
     "SBIN.NS": {
-      "chg": 0.28,
+      "chg": 1.7,
       "currency": "INR",
       "market": "NSE",
-      "price": 1025.0
+      "price": 1039.5
     },
     "SHOP.TO": {
       "chg": 3.41,
@@ -134,10 +134,10 @@
       "price": 152.16
     },
     "TCS.NS": {
-      "chg": 1.34,
+      "chg": 1.15,
       "currency": "INR",
       "market": "NSE",
-      "price": 2076.8999
+      "price": 2073.0
     },
     "TD.TO": {
       "chg": 1.09,
