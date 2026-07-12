@@ -114,6 +114,18 @@ GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS") or "180000")
 # into one Gemini call afterward, so a few seconds per ticker here is fine.
 YF_PACING_SECONDS = float(os.environ.get("YF_PACING_SECONDS", "2"))
 YF_BACKOFF_SECONDS = float(os.environ.get("YF_BACKOFF_SECONDS", "10"))
+# History-fetch retry count (ingest._fetch_history) and the yfinance history
+# window, both previously hardcoded at the call site.
+YF_HISTORY_RETRIES = int(os.environ.get("YF_HISTORY_RETRIES", "2"))
+YF_HISTORY_PERIOD = os.environ.get("YF_HISTORY_PERIOD", "3mo")
+# Per-ticker headline cap (ingest._headlines), previously a function default.
+HEADLINES_LIMIT = int(os.environ.get("HEADLINES_LIMIT", "5"))
+
+# Push-notification body clip (notify._compose_body) and stored/shown
+# rationale clip (ai_judge, detail page) — previously in-code constants in
+# their respective modules, now tunable like everything else in this file.
+NOTIF_BODY_MAX = int(os.environ.get("NOTIF_BODY_MAX", "150"))
+RATIONALE_MAX = int(os.environ.get("RATIONALE_MAX", "280"))
 
 # --- Phase 4: daily discovery (reactive movers) ------------------------------
 # Discovery uses DIFFERENT models from the watchlist on purpose: Gemini free-tier
@@ -153,6 +165,9 @@ DISCOVERY_52W_PROXIMITY = float(os.environ.get("DISCOVERY_52W_PROXIMITY", "0.02"
 # Earnings-proximity signal (FR4): flag a name whose next earnings date is within
 # this many days (best-effort, from the screener's earnings timestamp when present).
 DISCOVERY_EARNINGS_DAYS = int(os.environ.get("DISCOVERY_EARNINGS_DAYS", "7"))
+# Look-back window (days) for the "just reported" side of the earnings signal
+# (prefilter._signals) — the forward-looking side is DISCOVERY_EARNINGS_DAYS above.
+DISCOVERY_EARNINGS_RECENT_DAYS = int(os.environ.get("DISCOVERY_EARNINGS_RECENT_DAYS", "2"))
 # Max candidates sent to the AI in the single daily batched call.
 DISCOVERY_SHORTLIST_MAX = int(os.environ.get("DISCOVERY_SHORTLIST_MAX", "15"))
 # Per-candidate push cooldown: a name flagged within this many days is logged

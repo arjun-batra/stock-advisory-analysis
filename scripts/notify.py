@@ -18,7 +18,7 @@ import requests
 import config
 from textutil import clip
 
-NOTIF_BODY_MAX = 150   # keep the push preview tidy; the full reason is on the detail page
+NOTIF_BODY_MAX = config.NOTIF_BODY_MAX   # keep the push preview tidy; the full reason is on the detail page
 
 # FR23: each market's alerts are stamped in that market's own timezone. US/TSX
 # share ET; NSE uses IST (no DST). Unknown/missing market falls back to ET.

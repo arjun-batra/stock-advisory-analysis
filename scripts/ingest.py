@@ -28,9 +28,9 @@ def _fetch_history(tk: "yf.Ticker"):
     yfinance has no published rate limit and throttled the back-to-back ingest
     loop mid-run (issue #1), so this mirrors the AI step's backoff-retry.
     """
-    for attempt in range(2):
+    for attempt in range(config.YF_HISTORY_RETRIES):
         try:
-            return tk.history(period="3mo", auto_adjust=False), None, False
+            return tk.history(period=config.YF_HISTORY_PERIOD, auto_adjust=False), None, False
         except Exception as e:
             if _is_rate_limit(e) and attempt == 0:
                 time.sleep(config.YF_BACKOFF_SECONDS)
@@ -135,7 +135,7 @@ def _mentions_company(title: str, tokens: set[str]) -> bool:
     return False
 
 
-def _headlines(tk: "yf.Ticker", limit: int = 5, name: str | None = None) -> tuple[list[str], int]:
+def _headlines(tk: "yf.Ticker", limit: int = config.HEADLINES_LIMIT, name: str | None = None) -> tuple[list[str], int]:
     """Headline titles prefixed with their publish date when available, so the
     AI (and the detail page) can tell a this-morning story from a stale one.
 

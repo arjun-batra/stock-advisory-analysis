@@ -124,7 +124,7 @@ def _signals(q: dict) -> list[str]:
     now = time.time()
     ets = q.get("earningsTimestampStart") or q.get("earningsTimestamp")
     if isinstance(ets, (int, float)) and ets:
-        if (now - 2 * 86400) <= ets <= (now + config.DISCOVERY_EARNINGS_DAYS * 86400):
+        if (now - config.DISCOVERY_EARNINGS_RECENT_DAYS * 86400) <= ets <= (now + config.DISCOVERY_EARNINGS_DAYS * 86400):
             sig.append("earnings")
     px = q.get("regularMarketPrice")
     hi = q.get("fiftyTwoWeekHigh")            # best-effort: not guaranteed present
@@ -189,29 +189,29 @@ def find_candidates(exclude: set[str], region: str = "na") -> tuple[list[dict], 
                         _region_query("in", "gt", config.DISCOVERY_GAINER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=False, size=50)
-        time.sleep(1)
+        time.sleep(config.YF_PACING_SECONDS)
         raw += _collect("in_losers",
                         _region_query("in", "lt", config.DISCOVERY_LOSER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=True, size=50)
-        time.sleep(1)
+        time.sleep(config.YF_PACING_SECONDS)
         raw += _collect("in_actives",
                         _volume_query("in", profile["min_mcap"], profile["min_price"]),
                         sortField="dayvolume", sortAsc=False, size=50)
     else:
         for label in ("day_gainers", "day_losers", "most_actives"):
             raw += _collect(label, label, size=50)
-            time.sleep(1)
+            time.sleep(config.YF_PACING_SECONDS)
         raw += _collect("ca_gainers",
                         _region_query("ca", "gt", config.DISCOVERY_GAINER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=False, size=50)
-        time.sleep(1)
+        time.sleep(config.YF_PACING_SECONDS)
         raw += _collect("ca_losers",
                         _region_query("ca", "lt", config.DISCOVERY_LOSER_PCT,
                                       profile["min_mcap"], profile["min_price"]),
                         sortField="percentchange", sortAsc=True, size=50)
-        time.sleep(1)
+        time.sleep(config.YF_PACING_SECONDS)
         # Canada volume screen — same reachability fix as in_actives above; the
         # US predefined most_actives already covers volume-driven US names.
         raw += _collect("ca_actives",

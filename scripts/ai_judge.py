@@ -19,7 +19,7 @@ from textutil import clip
 
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
-RATIONALE_MAX = 280   # stored + shown in full on the detail page; the push is clipped separately
+RATIONALE_MAX = config.RATIONALE_MAX   # stored + shown in full on the detail page; the push is clipped separately
 _FAIL_SAFE_PARSE = {"verdict": "Hold", "confidence": None,
                     "rationale": "The model reply could not be parsed; showing a fail-safe Hold."}
 _FAIL_SAFE_API = {"verdict": "Hold", "confidence": None,
