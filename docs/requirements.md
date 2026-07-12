@@ -256,12 +256,16 @@ position-aware prompt variant. Files: `scripts/shadow.py`, `scripts/run_shadow.p
   Real holdings / cost-basis data MUST NOT leak into shadow rows.
 - **FR30 — Kill switch.** The shadow track MUST be gated by a kill switch (`SHADOW_ENABLED`) checked both
   at the workflow-step level and again in code, so it can be disabled with a zero-code-change config
-  flip. **Accepted risk (recorded, not hidden):** the kill switch defaults **fail-OPEN** — when the
-  `SHADOW_ENABLED` GitHub Variable is unset/empty, the pilot runs. This is a deliberate choice (toggling
-  off is a one-Variable opt-out), but it means a deleted or mistyped Variable *silently keeps the pilot
-  running* rather than stopping it. Only the literal string `false` disables it. This risk is accepted
-  for the pilot and is recorded here as a requirement-level item (mirroring the SD.md §2 accepted-risk
-  style), not left implicit in a code comment.
+  flip. **Accepted risk (recorded, not hidden):** the kill switch defaults **fail-OPEN, but only on a
+  truly unset/empty Variable** — when the `SHADOW_ENABLED` GitHub Variable is unset or empty, the value
+  resolves to `true` and the pilot runs. This is a deliberate choice (toggling off is a one-Variable
+  opt-out). Any explicitly-set value that is not the literal (case- and whitespace-insensitive) string
+  `true` disables the pilot: `false`, and *any other non-empty value including a typo* (e.g. `flase`,
+  `no`, `0`), all **fail CLOSED** and stop the pilot. So the only fail-open case is a genuinely
+  absent/empty Variable; a mistyped or deleted-and-recreated-with-garbage Variable stops the pilot
+  rather than silently keeping it running. This residual fail-open-on-empty risk is accepted for the
+  pilot and is recorded here as a requirement-level item (mirroring the SD.md §2 accepted-risk style),
+  not left implicit in a code comment.
 
 ### 10.2 Requirement Gaps (open)
 
@@ -327,7 +331,7 @@ tunables, not fixed requirements.
 ### Experimental — shadow wallet pilot
 | Key | Default | Purpose |
 |---|---|---|
-| `SHADOW_ENABLED` | `true` (fail-OPEN — accepted risk, FR30) | Kill switch; only literal `false` disables |
+| `SHADOW_ENABLED` | `true` when unset/empty (fail-OPEN-on-empty — accepted risk, FR30) | Kill switch; enabled only on unset/empty or literal `true`; `false` or any other non-empty value (incl. typos) disables (fails closed) |
 | `SHADOW_PROMPT_VARIANT` | `position_aware_v1` | Prompt-variant tag written to `call_log_shadow.prompt_variant` |
 | `SHADOW_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback window to reuse the same-cycle production snapshot (must stay under the 30-min cadence) |
 
@@ -352,7 +356,8 @@ tunables, not fixed requirements.
 - **NFR5 — Shadow pilot isolation & fail-open posture (non-production).** The shadow pilot MUST remain
   operationally invisible to production: no alerts (FR28), no anon/dashboard read path (FR27), no
   ability to fail the production pipeline (FR29). Its kill switch defaults fail-open (FR30) — an
-  **accepted risk** recorded explicitly at requirement level: an absent/mistyped `SHADOW_ENABLED`
-  Variable leaves the pilot running rather than stopping it. This posture is acceptable only while the
-  pilot is fully isolated per FR27–FR29; if any isolation guarantee is weakened, the fail-open default
-  MUST be revisited.
+  **accepted risk** recorded explicitly at requirement level, but scoped precisely: only an *unset or
+  empty* `SHADOW_ENABLED` Variable leaves the pilot running. Any explicitly-set-but-wrong value
+  (including a typo such as `flase`) fails **closed** and stops the pilot, which is the safer outcome.
+  This posture is acceptable only while the pilot is fully isolated per FR27–FR29; if any isolation
+  guarantee is weakened, the fail-open-on-empty default MUST be revisited.

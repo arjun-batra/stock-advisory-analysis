@@ -58,10 +58,15 @@ intent from `SD.md §0`:
    Neither admits the following post-close `*/30` slot.
 10. **Shadow pilot is triple-isolated and fail-open by policy (§13, FR27–FR30, NFR5).** The shadow track
     can never alert, can never be read by the dashboard/anon key, and can never fail production (three
-    independent belts, §13.4). Its kill switch **defaults ON (fail-open)** — an accepted, recorded risk
-    (FR30): an unset/mistyped `SHADOW_ENABLED` Variable *keeps the pilot running*. Only the literal string
-    `false` disables it. Don't "fix" the fail-open to fail-closed without re-reading FR30/NFR5 — it is a
-    deliberate opt-out design, valid only while the three isolation guarantees hold.
+    independent belts, §13.4). Its kill switch **defaults ON (fail-open) only on a truly unset/empty
+    Variable** — an accepted, recorded risk (FR30): a missing or blank `SHADOW_ENABLED` Variable *keeps the
+    pilot running*. Because `config.py` resolves it as `(env.strip().lower() or "true") == "true"`, the
+    `"true"` fallback fires **only for the empty string**; any explicitly-set-but-wrong value — `"false"`,
+    or a typo/other token like `"flase"`, `"no"`, `"0"` — is compared directly to `"true"`, does not match,
+    and therefore **fails CLOSED (disables the pilot)**. So a typo cannot silently keep it running; only an
+    unset/empty Variable does. Don't "fix" this to fail-closed *universally* (including the unset/empty case)
+    without re-reading FR30/NFR5 — the fail-open-on-unset default is a deliberate opt-out design, valid only
+    while the three isolation guarantees hold.
 
 ---
 
@@ -619,14 +624,17 @@ the position going into the call, derived only from this table). Same indexes as
 ### 13.6 Configuration & accepted risk (FR30, NFR5)
 | Key | Default | Purpose |
 |---|---|---|
-| `SHADOW_ENABLED` | **`true` — fail-OPEN (accepted risk, FR30/NFR5)** | Kill switch, checked both at the workflow step (`if: vars.SHADOW_ENABLED != 'false'`) and again in `config.py`/`run_shadow.py`. **Only the literal string `false` disables it**; an unset/empty/mistyped Variable *keeps the pilot running*. |
+| `SHADOW_ENABLED` | **`true` — fail-OPEN on unset/empty only (accepted risk, FR30/NFR5)** | Kill switch, checked both at the workflow step (`if: vars.SHADOW_ENABLED != 'false'`) and again in `config.py`/`run_shadow.py`. `config.py` resolves it as `(os.environ.get("SHADOW_ENABLED", "").strip().lower() or "true") == "true"`: the `"true"` fallback fires **only for an unset/empty Variable**, which *keeps the pilot running*. `"false"` disables it, and so does **any other non-empty value including a typo** (`"flase"`, `"no"`, `"0"`) — those compare directly to `"true"`, don't match, and **fail CLOSED**. |
 | `SHADOW_PROMPT_VARIANT` | `position_aware_v1` | Tag written to `call_log_shadow.prompt_variant`. |
 | `SHADOW_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback to reuse the same-cycle production snapshot; **must stay under the 30-min cadence** (FR26). |
 
 **Accepted risk, recorded (FR30, NFR5, load-bearing #10):** the fail-open default is deliberate (toggling
-off is a one-Variable opt-out) but means a deleted/mistyped Variable *silently keeps the pilot running*.
-Acceptable only while the three isolation guarantees (FR27–FR29) hold; if any is weakened, the fail-open
-default must be revisited.
+off is a one-Variable opt-out) but means a **deleted/unset/blank** Variable *silently keeps the pilot
+running*. Note the fail-open is narrow: it triggers **only** when the Variable is unset or empty. A
+**mistyped** value does not silently keep the pilot running — because the `or "true"` fallback only
+substitutes for the empty string, any non-empty-but-wrong value (a typo, `"no"`, `"0"`, etc.) is compared
+directly to `"true"`, fails the match, and **disables** the pilot (fails closed). Acceptable only while the
+three isolation guarantees (FR27–FR29) hold; if any is weakened, the fail-open default must be revisited.
 
 ### 13.7 Open gap — FR31 [REQUIREMENTS-GAP], BLOCKS graduation
 **There is no committed, reproducible evaluation method in the repo.** The SQL migration's own comments
