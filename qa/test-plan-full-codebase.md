@@ -3,6 +3,18 @@
 **Repo:** `arjun-batra/stock-advisory-analysis`
 **Executor:** Claude Code
 **Authority:** Requirements v4 (source of truth), UI-handoff v3 (rendering authority), Solution Design v15
+(superseded — see 2026-07-12 staleness correction below)
+
+> **2026-07-12 staleness correction (multi-agent-template adoption pass, qa):** This plan's authority
+> line originally pointed at "Solution Design v15." The current source-of-truth docs are
+> `docs/design.md` (tech-lead's as-built solution design, condensed and code-verified from
+> `requirements_docs/SD.md`, now at v20) and `docs/requirements.md` (pm's FR1–FR31/NFR1–NFR5
+> requirements doc, ported from `requirements_docs/stock-advisory-agent-requirements.md` v5). Where this
+> plan's body text below still says "SD v15" in an individual test's pass-criteria (P1-3, P2-3, P2-6,
+> P3-1 through P3-4, P3-8, P6-4), read that as "the historical v15 snapshot cited when this plan was
+> written" and cross-check against the current `docs/design.md` when re-running those tests — those
+> per-test references were not individually rewritten in this pass (only the items below explicitly
+> flagged as factually wrong were corrected: the Authority line, P6-2, P1-6, and the Phase 6 section).
 **Session state file:** `.qa-session-state.md` — Claude Code must create this at Phase 0, check off every test ID as it completes, and resume from it after any interruption with a single "continue."
 
 ---
@@ -38,7 +50,7 @@
 | P1-3 | `textutil.py` unit tests | Write pytest cases for every public function: empty string, unicode (NSE company names), very long input, whitespace-only | All pass; behavior matches SD v15 §refactor notes |
 | P1-4 | `state.py` verdict-transition logic | Pytest: table-driven test of every verdict pair (Buy→Sell, Buy→Hold, Hold→Buy, Sell→Buy, Sell→Hold, Hold→Sell, and all three no-change cases) | **Locked rule (issue #11):** ANY change → alert flag true, immediately, no cooldown. No change → no alert. Any cooldown logic surviving in code = FAIL + gap register |
 | P1-5 | `prefilter.py` gate logic | Pytest with synthetic price/volume inputs at boundaries | Boundary behavior matches Requirements v4 thresholds exactly (off-by-one at thresholds is the target) |
-| P1-6 | `config.py` env-var overrides | Set `GEMINI_TIMEOUT_MS`, `NSE_GEMINI_MODEL` etc. to non-default values, assert propagation | Overrides take effect; defaults correct when unset; production model default is `gemini-3-flash` |
+| P1-6 | `config.py` env-var overrides | Set `GEMINI_TIMEOUT_MS`, `NSE_GEMINI_MODEL` etc. to non-default values, assert propagation | Overrides take effect; defaults correct when unset; production model default is `gemini-3.5-flash` (corrected 2026-07-12 — was mis-stated as `gemini-3-flash`; verified against `scripts/config.py` and `docs/requirements.md` §11) |
 | P1-7 | Time-boundary checks | Grep all time comparisons in `run_hourly.py`, `prefilter.py`, sql/ for exact-equality upper bounds (`<= time '16:00'` pattern) | All market-close boundaries carry the +5 min jitter buffer. Any exact-equality upper bound = FAIL (pg_cron jitter, known failure class) |
 | P1-8 | Naming collision regression | Confirm the collision fixed in PR #28 has not reappeared; no two modules export same-named functions with different behavior | Clean |
 
@@ -107,13 +119,18 @@ Live GitHub Pages + live Supabase where applicable. UI-handoff v3 wins over SD o
 
 ## Phase 6 — Shadow Pipeline
 
+> **2026-07-12 staleness correction:** This phase now maps to `docs/requirements.md` §10
+> (FR24–FR31, NFR5 — the Experimental Tracks / shadow wallet pilot section), superseding the ad hoc
+> shadow assumptions this phase was originally written against. See `docs/design.md` §13 for the
+> as-built shadow pilot design.
+
 | ID | Test | Method | Pass criteria |
 |---|---|---|---|
-| P6-1 | `SHADOW_ENABLED` kill switch | Run shadow entry point with flag false, then true (mocked Gemini) | False → zero shadow activity, zero `call_log_shadow` writes; true → normal path |
-| P6-2 | Single-variable isolation | Confirm shadow uses `shadow_pilot_prompt.md` but same model as production (`gemini-3-flash`) | Prompt differs, model identical. Model divergence = FAIL |
-| P6-3 | Scope | Shadow runs only against US/Canada batch | No NSE tickers in shadow path |
-| P6-4 | Concurrency safety | Verify shadow and production runs share no mutable state (tables, files, rate limits that would starve production) | True concurrent execution safe per SD v15 |
-| P6-5 | Evaluation query readiness | Run the verdict-balance comparison query (counts per verdict per track) against `call_log` vs `call_log_shadow` | Query executes; output format usable for the two-week evaluation |
+| P6-1 | `SHADOW_ENABLED` kill switch (FR30, NFR5) | Run shadow entry point with flag false, then true (mocked Gemini) | False → zero shadow activity, zero `call_log_shadow` writes; true → normal path. Note the documented accepted risk: the switch defaults **fail-OPEN** (unset/empty stays enabled; only the literal string `false` disables it, per FR30) |
+| P6-2 | Single-variable isolation (FR24, FR25) | Confirm the shadow prompt is built by appending the position-awareness addendum to `ai_judge.BATCH_SYSTEM_PROMPT` — i.e. `SHADOW_SYSTEM_PROMPT` in `scripts/shadow.py` (inline Python; there is **no** `shadow_pilot_prompt.md` file — that file does not exist in the repo) — and that the shadow call uses the **same** model try-order as production (`GEMINI_MODEL`/`GEMINI_MODEL_BACKUP`, default `gemini-3.5-flash`/`gemini-3.1-flash-lite`, via `ai_judge._models_to_try`) | Prompt = production's `BATCH_SYSTEM_PROMPT` verbatim + position-awareness addendum (differs only in the appended section); model identical to production's watchlist model pair. Model divergence = FAIL |
+| P6-3 | Scope (FR24) | Shadow runs only against US/Canada batch | No NSE tickers in shadow path |
+| P6-4 | Concurrency safety (FR29) | Verify shadow and production runs share no mutable state (tables, files, rate limits that would starve production) | True concurrent execution safe per SD v15 |
+| P6-5 | Evaluation query readiness (FR31 — OPEN GAP) | Run the verdict-balance comparison query (counts per verdict per track) against `call_log` vs `call_log_shadow` | **BLOCKED on FR31, not a pass.** No committed, reproducible evaluation harness exists anywhere in the repo — the SQL migration's own comments reference a "wallet-sim recursive-CTE walk / harness" that lives only in the ad hoc Supabase SQL editor, not as versioned SQL/scripts (verified across `sql/`). Do not mark this test PASS by hand-running an ad hoc query; per `docs/requirements.md` FR31 the pilot cannot be assessed and must not graduate until dev commits a versioned, reproducible harness. Re-run this test once FR31 lands |
 
 ---
 
