@@ -1,8 +1,8 @@
 # Test Report — Baseline Establishment (Adoption Pass)
 
-**Owner:** qa. **Date:** 2026-07-12. **Type:** Baseline snapshot for an existing, already-live system —
-NOT a claim that a full test campaign has been run against production. This is the first automated
-`tests/` suite this repo has ever had.
+**Owner:** qa. **Date:** 2026-07-12 (original baseline); updated 2026-07-12 (debt-cleanup pass, see §7).
+**Type:** Baseline snapshot for an existing, already-live system — NOT a claim that a full test campaign
+has been run against production. This is the first automated `tests/` suite this repo has ever had.
 
 ---
 
@@ -39,34 +39,43 @@ nothing in this suite makes a real network call.
 | `tests/test_notify.py` | 18 | **FR12, FR13, FR18, FR23** | `_market_timestamp` (US/TSX→ET, NSE→IST, unknown→ET, format), `_topic_for` (FR18 NSE routing + the operator-visible `[FR18 fallback]` log line when `NSE_NTFY_TOPIC` is unprovisioned), title/body composition and clipping, `DryRunNotifier`/`get_notifier` selection logic, and `NtfyNotifier.push` with `requests.post` mocked (URL, headers, click-through link, and that a network exception is swallowed rather than crashing the run) |
 | `tests/test_textutil.py` | 14 | supports FR13/FR14/FR23 (rationale + push-body clipping) | `clip()`: empty string, whitespace-only, exact-limit boundary, over-limit, word-boundary (never cuts mid-word), trailing-punctuation stripping before the ellipsis, unicode/non-ASCII text (NSE company names, currency symbols), internal-whitespace normalization, very small limits |
 | `tests/test_import_smoke.py` | 16 | shippability baseline (all FR/NFR indirectly — "does the code run at all") | Every module in `scripts/` imports cleanly against a minimal mocked env (`GEMINI_API_KEY`/`SUPABASE_URL`/`SUPABASE_SECRET_KEY` faked, no real client ever contacted); the four entry points (`run_hourly.py`, `run_discovery.py`, `run_shadow.py`, `publish_prices.py`) expose `main()` and do nothing on import — confirming they're thin orchestrators, not scripts with side effects at import time |
+| `tests/test_ai_judge.py` | 8 | **FR9, FR10** (REV-003 follow-up, added 2026-07-12) | `judge_batch`'s control flow with `google.genai.Client` fully mocked (shared fake in `tests/conftest.py`): happy path (single- and multi-ticker valid JSON), empty-items no-op, the parse-retry-once-then-fail-safe-to-Hold path (asserts exactly 2 calls made and the correct `fallback_from` note), a reply that parses but omits a requested ticker fails safe for that ticker only, the model-fallback path (primary exhausts `GEMINI_MAX_RETRIES` transport retries on a retryable 503, backup succeeds — asserts `model_used`, `retry_count`, `fallback_from`, and per-model call counts), a non-retryable 4xx is never retried before falling back, and a hard failure of every model fails every ticker safe to Hold with `parse_status="api_error"` |
+| `tests/test_ingest.py` | 11 | supports FR9, FR17 (REV-004 follow-up, added 2026-07-12) | `yfinance.Ticker` fully mocked: the headline relevance filter (`_headlines`/`_mentions_company`) drops the real-world unrelated-same-acronym case from the code's own comment (SBIN.NS / "SBI Holdings" Japan crypto story) while keeping a genuinely relevant headline, fails OPEN (drops nothing) when no company name is available to match against, respects the headline limit after filtering, and handles a `tk.news` fetch exception gracefully; `_session_state`'s pro-rating boundary logic at well-into-session (~50%), just-after-open (<10%), exact-open (0%), after-close (not live), weekend (not live), and the NSE/IST session |
+| `tests/test_shadow.py` | 14 | **FR24–FR29** (REV-005 follow-up, added 2026-07-12) | `shadow.judge_batch_shadow`'s control flow reusing the same fake-Gemini machinery as `test_ai_judge.py` (confirms it really shares `ai_judge._client`/`_generate`, not a copy — asserts the SHADOW system prompt, not production's, is what's actually sent), empty-items no-op, and hard-failure fail-safe-to-Hold; `run_shadow._derive_shadow_positions`'s wallet-walk (Buy flat→holding, Sell holding→flat, Hold is a no-op, a redundant Buy while already holding is a no-op and does NOT overwrite the original entry price/date, a full Buy→Sell→Buy cycle re-sets the entry on the second Buy, multiple tickers derived independently, empty history ⇒ flat) with a fake in-memory Supabase double; `run_shadow._usable_market_data`'s same-data reuse returning `None` on a no-price/`no_data`/missing-snapshot production row and a merged dict when a price is present |
 
 ### Suite result
 
 **Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, pytest 9.1.1, `requirements.txt` installed).
 
-**Result: 130 passed / 1 failed / 131 total.**
+**Original baseline result (2026-07-12, before this debt-cleanup pass): 130 passed / 1 failed / 131 total**
+(the 1 failure was the intentionally-left-failing `tests/test_config.py::test_shadow_enabled_only_literal_false_disables_a_typo_stays_open`, filed as BUG-001 — see §4).
+
+**Current result (2026-07-12, after this debt-cleanup pass — see §7): 164 passed / 0 failed / 164 total.**
 
 ---
 
-## 3. Not covered in this pass (explicitly deferred, not silently skipped)
+## 3. Not covered (explicitly deferred, not silently skipped)
 
-Per the adoption-pass scope instruction, this baseline does NOT include:
-- `ai_judge.py`'s prompt/parse/retry logic (FR9, FR10) — would need a mocked `genai.Client`; higher
-  effort, deferred to a follow-up increment.
-- `ingest.py`'s yfinance-wrapping logic (headline relevance filter, session-aware pricing) — would need
-  mocked `yf.Ticker`; deferred.
-- `shadow.py`'s orchestration (`run_shadow.py`'s wallet-walk derivation, FR25/FR26) — deferred; the shadow
-  prompt-construction fact (FR24/FR25, no separate prompt file) was verified by direct code reading for
-  the `qa/test-plan-full-codebase.md` correction (§5 below) but has no automated test yet.
+As of the 2026-07-12 debt-cleanup pass (§7), `ai_judge.py`, `ingest.py`'s headline/session logic, and
+`shadow.py`/`run_shadow.py`'s wallet-walk + same-data-reuse logic are now covered — see the coverage table
+above (`tests/test_ai_judge.py`, `tests/test_ingest.py`, `tests/test_shadow.py`). What remains explicitly
+out of scope for this automated suite:
 - Any live Supabase/GitHub Actions/dashboard/detail-page verification (FR1, FR3, FR6, FR14, FR17,
-  FR19–FR23, NFR2, NFR4) — these require real infra and are the domain of
-  `qa/test-plan-full-codebase.md` Phases 3–5, which remains the manual playbook for that layer. This
-  automated suite does not attempt to replace it.
+  FR19–FR23, NFR2, NFR4) — these require real infra and remain the domain of
+  `qa/test-plan-full-codebase.md` Phases 3–5, the manual playbook for that layer. This automated suite
+  does not attempt to replace it. **Tracked as REV-006 in `docs/review-log.md`, marked ACCEPTED-DEBT**:
+  automating this layer would require live Supabase/GitHub Actions/GitHub Pages infrastructure, which is
+  out of proportion for a `tests/` regression-suite cleanup pass; it is correctly and deliberately
+  `qa/test-plan-full-codebase.md`'s domain (manual, Claude-Code-executed against live infra) by design, not
+  a gap to close with more pytest.
 - A true end-to-end run from a real entry point against live Supabase/Gemini/ntfy — out of scope for a
-  proportionate baseline pass per the task instructions ("don't try to build full integration/e2e coverage
-  in one pass"). `tests/test_import_smoke.py` is the closest thing this pass has to a shippability check
-  (confirms the entry points are import-clean, thin orchestrators with no import-time side effects) but is
-  not a substitute for a real dry run.
+  proportionate automated-suite pass. `tests/test_import_smoke.py` is the closest thing this suite has to
+  a shippability check (confirms the entry points are import-clean, thin orchestrators with no import-time
+  side effects) but is not a substitute for a real dry run; that real dry run is `qa/test-plan-full-codebase.md`'s
+  job.
+- `ai_judge.py`/`shadow.py`'s exact prompt-string wording (as opposed to control flow) — per the task
+  brief for this pass, deliberately not exhaustively tested; the load-bearing guarantee under test is the
+  control flow (parse-retry, model-fallback, fail-safe-to-Hold), not every sentence of prompt text.
 
 **FR31** (committed, reproducible shadow evaluation harness) has no code to test — it is an acknowledged
 open requirements gap (`docs/requirements.md` §10.2), not a missed test.
@@ -75,7 +84,25 @@ open requirements gap (`docs/requirements.md` §10.2), not a missed test.
 
 ## 4. Bugs filed
 
-### BUG-001 — FR30 / NFR5: `SHADOW_ENABLED` does not fail open on a mistyped value, contradicting the documented accepted-risk posture
+### BUG-001 — FR30 / NFR5: `SHADOW_ENABLED` does not fail open on a mistyped value, contradicting the documented accepted-risk posture — RESOLVED 2026-07-12 (REV-001, doc correction)
+
+**Status: RESOLVED.** Resolved via the user's chosen Option B: **the docs were corrected, not the code**
+(reviewer's REV-001, `docs/review-log.md`). `docs/requirements.md` FR30/NFR5 and `docs/design.md` §0/§13.6
+were rewritten by pm/tech-lead to accurately state: the kill switch fails open **only** on a truly
+unset/empty `SHADOW_ENABLED` Variable; any explicitly-set-but-wrong value (including a typo like `flase`)
+fails **closed** and disables the pilot. This is now an accurate description of `scripts/config.py`'s
+actual behavior — no code changed.
+
+`tests/test_config.py` was updated to match: the test that asserted the old (now-corrected-away) claim,
+`test_shadow_enabled_only_literal_false_disables_a_typo_stays_open`, was renamed to
+`test_shadow_enabled_any_non_true_explicit_value_fails_closed_typo` and now asserts
+`SHADOW_ENABLED is False` for a typo'd value (`"flase"`) — matching the corrected FR30/NFR5. The companion
+case — a truly empty/unset Variable still resolves to `True` (fails open only in that case) — was already
+covered by the adjacent `test_shadow_enabled_defaults_true_when_empty_string` and
+`test_shadow_enabled_defaults_true_when_unset` and needed no change. Full suite re-run: 164/164 passing
+(§7), including this test.
+
+Original finding (kept verbatim below for the record):
 
 - **Requirement violated:** FR30 ("**Only the literal string `false` disables it.** ... an unset/mistyped
   `SHADOW_ENABLED` Variable *silently keeps the pilot running*") and NFR5 (same posture, restated).
@@ -86,9 +113,14 @@ open requirements gap (`docs/requirements.md` §10.2), not a missed test.
 - **Reproduction:**
   1. `export SHADOW_ENABLED=flase` (a plausible typo of `false`)
   2. `python3 -c "import config; print(config.SHADOW_ENABLED)"`
-  3. Automated repro: `tests/test_config.py::test_shadow_enabled_only_literal_false_disables_a_typo_stays_open`
-- **Expected (per FR30/NFR5, verbatim from the requirements/design docs):** `True` — "only the literal
-  string `false` disables it"; anything else, including a typo, should leave the pilot running.
+  3. Automated repro (original, now superseded — see resolution above): the test formerly named
+     `tests/test_config.py::test_shadow_enabled_only_literal_false_disables_a_typo_stays_open`, now
+     `test_shadow_enabled_any_non_true_explicit_value_fails_closed_typo` and asserting the corrected
+     expectation.
+- **Expected (per FR30/NFR5 AS ORIGINALLY WRITTEN, verbatim from the requirements/design docs at the
+  time):** `True` — "only the literal string `false` disables it"; anything else, including a typo,
+  should leave the pilot running. **(This expectation was the part that was wrong and has since been
+  corrected — see resolution above; do not use this as the current spec.)**
 - **Actual:** `False`. The implementation is
   `SHADOW_ENABLED = (os.environ.get("SHADOW_ENABLED", "").strip().lower() or "true") == "true"`. The `or
   "true"` fallback only triggers when the env value is the **empty string** (falsy) — Python's `or` does
@@ -104,11 +136,13 @@ open requirements gap (`docs/requirements.md` §10.2), not a missed test.
   correct FR30/NFR5/design.md's wording to describe what the code actually does) rather than left as a
   silent mismatch. Routed to dev/pm per the standard bug-handling flow; qa does not fix production code or
   requirements docs.
-- **Test status:** left failing in the suite (not skipped/xfailed) so it stays visible as an open
-  discrepancy until dev/pm resolve it one way or the other.
+- **Test status (historical):** was left failing in the suite (not skipped/xfailed) so it stayed visible
+  as an open discrepancy until dev/pm resolved it. Now resolved — see the top of this entry.
 
-No other bugs were found in this pass — all other 130 tests pass against the requirements/design docs as
-written.
+No other bugs were found in the original baseline pass — all other 130 tests passed against the
+requirements/design docs as written at the time. No new bugs were found while adding the REV-003/004/005
+coverage in the 2026-07-12 debt-cleanup pass either (§7) — all new tests pass against the current,
+corrected requirements/design docs.
 
 ---
 
@@ -140,15 +174,103 @@ adoption-pass instruction not to rewrite a reasonable manual plan):
    instructs future executors not to mark this PASS by hand-running an ad hoc query, and to re-run once
    FR31's harness is committed.
 
-Everything else in `qa/test-plan-full-codebase.md` (Phases 0–5, 7, the Known Expected Findings and
-Blocking Dependencies sections, P6-1/P6-3/P6-4) is unchanged.
+Everything else in `qa/test-plan-full-codebase.md` (Phases 0–5, 7, P6-1/P6-3/P6-4) was unchanged in this
+original pass. See §7 for further corrections made to this file's "Known Expected Findings" section in the
+2026-07-12 debt-cleanup pass (REV-013).
 
 ---
 
-## 6. Verdict
+## 6. Verdict (original baseline pass)
 
-**Baseline established.** 130/131 automated tests pass; 1 genuine pre-existing doc-vs-code discrepancy
-found and filed as BUG-001 (routed to dev/pm, not fixed here). This is a **starting point**, not a
-completed regression campaign — see §3 for explicitly deferred coverage (`ai_judge.py`, `ingest.py`,
-`shadow.py` orchestration, and all live-infra/dashboard verification, which remains
-`qa/test-plan-full-codebase.md`'s domain). No production code was modified to produce this report.
+**Baseline established.** 130/131 automated tests passed; 1 genuine pre-existing doc-vs-code discrepancy
+found and filed as BUG-001 (routed to dev/pm, not fixed here). This was a **starting point**, not a
+completed regression campaign — see the original §3 deferred-coverage list (superseded by §7 below, which
+closes most of it). No production code was modified to produce this report.
+
+**This §6 verdict is superseded by §7's final verdict below**; kept here for the historical record of what
+this pass looked like before the debt-cleanup follow-up.
+
+---
+
+## 7. Debt-cleanup pass — 2026-07-12 (user's "fix them all" following reviewer's adoption-pass audit)
+
+Following reviewer's `docs/review-log.md` adoption-pass audit, the user asked qa to fix every item in its
+own ownership: the intentionally-failing test (BUG-001/REV-001), the deferred coverage gaps (REV-003,
+REV-004, REV-005), and the stale reference in this file's own test plan (REV-013). REV-006 was explicitly
+out of scope for automation (see below). No production code (`scripts/`) was changed in this pass — only
+`tests/`, this report, and `qa/test-plan-full-codebase.md`, all of which qa owns.
+
+### 7.1 BUG-001 / REV-001 — resolved (doc correction, not code fix)
+
+See §4 above for the full resolution writeup. `tests/test_config.py`'s stale test was renamed and
+corrected to assert the now-accurately-documented behavior (typo fails closed; only truly empty/unset
+fails open).
+
+### 7.2 REV-003, REV-004, REV-005 — new automated coverage added
+
+Added three new test files (see the coverage table in §2 for the full breakdown):
+- `tests/test_ai_judge.py` (8 tests, FR9/FR10) — `judge_batch` control flow, mocked `google.genai.Client`.
+- `tests/test_ingest.py` (11 tests, supports FR9/FR17) — headline relevance filter + session-aware
+  pro-rating boundaries, mocked `yfinance.Ticker`.
+- `tests/test_shadow.py` (14 tests, FR24–FR29) — `shadow.judge_batch_shadow` control flow (reusing the
+  same fake-Gemini machinery as `test_ai_judge.py`, added as shared fixtures in `tests/conftest.py`) plus
+  `run_shadow.py`'s wallet-walk derivation and same-data-reuse logic, with an in-memory fake Supabase
+  double.
+
+All externals remain fully mocked — no real network/API/DB call is made anywhere in this suite, consistent
+with the existing suite's style (`tests/conftest.py`, `tests/test_notify.py`'s `requests.post` mock,
+`tests/test_state.py`'s in-memory Supabase double).
+
+### 7.3 REV-006 — ACCEPTED-DEBT, not automated
+
+REV-006 (live-infra-dependent FR/NFR set: FR1, FR3, FR6, FR14, FR17, FR19–FR23, NFR2, NFR4) is **not**
+addressed by new pytest coverage in this pass, by deliberate decision. It requires live Supabase/GitHub
+Actions/GitHub Pages infrastructure to exercise meaningfully; automating it would mean either (a) mocking
+so much of the real infra that the tests would no longer be testing the actual integration, which is
+false confidence, or (b) standing up live-infra test fixtures, which is out of proportion for a `tests/`
+regression-suite cleanup pass. This layer is — and was already correctly identified by reviewer as —
+`qa/test-plan-full-codebase.md`'s domain by design: a manual, Claude-Code-executed playbook run against
+real Supabase/GitHub Actions/GitHub Pages. **Marked `ACCEPTED-DEBT`** here; reviewer owns marking it as
+such in `docs/review-log.md` (qa does not edit that file). Relayed to the orchestrator/user for visibility.
+
+### 7.4 REV-013 — `qa/test-plan-full-codebase.md` corrected
+
+The "Known Expected Findings" section (and the P1-2, P2-5, P4-5 cells that fed it) still described
+`notify.py`'s `kind="reminder"` path as an expected/don't-fix *dead* (unreachable) branch. Reviewer
+confirmed by reading current `scripts/notify.py` that this code path has been **fully removed**, not left
+unreachable (`docs/design.md` §4.6: "the `reminder` kind is retired"). Corrected:
+- **P1-2** (dead code scan) — replaced the "confirm it's still unreachable" instruction with a note that
+  the branch no longer exists at all.
+- **P2-5** (`notify.py` isolated path) — dropped the "confirm `kind="reminder"` never invoked" check;
+  nothing to invoke.
+- **P4-5** (`detail.html` per-ticker view) — clarified that "residual reminder handling" is not a known
+  finding to look for; if a future run surfaces reminder-related UI text, that would be a NEW finding.
+- **Known Expected Findings list** — removed the two reminder-related bullets entirely and added a
+  correction note explaining why, so a future executor doesn't go looking for a dead branch that doesn't
+  exist.
+
+### 7.5 Suite re-run
+
+**Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, pytest 9.1.1, `requirements.txt` installed).
+
+**Result: 164 passed / 0 failed / 164 total.**
+
+(131 original baseline tests, with the 1 previously-failing test now fixed and passing, plus 33 new tests
+across `tests/test_ai_judge.py`, `tests/test_ingest.py`, and `tests/test_shadow.py`.)
+
+### 7.6 Shippability check
+
+`tests/test_import_smoke.py` (16 tests, part of the full run above) re-confirms every module in `scripts/`
+— including `ai_judge.py`, `ingest.py`, `shadow.py`, `run_shadow.py` — still imports cleanly against a
+minimal mocked env, and that all four entry points (`run_hourly.py`, `run_discovery.py`, `run_shadow.py`,
+`publish_prices.py`) still expose `main()` with no import-time side effects. No production code changed in
+this pass, so no regression to the shippability baseline was possible or observed.
+
+## 8. Verdict (final, this pass)
+
+**PASS.** All owned debt-cleanup items resolved: BUG-001/REV-001 fixed (doc correction confirmed by a
+corrected, passing test), REV-003/REV-004/REV-005 coverage gaps closed with 33 new mocked tests, REV-013's
+stale test-plan reference corrected. REV-006 explicitly marked `ACCEPTED-DEBT` (out of proportion to
+automate; remains `qa/test-plan-full-codebase.md`'s domain by design) rather than silently left off a
+checklist. Full suite: **164 passed / 0 failed / 164 total.** No production code (`scripts/`) was changed
+to produce this pass — only `tests/`, this report, and `qa/test-plan-full-codebase.md`.

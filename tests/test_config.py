@@ -132,11 +132,13 @@ def test_shadow_enabled_false_disables(reload_config):
     assert cfg.SHADOW_ENABLED is False
 
 
-def test_shadow_enabled_only_literal_false_disables_a_typo_stays_open(reload_config):
-    """FR30's recorded accepted risk: a mistyped value (not the literal string
-    'false') silently keeps the pilot running."""
+def test_shadow_enabled_any_non_true_explicit_value_fails_closed_typo(reload_config):
+    """FR30 (corrected wording): fail-open applies ONLY to a truly unset/empty
+    Variable. Any explicitly-set-but-wrong value -- including a typo like
+    'flase' -- is not the empty string, so it skips the `or "true"` fallback,
+    compares unequal to "true", and fails CLOSED (disables the pilot)."""
     cfg = reload_config(SHADOW_ENABLED="flase")   # typo
-    assert cfg.SHADOW_ENABLED is True
+    assert cfg.SHADOW_ENABLED is False
 
 
 def test_shadow_enabled_case_insensitive_false(reload_config):

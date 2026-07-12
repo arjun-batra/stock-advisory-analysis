@@ -46,7 +46,7 @@
 | ID | Test | Method | Pass criteria |
 |---|---|---|---|
 | P1-1 | Syntax + import check on all 12 modules in `scripts/` | `python -m py_compile scripts/*.py`, then import each with mocked env | All compile and import |
-| P1-2 | Dead code scan | `vulture` or manual grep for unreferenced functions/branches | Findings logged. **Expected known finding:** `notify.py` dead `kind="reminder"` path (issue #11 aftermath) — confirm it's still unreachable, log to gap register, do NOT remove |
+| P1-2 | Dead code scan | `vulture` or manual grep for unreferenced functions/branches | Findings logged. (2026-07-12 correction: the `notify.py` `kind="reminder"` path previously listed here as an expected dead branch has been fully removed from the code, not left unreachable — `docs/design.md` §4.6 confirms "the `reminder` kind is retired." There is no `kind=="reminder"` branch anywhere in `notify.py` to find; do not search for it.) |
 | P1-3 | `textutil.py` unit tests | Write pytest cases for every public function: empty string, unicode (NSE company names), very long input, whitespace-only | All pass; behavior matches SD v15 §refactor notes |
 | P1-4 | `state.py` verdict-transition logic | Pytest: table-driven test of every verdict pair (Buy→Sell, Buy→Hold, Hold→Buy, Sell→Buy, Sell→Hold, Hold→Sell, and all three no-change cases) | **Locked rule (issue #11):** ANY change → alert flag true, immediately, no cooldown. No change → no alert. Any cooldown logic surviving in code = FAIL + gap register |
 | P1-5 | `prefilter.py` gate logic | Pytest with synthetic price/volume inputs at boundaries | Boundary behavior matches Requirements v4 thresholds exactly (off-by-one at thresholds is the target) |
@@ -66,7 +66,7 @@ Mock Gemini and yfinance with fixtures. `alerts_enabled=false` everywhere.
 | P2-2 | **Issue #31 verification:** `data_snapshot.market` populated | Inspect generated snapshot for each market | `market` field present and equals `watchlist.market` value. If code fix hasn't landed yet, mark BLOCKED (not FAIL) and note dependency on issue #31 |
 | P2-3 | `ai_judge.py` with mocked Gemini responses | Feed: valid JSON verdict, malformed JSON, empty response, timeout simulation | Valid → parsed verdict; malformed/empty → logged failure, no crash, no phantom verdict written; timeout → retry behavior matches SD v15 (no compounding retry waste) |
 | P2-4 | `run_hourly.py` full dry run, single ticker, alerts off | Execute with mocks | Completes; gate-decision audit lines present in log for every gate; no silent skips |
-| P2-5 | `notify.py` isolated path (**TC-2.6, currently unverified**) | Direct invocation against throwaway ntfy topic | HTTP 200/204 verified in code path; message format matches Requirements v4 alert spec; `kind="reminder"` path confirmed never invoked |
+| P2-5 | `notify.py` isolated path (**TC-2.6, currently unverified**) | Direct invocation against throwaway ntfy topic | HTTP 200/204 verified in code path; message format matches Requirements v4 alert spec. (2026-07-12 correction: the `kind="reminder"` path this cell used to ask executors to confirm "never invoked" has been fully removed from `notify.py`, not just left unreachable — there is nothing to invoke or confirm; drop that check.) |
 | P2-6 | **FR7/FR8 change/no-change pair on NSE tickers** (currently skipped) | Two consecutive mocked runs on an NSE ticker: run 1 forces verdict change, run 2 forces identical verdict | Run 1 → alert emitted (to throwaway topic); run 2 → silence. `.NS` ticker handling correct throughout |
 | P2-7 | `publish_prices.py` output contract | Run with mocks, diff output schema against current `pages/prices.json` | Schema identical; all three markets represented; no client-side yfinance dependency introduced |
 | P2-8 | `run_discovery.py` | Dry run | No reference to `candidate_universe` anywhere (table permanently retired — load-bearing decision #7). Any reference = FAIL |
@@ -100,7 +100,7 @@ Live GitHub Pages + live Supabase where applicable. UI-handoff v3 wins over SD o
 | P4-2 | **TC-2.7: live browser ↔ live Supabase wiring** (currently skipped) | Load dashboard, verify rendered verdicts match a direct `call_log` query for same tickers | 1:1 match on verdict, timestamp recency, ticker set |
 | P4-3 | Live prices from `prices.json` | Network tab via Playwright: confirm prices fetched from `prices.json`, zero direct Yahoo calls from browser | No CORS errors; no Yahoo endpoints in request log (all three markets are CORS-blocked — any direct call = FAIL) |
 | P4-4 | Market badge + currency logic (§4.7) | Verify badge/currency for one US, one TSX, one NSE ticker | Reads `data_snapshot.market`, renders per UI-handoff v3. BLOCKED if P2-2/P3-5 blocked |
-| P4-5 | `detail.html` per-ticker view | Load detail for the same three tickers | Fields per UI-handoff v3; **check for residual reminder handling** — log to gap register if present, don't remove |
+| P4-5 | `detail.html` per-ticker view | Load detail for the same three tickers | Fields per UI-handoff v3. (2026-07-12 correction: the "check for residual reminder handling" instruction previously here referred to `notify.py`'s `kind="reminder"` path, which has been fully removed from the codebase — `docs/design.md` §4.6. There is no known residual reminder handling to look for; if this test surfaces any reminder-related UI text, that would be a NEW finding, not the previously-expected one.) |
 | P4-6 | Empty/error states | Ticker with no data; simulate `prices.json` fetch failure | Graceful per UI-handoff v3; no raw JS errors in console |
 | P4-7 | Console hygiene | Collect console errors across all page loads | Zero uncaught errors |
 
@@ -148,9 +148,15 @@ Live GitHub Pages + live Supabase where applicable. UI-handoff v3 wins over SD o
 
 ## Known Expected Findings (log, don't fix)
 
-- `notify.py` dead `kind="reminder"` path (P1-2, P2-5)
-- Possible residual reminder handling in `detail.html` (P4-5)
 - `data_snapshot.market` nulls in pre-fix rows (P3-5) — expected historical artifact
+
+> **2026-07-12 correction (REV-013):** This section previously also listed `notify.py`'s dead
+> `kind="reminder"` path and "possible residual reminder handling in `detail.html`" (P1-2, P2-5, P4-5) as
+> expected/don't-fix findings. Reviewer confirmed by reading current `scripts/notify.py` in full that this
+> code path has been **fully removed**, not merely left unreachable (`docs/design.md` §4.6: "the
+> `reminder` kind is retired"). Both entries have been removed from this list so a future executor doesn't
+> go looking for a dead branch that no longer exists; the corresponding P1-2/P2-5/P4-5 cells above were
+> updated to match.
 
 ## Blocking Dependencies
 
