@@ -491,9 +491,16 @@ Variables; nothing sensitive hardcoded. This mirrors `docs/requirements.md §11`
 baseline). Core: `GEMINI_MODEL`/`_BACKUP`, `NSE_GEMINI_MODEL`/`_BACKUP`, `DISCOVERY_GEMINI_MODEL`/`_BACKUP`,
 `GEMINI_TIMEOUT_MS` (180000), `GEMINI_MAX_RETRIES` (3), `GEMINI_RETRY_BASE_MS` (10000), `NTFY_TOPIC`,
 `NSE_NTFY_TOPIC` (falls back to `NTFY_TOPIC`), `DETAIL_PAGE_BASE`, `ALERTS_ENABLED` (false), `FORCE_RUN`
-(false), `MIN_HISTORY_ROWS` (21), `YF_PACING_SECONDS` (2), `YF_BACKOFF_SECONDS` (10),
-`MARKET_OPEN`/`CLOSE` (09:30/16:00 ET), `NSE_MARKET_OPEN`/`CLOSE` (09:15/15:30 IST),
-`RUNTIME_CLOSE_GRACE_MIN` (10). Discovery: the `DISCOVERY_*` gate/signal/shortlist/cooldown keys (§4.3).
+(false), `MIN_HISTORY_ROWS` (21), `YF_PACING_SECONDS` (2 — unified yfinance/screener call spacing; as of
+REV-007 this **also** governs prefilter's live-screener call pacing, replacing five formerly-hardcoded
+`sleep(1)` sites, so inter-screen pacing there is now 2s, not 1s — a deliberate low-risk timing change),
+`YF_BACKOFF_SECONDS` (10), `YF_HISTORY_RETRIES` (2 — Yahoo history-fetch retry count, `ingest._fetch_history`),
+`YF_HISTORY_PERIOD` (`"3mo"` — yfinance history window, same function), `HEADLINES_LIMIT` (5 — per-ticker
+headline cap, `ingest._headlines`), `MARKET_OPEN`/`CLOSE` (09:30/16:00 ET), `NSE_MARKET_OPEN`/`CLOSE`
+(09:15/15:30 IST), `RUNTIME_CLOSE_GRACE_MIN` (10), `NOTIF_BODY_MAX` (150 — push body clip, `notify.py`),
+`RATIONALE_MAX` (280 — stored rationale clip, `ai_judge.py`). Discovery: the `DISCOVERY_*`
+gate/signal/shortlist/cooldown keys (§4.3), incl. `DISCOVERY_EARNINGS_RECENT_DAYS` (2 — the "just reported"
+look-back side of the earnings signal in `prefilter._signals`).
 Dashboard auto-refresh interval is build-time config (FR22). Shadow: see §13.5. **The dashboard
 auto-refresh interval and all discovery thresholds are tunables, not requirements — no tunable may live
 only in code.**
