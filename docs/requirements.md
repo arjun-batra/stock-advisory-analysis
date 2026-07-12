@@ -306,6 +306,11 @@ tunables, not fixed requirements.
 | `MIN_HISTORY_ROWS` | `21` | Sessions needed for 20-day metrics |
 | `YF_PACING_SECONDS` | `2` | Per-ticker pacing for Yahoo fetch |
 | `YF_BACKOFF_SECONDS` | `10` | Backoff on Yahoo rate-limit error |
+| `YF_HISTORY_RETRIES` | `2` | Retry attempts for Yahoo price-history fetch |
+| `YF_HISTORY_PERIOD` | `3mo` | Look-back window for Yahoo price-history fetch |
+| `HEADLINES_LIMIT` | `5` | Max headlines pulled per ticker for AI context |
+| `NOTIF_BODY_MAX` | `150` | Max chars in a push-notification body |
+| `RATIONALE_MAX` | `280` | Max chars in an AI rationale string |
 | `MARKET_OPEN` / `MARKET_CLOSE` | `09:30` / `16:00` ET | US/TSX session bounds |
 | `NSE_MARKET_OPEN` / `NSE_MARKET_CLOSE` | `09:15` / `15:30` IST | NSE session bounds |
 | `RUNTIME_CLOSE_GRACE_MIN` | `10` | Runtime close-grace minutes (dispatch-to-execution latency) |
@@ -324,6 +329,7 @@ tunables, not fixed requirements.
 | `DISCOVERY_VOL_SPIKE` | `2.0` | Volume-spike multiple of 3-month avg |
 | `DISCOVERY_52W_PROXIMITY` | `0.02` | 52-week-extreme proximity fraction |
 | `DISCOVERY_EARNINGS_DAYS` | `7` | Earnings-proximity window (days) |
+| `DISCOVERY_EARNINGS_RECENT_DAYS` | `2` | Recent-earnings look-back window (days) |
 | `DISCOVERY_SHORTLIST_MAX` | `15` | Max candidates in the daily batch |
 | `DISCOVERY_PUSH_COOLDOWN_DAYS` | `7` | Per-candidate re-push cooldown (days) |
 | Dashboard refresh interval | build-time config (FR22) | Auto-refresh timer while page open |
@@ -343,6 +349,7 @@ tunables, not fixed requirements.
 |---|---|---|
 | 2026-07-12 | **Adoption-pass port.** Created `docs/requirements.md` by porting FR1–FR23 / NFR1–NFR4, the Problem/Goals/Scope sections, and the full Decisions Log (#1–#18) verbatim (lightly reformatted, no meaning changes) from `requirements_docs/stock-advisory-agent-requirements.md` (v5). Original v5 doc retained untouched in `requirements_docs/` as historical record. Added a Configuration section (§11) as the reviewer hardcoding-audit baseline, populated from `scripts/config.py` and SD.md. | Multi-agent-template adoption: port current source-of-truth docs into the new `docs/` locations without altering meaning. |
 | 2026-07-12 | **New Experimental Tracks section (§10).** Added FR24–FR30 + NFR5 for the previously-undocumented shadow wallet pilot, and FR31 [REQUIREMENTS-GAP] for its missing evaluation method. IDs continue from where v5 (FR23/NFR4) leaves off; FR1–FR23/NFR1–NFR4 numbering unchanged. Marked explicitly as experimental / non-production, outside core v1 scope. Recorded the kill-switch fail-open default as an accepted risk (FR30 / NFR5). | Documenting shipped-but-undocumented shadow code as explicit requirements per user decision #2, with hard non-production/isolation constraints and the flagged evaluation gap. |
+| 2026-07-12 | **Synced §11 audit baseline with 6 newly-extracted tunables.** Added `YF_HISTORY_RETRIES` (`2`), `YF_HISTORY_PERIOD` (`3mo`), `HEADLINES_LIMIT` (`5`), `NOTIF_BODY_MAX` (`150`), `RATIONALE_MAX` (`280`) to the Core system table and `DISCOVERY_EARNINGS_RECENT_DAYS` (`2`) to the Discovery prefilter table. Each default equals the literal it replaced (no behavior change from these keys). Baseline-only sync; no new/changed FR/NFR. | Dev's debt-cleanup pass moved these previously-hardcoded literals into `scripts/config.py` as env-overridable tunables, resolving reviewer findings REV-007–REV-012; the hardcoding-audit baseline table must list every tunable. |
 | 2026-07-12 | **Corrected kill-switch behavior wording (FR30, NFR5, §11 config table).** Fixed the factually-wrong claim that a *mistyped* `SHADOW_ENABLED` Variable silently keeps the pilot running. The actual code (`scripts/config.py:65`, `(... or "true") == "true"`) fails open ONLY on a truly unset/empty Variable; any explicitly-set-but-wrong value — including a typo like `flase`, `no`, or `0` — compares unequal to `true` and fails **closed**, disabling the pilot. Accepted-risk framing retained; only the factual description was corrected (fail-open scope narrowed to unset/empty). No change to the requirement itself or the risk-acceptance decision. | Resolving REV-001 (major) / BUG-001 doc-vs-code contradiction via user's chosen Option B (correct the docs, not the code). |
 
 > **Open item flagged for the user (no gate blocking this adoption pass):** FR31's evaluation-method
