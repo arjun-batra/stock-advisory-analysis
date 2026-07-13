@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-13T20:02:02.010564+00:00",
+  "generated_at": "2026-07-13T20:31:41.133496+00:00",
   "prices": {
     "AAPL": {
       "chg": 0.63,
@@ -14,10 +14,10 @@
       "price": 247.31
     },
     "BB": {
-      "chg": -2.23,
+      "chg": -2.37,
       "currency": "USD",
       "market": "US",
-      "price": 10.725
+      "price": 10.71
     },
     "BHARTIARTL.NS": {
       "chg": -0.55,
@@ -101,7 +101,7 @@
       "chg": -3.52,
       "currency": "USD",
       "market": "US",
-      "price": 203.5284
+      "price": 203.53
     },
     "RELIANCE.NS": {
       "chg": 2.19,
