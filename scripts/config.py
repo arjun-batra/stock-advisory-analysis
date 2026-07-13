@@ -17,14 +17,14 @@ SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
 # Non-secret, but kept in env so you can change the model without a code edit.
-# Primary: 3.5 Flash (GA May 2026, strongest reasoning in the Flash line).
-# Backup: 3.1 Flash-Lite (confirmed free tier, ~500 RPD on this project per
-# AI Studio) — tried automatically if the primary errors on every attempt,
-# whether that's a true rate limit, an outage, or the primary simply not being
-# free-tier-enabled on this project. Leave GEMINI_MODEL_BACKUP empty to disable
+# Primary/backup both run on Google's PAID tier (load-bearing #6, design §4.4):
+# gemini-3.5-flash / gemini-3.1-flash-lite showed stability issues in real
+# operation, so both defaults are corrected to the gemini-2.5-flash family
+# (2026-07-13 change request, Change 2). Backup is tried automatically if the
+# primary errors on every attempt. Leave GEMINI_MODEL_BACKUP empty to disable
 # the fallback and run primary-only.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
-GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")
 
 # NSE watchlist model pair (Phase 6, design §12 D3). Same Variable-driven
 # pattern as GEMINI_MODEL: point at a different model for quota isolation from
@@ -76,6 +76,23 @@ SHADOW_PROMPT_VARIANT = os.environ.get("SHADOW_PROMPT_VARIANT", "position_aware_
 # that just finished and never the prior cycle. Generous vs. a fast production
 # run (~1 min) but safely under one cadence step.
 SHADOW_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_SNAPSHOT_LOOKBACK_MIN", "20"))
+
+# --- NSE shadow verdict pilot kill switch (NSE, non-production, §16) ----------
+# Independent of SHADOW_ENABLED above (FR38/NFR6, load-bearing #11): flipping
+# either one leaves the other track untouched. Same fail-open-on-empty-only
+# shape as SHADOW_ENABLED — see that comment for the GitHub-expression-truthiness
+# rationale; only the literal string "false" disables it, unset/empty stays on.
+SHADOW_NSE_ENABLED = (os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"
+
+# Prompt variant tag written to call_log_shadow_nse.prompt_variant. Same variant
+# as the US/CA pilot (position_aware_v1) — no new prompt, §16.2.
+SHADOW_NSE_PROMPT_VARIANT = os.environ.get("SHADOW_NSE_PROMPT_VARIANT", "position_aware_v1")
+
+# How far back run_shadow_nse.py looks in call_log for "this cycle's" production
+# NSE snapshot to reuse (FR34). Must stay under the NSE */30 dispatch cadence so
+# it can never pick up a prior cycle's snapshot — same rationale as
+# SHADOW_SNAPSHOT_LOOKBACK_MIN above, scoped to the NSE track.
+SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN", "20"))
 
 # --- Tunables (solution design 6.3) ------------------------------------------
 # REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule

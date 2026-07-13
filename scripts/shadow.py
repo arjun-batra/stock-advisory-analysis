@@ -113,18 +113,22 @@ def _shadow_ticker_block(data: dict, shadow_pos: dict) -> str:
     return "\n".join(lines)
 
 
-def judge_batch_shadow(items: list[dict]) -> dict:
-    """One position-aware Gemini call for the whole US/CA batch (shadow track).
+def judge_batch_shadow(items: list[dict], models: list[str] | None = None) -> dict:
+    """One position-aware Gemini call for a shadow batch (US/CA or NSE track).
 
     items: list of {"data": <reconstructed production market snapshot>,
                     "shadow_pos": <{state, entry_price, entry_date}>}.
+    models: optional explicit model try-order. Default None resolves to today's
+    US/CA behavior (config.GEMINI_MODEL / _BACKUP via ai_judge._models_to_try);
+    the NSE shadow orchestrator passes config.nse_models() so it draws from
+    NSE's own model bucket (§16.2), mirroring how ai_judge.judge_batch already
+    takes an optional models override for discovery/NSE production.
 
     Mirrors ai_judge.judge_batch's orchestration (single batched call, one retry
     on a bad reply, fail-safe-to-Hold on hard failure so a bad batch can only ever
     MISS a signal) but with the shadow system prompt + shadow blocks. Uses the
-    SAME model try-order as production's watchlist call (config.GEMINI_MODEL /
-    _BACKUP via ai_judge._models_to_try) and the same timeout/retry policy —
-    shared config and shared call function (ai_judge._generate), not copies.
+    same timeout/retry policy — shared config and shared call function
+    (ai_judge._generate), not copies.
     Returns {ticker: {verdict, confidence, rationale, raw_model_response,
     parse_status, model_used, usage, fallback_from, retry_count}}.
     """
@@ -160,7 +164,7 @@ def judge_batch_shadow(items: list[dict]) -> dict:
     any_response = False
     notes: list[str] = []
     total_retries = 0   # transport retries burned across every attempt this batch
-    models = ai_judge._models_to_try(None)   # same order as production's watchlist call
+    models = ai_judge._models_to_try(models)   # explicit order, or the US/CA default
     last_model = models[0]
 
     for i, model in enumerate(models):
