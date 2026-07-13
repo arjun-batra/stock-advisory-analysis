@@ -53,7 +53,7 @@ reference, not a spec for a third party.
   the trigger+watchdog path (accepted risk).
 - **Compute:** GitHub Actions workflows do the fetch/AI/alert work; the runtime market gate (not the
   schedule) is the authority on whether work happens.
-- **AI:** Gemini Flash, free tier, one batched call per run; fails safe to Hold on any parse/API error.
+- **AI:** Gemini Flash on Google's paid tier, one batched call per run; fails safe to Hold on any parse/API error.
 - **Data:** Yahoo Finance unofficial API for price/volume/fundamentals across all three markets.
 
 ## v1 scope
@@ -77,8 +77,9 @@ reference, not a spec for a third party.
 - Licensed/registered financial advice — this is a personal informational tool.
 
 ## Constraints
-- **Budget:** $0–15/month. Drives free-tier data APIs, free push (ntfy), and one batched Gemini call
-  per run to stay under the free-tier daily request cap.
+- **Budget:** $0–15/month (unchanged). Drives free-tier data APIs and free push (ntfy). Gemini now
+  runs on Google's **paid tier** (not free tier); the cap is held by keeping call volume low — one
+  batched Gemini call per run per track — rather than by staying under a free-tier daily request cap.
 - **Data lag:** ~30-minute cadence means up to ~30 minutes of lag is acceptable; the system is
   explicitly not suited to intraday/fast-moving trade timing.
 - **Static dashboard host:** GitHub Pages has no server-side auth, so dashboard access control can only

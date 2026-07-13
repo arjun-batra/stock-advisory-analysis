@@ -156,9 +156,11 @@ reference, not a spec for a contractor.
 
 ## 6. Non-Functional Requirements
 
-- **NFR1 — Cost:** Target $0–15/month. Checks every 30 minutes against free-tier data APIs keeps this
-  realistic; push notification services (ntfy.sh is free, Pushover is a small one-time fee per platform)
-  remove the per-message SMS cost entirely.
+- **NFR1 — Cost:** Target $0–15/month (unchanged cap). Gemini now runs on Google's **paid tier** (not
+  free tier); the budget is held by keeping call volume low — one batched Gemini call per run per track
+  (production watchlist, NSE watchlist, daily discovery, and each shadow track), on the ~30-minute
+  cadence, against otherwise-free data APIs. Push notification services (ntfy.sh is free, Pushover is a
+  small one-time fee per platform) remove the per-message SMS cost entirely.
 - **NFR2 — Reliability:** The system actively alerts the user when a scheduled run is missed, fails to
   trigger, or completes degraded — silence from the monitor means healthy. Passive "last run" visibility
   is not sufficient; a run that never triggers must surface as loudly as one that runs and fails.
@@ -364,8 +366,8 @@ tunables, not fixed requirements.
 ### Core system
 | Key | Default | Purpose |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Primary watchlist AI model |
-| `GEMINI_MODEL_BACKUP` | `gemini-3.1-flash-lite` | Fallback model (empty disables fallback) |
+| `GEMINI_MODEL` | `gemini-3.5-flash` (documented default) — see discrepancy note below | Primary watchlist AI model |
+| `GEMINI_MODEL_BACKUP` | `gemini-3.1-flash-lite` (documented default) — see discrepancy note below | Fallback model (empty disables fallback) |
 | `NSE_GEMINI_MODEL` / `NSE_GEMINI_MODEL_BACKUP` | inherit US/TSX pair | NSE watchlist model pair (quota isolation option) |
 | `DISCOVERY_GEMINI_MODEL` / `_BACKUP` | `gemini-2.5-flash` / `-lite` | Discovery model pair (separate daily quota bucket) |
 | `GEMINI_TIMEOUT_MS` | `180000` | Per-request Gemini timeout (ms) |
@@ -387,6 +389,18 @@ tunables, not fixed requirements.
 | `MARKET_OPEN` / `MARKET_CLOSE` | `09:30` / `16:00` ET | US/TSX session bounds |
 | `NSE_MARKET_OPEN` / `NSE_MARKET_CLOSE` | `09:15` / `15:30` IST | NSE session bounds |
 | `RUNTIME_CLOSE_GRACE_MIN` | `10` | Runtime close-grace minutes (dispatch-to-execution latency) |
+
+> **Discrepancy note — `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` (doc-vs-actual-operation):** the literal
+> defaults documented in code (`scripts/config.py:26-27`) are `gemini-3.5-flash` (primary) and
+> `gemini-3.1-flash-lite` (backup). These do **not** match actual current operation: the system runs
+> `gemini-2.5-flash` across the board — production watchlist, NSE watchlist, discovery, and both shadow
+> tracks — on Google's paid tier, because `gemini-3.5-flash` and `gemini-3.1-flash-lite` showed
+> stability issues in practice. This is a documentation correction (owned by pm), following the same
+> precedent as the 2026-07-12 REV-001/BUG-001 fix where a doc-vs-code mismatch was corrected in the
+> docs rather than the code. If the literal defaults in `scripts/config.py` should be changed to match
+> real operation (`gemini-2.5-flash`), that is dev's job once tech-lead scopes it — pm does not edit
+> code. `DISCOVERY_GEMINI_MODEL` already documents `gemini-2.5-flash` and is not part of this
+> discrepancy.
 
 ### Discovery prefilter / quality gates (all tunable)
 | Key | Default | Purpose |
@@ -421,11 +435,13 @@ tunables, not fixed requirements.
 | `SHADOW_NSE_PROMPT_VARIANT` | `position_aware_v1` | Prompt-variant tag written to `call_log_shadow_nse.prompt_variant` (same variant as §10.1) |
 | `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback window to reuse the same-cycle production NSE snapshot (must stay under the NSE dispatch cadence) |
 
-> **Note (for tech-lead):** the exact model/quota bucket the NSE shadow call uses (production NSE's
-> `NSE_GEMINI_MODEL` pair vs. the US/CA `GEMINI_MODEL` pair the §10.1 shadow reuses) is a design decision,
-> not fixed by this change request — the user did not require an NSE-specific model pairing (decision #1).
-> Resolve it in design.md; if it needs a user trade-off (e.g. free-tier quota pressure), route it back to
-> pm.
+> **Note (for tech-lead):** the exact model/quota bucket the NSE shadow call uses is a design detail to
+> record in design.md — no longer an open question requiring a user trade-off. As of the 2026-07-13
+> paid-tier correction, there is no free-tier quota pressure (Gemini runs on Google's paid tier
+> system-wide) and the model is standardized on the paid-tier `gemini-2.5-flash` family across all
+> tracks (production watchlist, NSE watchlist, discovery, and both shadow tracks). The NSE shadow call
+> should use that same `gemini-2.5-flash` family, consistent with every other track; the user did not
+> require an NSE-specific model pairing (decision #1). Just record the choice in design.md.
 
 ---
 
@@ -437,6 +453,7 @@ tunables, not fixed requirements.
 | 2026-07-12 | **New Experimental Tracks section (§10).** Added FR24–FR30 + NFR5 for the previously-undocumented shadow wallet pilot, and FR31 [REQUIREMENTS-GAP] for its missing evaluation method. IDs continue from where v5 (FR23/NFR4) leaves off; FR1–FR23/NFR1–NFR4 numbering unchanged. Marked explicitly as experimental / non-production, outside core v1 scope. Recorded the kill-switch fail-open default as an accepted risk (FR30 / NFR5). | Documenting shipped-but-undocumented shadow code as explicit requirements per user decision #2, with hard non-production/isolation constraints and the flagged evaluation gap. |
 | 2026-07-12 | **Synced §11 audit baseline with 6 newly-extracted tunables.** Added `YF_HISTORY_RETRIES` (`2`), `YF_HISTORY_PERIOD` (`3mo`), `HEADLINES_LIMIT` (`5`), `NOTIF_BODY_MAX` (`150`), `RATIONALE_MAX` (`280`) to the Core system table and `DISCOVERY_EARNINGS_RECENT_DAYS` (`2`) to the Discovery prefilter table. Each default equals the literal it replaced (no behavior change from these keys). Baseline-only sync; no new/changed FR/NFR. | Dev's debt-cleanup pass moved these previously-hardcoded literals into `scripts/config.py` as env-overridable tunables, resolving reviewer findings REV-007–REV-012; the hardcoding-audit baseline table must list every tunable. |
 | 2026-07-13 | **Change request — NSE shadow wallet pilot (new §10.3, FR32–FR39, NFR6) + FR31 upgraded to in-scope.** User (Arjun) requested an independent shadow experiment on NSE stocks mirroring the US/CA shadow pilot. Added §10.3 with FR32 (existence/purpose — same position-aware hypothesis, NSE tickers only), FR33 (self-derived wallet-walk from `call_log_shadow_nse`), FR34 (same-cycle NSE snapshot reuse), FR35 (isolated `call_log_shadow_nse` table, RLS/no-anon-read — HARD), FR36 (never alerts — HARD), FR37 (must not affect production **or** the US/CA shadow track — HARD, cross-track isolation), FR38 (independent `SHADOW_NSE_ENABLED` kill switch, same fail-open-on-empty accepted risk as FR30), FR39 (NSE market-hours gating per FR17). Added NFR6 mirroring NFR5 for the NSE track incl. mutual isolation of all three tracks. Added `SHADOW_NSE_ENABLED` / `SHADOW_NSE_PROMPT_VARIANT` / `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` to §11. **Upgraded FR31 from an open [REQUIREMENTS-GAP] to an in-scope requirement** (renamed §10.2 to "Shared Evaluation Method"): the committed, versioned, reproducible wallet-sim harness must now be delivered as part of this change and must cover BOTH shadow tracks. Grounded in the 5 user decisions relayed 2026-07-13: (1) same hypothesis, NSE tickers, no NSE-specific model requirement; (2) new dedicated `call_log_shadow_nse` table; (3) isolated from production AND the US/CA shadow track; (4) independent kill switch, same fail-open-on-empty posture; (5) evaluation method pulled into scope, covering both tracks. Model/quota-bucket choice for the NSE shadow call flagged to tech-lead as a design decision. Core FR1–FR23/NFR1–NFR4 untouched; still explicitly outside core v1 scope. | User change request per CLAUDE.md Change Requests process; all ambiguities resolved by the user before writing (no-inference rule satisfied). |
+| 2026-07-13 | **Paid-tier correction (NFR1, §11 config table + discrepancy note, §10.3 tech-lead note, idea-brief Constraints).** User (Arjun) confirmed Gemini is no longer on the free tier — it now runs on Google's **paid tier**, and this is **system-wide**: production watchlist, NSE production watchlist, daily discovery, and BOTH shadow tracks all run under the paid tier, not only the new NSE shadow track. Budget: NFR1's **$0–15/month cap is unchanged numerically** — only the free-tier rationale/framing was corrected (cost held by low per-run call volume, not a free-tier daily request cap). Model reality: the system currently runs **`gemini-2.5-flash` across the board** due to stability issues with `gemini-3.5-flash` and `gemini-3.1-flash-lite`, which remain the literal defaults in `scripts/config.py:26-27`; added a §11 discrepancy note (doc-vs-actual-operation) following the 2026-07-12 REV-001/BUG-001 precedent — corrected in docs, code change (if any) is dev's job once tech-lead scopes it. This **resolves the previously-open NSE-shadow model/quota-bucket question**: no free-tier quota pressure remains and the model is standardized on the paid-tier `gemini-2.5-flash` family across all tracks, so it is now a design detail for tech-lead to record, not a user trade-off. Free-tier framing retained for the other, unaffected APIs (Yahoo data, ntfy push). No FR/NFR IDs added or renumbered. | User clarification (paid tier) relayed 2026-07-13; all scope/budget/model ambiguities resolved by the user before writing (no-inference rule satisfied). |
 | 2026-07-12 | **Corrected kill-switch behavior wording (FR30, NFR5, §11 config table).** Fixed the factually-wrong claim that a *mistyped* `SHADOW_ENABLED` Variable silently keeps the pilot running. The actual code (`scripts/config.py:65`, `(... or "true") == "true"`) fails open ONLY on a truly unset/empty Variable; any explicitly-set-but-wrong value — including a typo like `flase`, `no`, or `0` — compares unequal to `true` and fails **closed**, disabling the pilot. Accepted-risk framing retained; only the factual description was corrected (fail-open scope narrowed to unset/empty). No change to the requirement itself or the risk-acceptance decision. | Resolving REV-001 (major) / BUG-001 doc-vs-code contradiction via user's chosen Option B (correct the docs, not the code). |
 
 > **Open item flagged for the user:** FR31's evaluation-method requirement is now **in scope** (pulled in
