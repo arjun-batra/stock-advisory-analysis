@@ -402,3 +402,269 @@ tests pass" claim rests on thorough static inspection (full test-file reads, han
 qa's claim, no skip/xfail markers, no vacuous mocking) rather than an independent live pytest run — the
 orchestrator or qa should run `python3 -m pytest tests/ -q` once more as a final machine-verified
 confirmation before closure, as a formality, not because this review found any reason to doubt the result.
+
+---
+
+## Pass 3 — 2026-07-14 (INC-1: NSE Shadow Wallet Pilot, FR32–FR39/NFR6 — pre-merge audit)
+
+Scope: full 5-pass audit of INC-1 (dev commit `e738d6f`, qa commit `5c19219`, "qa: test INC-1 NSE shadow
+wallet pilot — PASS"). Read `docs/requirements.md` §10.3, `docs/design.md` §16 + §0 load-bearing #6/#11 +
+§9, `docs/handoff.md`, `docs/test-report.md` §9, this log's history, then independently re-verified the
+actual code myself rather than trusting the handoff/test-report summaries: `scripts/run_shadow_nse.py`
+(full read), `scripts/run_shadow.py` (full read, diffed against the NSE version), `scripts/config.py`
+(full read), `scripts/shadow.py` (full read), `sql/shadow_nse_call_log_migration.sql` and
+`sql/shadow_call_log_migration.sql` (diffed), `.github/workflows/hourly-watchlist.yml` (full read),
+`tests/test_run_shadow_nse.py` (full read), relevant slices of `tests/test_config.py`. Grepped the new/
+changed files for committed-secret patterns.
+
+### Pass 1 — Traceability, requirements → code
+
+Every FR32–FR39/NFR6 clause independently verified against the actual code, not just qa's claims:
+
+- **FR32 (scope):** `run_shadow_nse.NSE_MARKETS == {"NSE"}` confirmed at `scripts/run_shadow_nse.py:57`;
+  no `US`/`TSX` reference; source never writes `call_log_shadow` (grepped myself). Matches.
+- **FR33 (wallet-walk):** `_derive_shadow_positions` (`run_shadow_nse.py:84-119`) reads only
+  `sb.table("call_log_shadow_nse")` — confirmed by reading the function body directly (only one `.table(`
+  call in the whole function, targeting `call_log_shadow_nse`). Buy/Sell/Hold state machine byte-identical
+  in shape to `run_shadow.py`'s (`_derive_shadow_positions`, lines 66-99), just pointed at the NSE table.
+  Entry price/date recorded per row. Matches.
+- **FR34 (same-data reuse):** `_latest_production_snapshots` (`run_shadow_nse.py:71-81`) reads
+  `call_log`, `label="watchlist"`, filtered `in_(tickers)`, newest-first dedup — read-only, never an
+  insert target (confirmed: only `sb.table("call_log_shadow_nse").insert(...)` appears as a write in the
+  whole file, at line 223). `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` default `20` in `config.py:95`, `< 30`
+  asserted directly in `tests/test_config.py:211`. Matches.
+- **FR35 (isolated storage, HARD):** `sql/shadow_nse_call_log_migration.sql` read in full and diffed
+  against `sql/shadow_call_log_migration.sql`: RLS enabled (`alter table ... enable row level security`,
+  line 54), no `create policy`, no `grant` statement to `anon`/`authenticated` anywhere in the file —
+  confirmed by my own read, not just qa's comment-stripped grep. Identical column set plus the two
+  shadow-only columns; same 2-index shape. `run_shadow_nse.py` writes only `call_log_shadow_nse`. Matches.
+- **FR36 (never alerts, HARD):** grepped `run_shadow_nse.py` and `shadow.py` myself — no `import notify`,
+  no `notify.` reference in either. Every written row hardcodes `alert_type: None, alerted: False`
+  (`run_shadow_nse.py:196-197, 213`). Workflow NSE step's `env:` block (lines 153-174) passes no
+  `NTFY_TOPIC`/`NSE_NTFY_TOPIC`/`DETAIL_PAGE_BASE`. Matches.
+- **FR37 (mutual isolation, HARD — the hardest requirement, independently verified at every sub-clause):**
+  - Separate table: confirmed (FR35 above) — no shared write surface with `call_log` or `call_log_shadow`.
+  - Separate process/entry point, always exits 0: `run_shadow_nse.main()` (lines 228-244) wraps
+    `_run_cycle()` in `try: ... except (Exception, SystemExit) as e: print(...)` — **confirmed present**,
+    read directly, not taken on faith.
+  - Separate workflow step, `continue-on-error: true` + `timeout-minutes`: confirmed on **both** shadow
+    steps in `hourly-watchlist.yml` — US/CA step (lines 111-119: `continue-on-error: true`,
+    `timeout-minutes: 15`) and NSE step (lines 149-152: same). Step order in the YAML is production (line
+    42) → US/CA shadow (line 111) → NSE shadow (line 149) — genuinely ordered, confirmed by reading the
+    file top to bottom myself, not just trusting `tests/test_run_shadow_nse.py`'s parsed-YAML assertion.
+  - Separate, independent kill switches: `SHADOW_NSE_ENABLED` (`config.py:85`) and `SHADOW_ENABLED`
+    (`config.py:65`) are two independent module-level bindings, each read from its own env var, identical
+    fail-open-on-empty-only shape. Workflow gates each step on its own `vars.*` expression
+    (`if: vars.SHADOW_ENABLED != 'false'` / `if: vars.SHADOW_NSE_ENABLED != 'false'`). Matches.
+  - No real holdings/cost-basis leakage: `run_shadow_nse.py` never calls `state.get_holdings_map` /
+    `state.build_position` — confirmed by grep; positions come only from `_derive_shadow_positions`
+    reading `call_log_shadow_nse`. Matches.
+- **FR38 (independent kill switch):** `SHADOW_NSE_ENABLED = (os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"` (`config.py:85`) — identical shape to the already-corrected
+  `SHADOW_ENABLED` (line 65), fails open only on unset/empty, fails closed on `"false"` or any typo.
+  Checked at both the workflow `if:` gate and again in `_run_cycle()` (`run_shadow_nse.py:127-129`).
+  Matches, and matches design.md §16.6 exactly.
+- **FR39 (NSE market-hours gating):** `_run_cycle()` checks `config.SHADOW_NSE_ENABLED` before
+  `config.is_nse_open(now_ist) or config.FORCE_RUN` (lines 127-136) — kill switch precedes market gate,
+  same order as production. `is_nse_open` reuses the same function production's NSE group uses
+  (`config.py:249-254`), not a reimplementation. Matches.
+
+**No traceability gaps.** All eight FRs and NFR6 have design coverage (§16), implementation (verified by
+direct code read above), and automated tests (`tests/test_run_shadow_nse.py`, 29 tests; `tests/test_config.py`
++12; `tests/test_import_smoke.py` +1) that assert real control-flow outcomes, not vacuous mocks — spot-
+checked `test_nse_wallet_walk_reads_only_call_log_shadow_nse_never_call_log_or_call_log_shadow` and
+`test_run_shadow_nse_main_swallows_systemexit_and_returns`, both genuinely exercise the guarantees they
+name.
+
+### Pass 2 — Traceability, code → requirements (scope creep)
+
+Re-read every changed/new file end to end. No undocumented behavior found:
+- The `GEMINI_MODEL`/`GEMINI_MODEL_BACKUP` default correction (`gemini-3.5-flash`→`gemini-2.5-flash`,
+  `gemini-3.1-flash-lite`→`gemini-2.5-flash-lite`, `config.py:26-27`) is explicitly authorized by
+  `docs/requirements.md` §11's discrepancy note and `docs/design.md` §9's "Model-default correction (INC-1,
+  Change 2)" line — not scope creep, a documented, pre-approved fix bundled into this increment.
+  Workflow YAML's matching `|| 'gemini-3.5-flash'` → `|| 'gemini-2.5-flash'` fallback corrections (lines
+  60, 124, 159 in `hourly-watchlist.yml`) are the same authorized change, confirmed at all three sites.
+- `shadow.judge_batch_shadow`'s new `models` parameter is exactly what design.md §16.2 specifies, with a
+  default (`None`) that provably preserves the existing US/CA call site's behavior
+  (`tests/test_run_shadow_nse.py::test_judge_batch_shadow_default_models_none_preserves_us_ca_behavior`).
+- No new undocumented network calls, no new file writes, no new external dependencies added to
+  `requirements.txt`. **No `[SCOPE-CREEP]` findings.**
+
+### Pass 3 — Hardcoding audit
+
+Checked every new/changed literal against `docs/requirements.md` §11 and `docs/design.md` §9/§16.6.
+
+**REV-015 — [HARDCODED] minor — `.github/workflows/hourly-watchlist.yml:119,152`**
+`timeout-minutes: 15` is a literal on both shadow steps (the US/CA step's addition and the new NSE step),
+with no `config.py` tunable and no entry in `docs/requirements.md` §11 or `docs/design.md` §9/§16.6's
+tunable tables. Dev's handoff explicitly flags this as a deliberate judgment call, reasoning it is a
+"GitHub Actions structural setting (like `runs-on`/`python-version`)" rather than a business tunable — but
+unlike `runs-on`/`python-version` (which are genuinely fixed toolchain facts), 15 minutes is a judgment
+call about batch-size/API-latency headroom that could plausibly need raising if NSE watchlist size grows
+(dev's own handoff "Known limitations" section flags exactly this: "revisit if real NSE shadow batches run
+close to that bound"). This is a different profile from the SQL close-boundary numbers (16:05 ET / 15:35
+IST) which Pass 1/2 correctly excluded — those are documented, physically-justified fixed constants tied
+to jitter/latency absorption with an explicit "don't tighten" instruction in design.md §0 item 9. `15` here
+has no such documented justification, just an inline comment. GitHub Actions does support driving
+`timeout-minutes` from an expression (e.g. `${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || 15) }}`), so this
+is a genuine option, not a hard platform limitation. **Owner: tech-lead** — judgment call on whether to (a)
+promote to a `config.py`-adjacent workflow Variable tunable, or (b) explicitly document it in design.md's
+§9/§16.6 tunable table as an accepted-fixed structural constant (mirroring how the SQL boundary numbers are
+documented), the same disposition pattern already established for REV-011. Not a blocker: the value is
+safe, sane (matches API timeout headroom), and both mitigating belts (`continue-on-error`, non-overlapping
+sessions) still function regardless of its tunability.
+
+No other new hardcoded literals found. `NSE_MARKETS = {"NSE"}` is the requirement's own scope definition
+(FR32), not a tunable. All three new config values (`SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`,
+`SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`) are correctly environment-driven through `config.py` and correctly
+documented in both `docs/requirements.md` §11 and `docs/design.md` §16.6 — **confirmed by direct read of
+both tables, not assumed**: requirements.md §11's "Experimental — NSE shadow wallet pilot (§10.3)" table
+(lines 431-436) and design.md §16.6's table (lines 862-867) both list all three keys with matching
+defaults/semantics. No sync gap here — the task's "verify it's not a gap" concern is resolved: it is not a
+gap, both docs are current.
+
+### Pass 4 — Security audit
+
+- **FR35 RLS/isolation (HARD) — verified directly, not assumed:** read `sql/shadow_nse_call_log_migration.sql`
+  in full; `enable row level security` present, no `create policy`, no `grant` to `anon`/`authenticated`
+  anywhere in the file (not just comment-stripped grep — full manual read). Structurally identical to the
+  already-shipped, already-reviewed `call_log_shadow` migration.
+- **FR37 fault isolation — verified directly:** `except (Exception, SystemExit)` confirmed present at
+  `run_shadow_nse.py:238`; `continue-on-error: true` + `timeout-minutes: 15` confirmed present on **both**
+  shadow steps in the workflow YAML (lines 113/119 and 151/152); NSE step confirmed ordered strictly after
+  both prior steps (line 149, after lines 42 and 111).
+- **No new attack surface:** the new workflow step's `env:` block only ever assembles values from
+  `secrets.*`/`vars.*` GitHub Actions expressions — no string concatenation, no shell interpolation of
+  untrusted input, no new file-path or SQL construction from any external input. `run_shadow_nse.py` never
+  accepts user input; all its "input" is production's own already-validated `call_log` snapshot data and
+  its own prior `call_log_shadow_nse` rows.
+- **No committed secrets:** grepped all new/changed files (`scripts/`, `sql/`, `.github/workflows/`,
+  `tests/`) for API-key/token/PAT-shaped patterns (`AIzaSy`, `ghp_`, `github_pat_`, `sb_secret_`). One hit
+  in `scripts/config.py:15` — a **comment** documenting the `sb_secret_...` key-naming convention
+  ("New-style secret key (sb_secret_...), replaces the legacy service_role JWT"), not an actual credential
+  value. Not a finding.
+- **Real holdings/cost-basis leakage:** confirmed `run_shadow_nse.py` never calls
+  `state.get_holdings_map`/`state.build_position` (grepped myself). Matches FR37's explicit prohibition.
+
+**No new `[SECURITY]` findings this pass.**
+
+**REV-016 — [OPERATIONAL] minor, not a code defect — `sql/shadow_nse_call_log_migration.sql` not yet
+applied to the live Supabase project**
+Confirmed accurately disclosed in `docs/handoff.md` ("Known limitations" and "Migration not yet applied to
+the live Supabase project" sections) — dev did not have Supabase MCP/DB tool access this session and said
+so plainly, rather than silently assuming it applied. Independently verified the failure mode is safe: if
+the table doesn't exist, `sb.table("call_log_shadow_nse").insert(...)` (`run_shadow_nse.py:223`) raises,
+which is caught by the `except (Exception, SystemExit)` belt in `main()` (line 238) and logged as an ERROR
+line, exit 0 — i.e. FR37's isolation guarantee holds even in this exact failure mode (verified by reading
+the code path, not just trusting the claim). This means the NSE track is safe to merge and deploy even
+before the migration is applied — it will simply no-op-with-error-log every cycle until applied, never
+affecting production or the US/CA shadow track. **Not a blocker for merge.** **Owner: release/dev** — the
+migration must be applied via `apply_migration` (Supabase MCP) or the SQL editor before the NSE pilot can
+actually start writing rows; flagging as an explicit pre-go-live action item so it isn't silently forgotten
+once this increment merges.
+
+### Pass 5 — Leanness audit
+
+- **`run_shadow_nse.py`'s duplication of `run_shadow.py`'s cycle body** — read both files in full and
+  diffed them line-by-line. Confirmed genuinely near-byte-identical in shape (`_usable_market_data`,
+  `_latest_production_snapshots`, `_derive_shadow_positions`, `_run_cycle`, `main`), differing only in the
+  table name, market set, kill switch, market-gate function, model source, and log-line prefixes.
+  Design.md §16.3 explicitly leaves "dev's choice of mechanism" between a shared `run_shadow_cycle(track)`
+  helper and duplication, while making the **wallet-walk state machine's eventual consolidation into
+  `wallet_sim.walk`** an explicit §17.2/INC-2 requirement, not an INC-1 one. Dev's handoff correctly cites
+  this distinction. **This is genuinely within the design-granted latitude, not a silent departure from a
+  load-bearing requirement** — load-bearing #11 requires *separate runtime state and execution* (tables,
+  kill switches, processes), which duplication satisfies trivially; it does not require *shared code*.
+  Verdict: accepted, matches design.md §16.3's own framing exactly. Confirmed this is genuinely the
+  "acceptable now, INC-2 consolidates" situation, not scope creep or an undocumented departure.
+- No dead code, no unused imports, no commented-out code in any of the new/changed files. Inline comments
+  remain substantive rationale documentation (e.g., the SystemExit-catch comment explaining exactly why the
+  wider catch is needed), consistent with this codebase's established style — not narration filler.
+- **REV-018 — [CODE-GAP] minor — `scripts/run_shadow.py:214` (pre-existing, not introduced by INC-1)**
+  Independently confirmed real by reading `run_shadow.py::main()` myself: `except Exception as e:` (line
+  214) does not catch `SystemExit` (a `BaseException` subclass, not an `Exception` subclass).
+  `config.require_secrets()` (`config.py:257-265`) raises `SystemExit` on a missing secret. If `_run_cycle()`
+  reaches that call with a secret missing, `main()` propagates `SystemExit` instead of swallowing it,
+  breaking the "main() always exits 0" guarantee FR29/NFR5 describe for the US/CA track. **Independent
+  severity assessment (not just accepting qa's):** this does **not** currently violate FR29/NFR5's actual
+  outcome — `continue-on-error: true` on the US/CA workflow step (confirmed present, line 113) makes the
+  step's exit code irrelevant to the overall run's success, so production is not actually put at risk by
+  this bug today. It is a **defense-in-depth / internal-consistency gap**, not a live isolation breach: the
+  module's own documented single-process guarantee is broken, but the second belt (the workflow-level
+  `continue-on-error`) independently covers the same failure mode. Correctly out of INC-1's file scope
+  (`run_shadow.py` was not in the file list dev/qa were asked to touch this increment) — dev fixed the
+  identical bug in the new `run_shadow_nse.py` but correctly did not backport it into a file outside this
+  increment's scope. **Not a blocker for INC-1.** **Owner: dev**, one-line follow-up fix
+  (`except (Exception, SystemExit)`) recommended for the next increment or a small maintenance ticket, for
+  consistency between the two shadow tracks and to close the defense-in-depth gap properly.
+
+### Stale doc marker (flagged, not fixed — reviewer is read-only)
+
+**REV-017 — [BLOAT] (doc staleness) minor — `docs/design.md:3-7`**
+The document header still reads: **"§14 (increment plan), §16 (NSE shadow pilot) and §17 (FR31 evaluation
+harness) are FORWARD design — DRAFT pending user GATE 3 approval... No dev work on INC-1/INC-2 starts
+before that approval."** The user has since approved Gate 3 in conversation — INC-1 has been implemented
+by dev, tested and passed by qa (`docs/test-report.md` §9, commit `5c19219`), and is now at this reviewer
+pre-merge checkpoint. The header's "DRAFT pending approval" / "no dev work starts" framing is factually
+stale: dev work has already started and completed. Per `CLAUDE.md`'s non-negotiable ("Docs stay in sync
+with reality — a stale doc is a bug"), this is a genuine finding, not pedantry — a future reader of
+design.md would be told INC-1 hasn't been authorized when it has already shipped through qa. **Not a
+blocker for INC-1's merge** (the staleness is cosmetic/status-tracking, not a content/requirement
+discrepancy — §16's actual prescriptive content is accurate and was correctly followed). **Owner:
+tech-lead** (design.md is tech-lead-owned) — update the header to reflect GATE 3 approval and INC-1's
+completed status once this increment merges.
+
+### Pass 3 summary
+
+**New findings by tag:**
+- `[HARDCODED]`: 1 (REV-015, minor)
+- `[OPERATIONAL]`: 1 (REV-016, minor, not a code defect — pre-go-live action item)
+- `[BLOAT]` (doc staleness): 1 (REV-017, minor)
+- `[CODE-GAP]`: 1 (REV-018, minor — pre-existing bug outside INC-1 scope, independently confirmed and
+  re-assessed, not escalated beyond qa's own minor/non-blocking assessment)
+- `[SCOPE-CREEP]`: 0
+- `[SECURITY]`: 0
+- `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` / `[TEST-GAP]`: 0 (full FR32–FR39/NFR6 traceability confirmed,
+  design.md §16 conformance confirmed, test coverage confirmed genuine and non-vacuous)
+
+**Resolved this pass:** none carried over from Pass 2 needed re-checking beyond REV-002 (still open,
+unchanged — FR31 evaluation harness remains correctly scoped to INC-2, not this increment's job) and
+REV-006 (still `ACCEPTED-DEBT`, unchanged).
+
+**Open blocker count: 0.**
+**Open major count: 0.**
+**Open minor count: 5** (REV-002 carried forward [FR31/INC-2 scope, not a defect], REV-015, REV-016,
+REV-017, REV-018 — all new this pass).
+**ACCEPTED-DEBT count: 1** (REV-006, unchanged).
+
+### Verdict — INC-1 (FR32–FR39, NFR6)
+
+**CLEAR TO MERGE. 0 blockers, 0 majors.** Every FR32–FR39/NFR6 clause was independently verified against
+the actual code (not taken on qa's or dev's word) and matches both `docs/requirements.md` §10.3 and
+`docs/design.md` §16 exactly, including the hardest requirement (FR37 mutual isolation) at every
+sub-clause: separate table, separate kill switch, separate process with `except (Exception, SystemExit)`
+confirmed present, separate `continue-on-error`+`timeout-minutes` workflow step confirmed on both shadow
+steps, confirmed step ordering (production → US/CA shadow → NSE shadow), no real-holdings leakage. The
+dev-claimed §16.3 duplication-vs-shared-helper deviation is genuinely within the design-granted "dev's
+choice of mechanism" latitude, not a silent departure — verified by reading design.md §16.3/§17.2's actual
+text, not just dev's characterization of it. `docs/requirements.md` §11 and `docs/design.md` §9/§16.6's
+tunable tables are confirmed already in sync with the three new `SHADOW_NSE_*` keys — no doc-sync gap
+found there.
+
+**Five open minor items, none blocking:**
+1. **REV-015** `[HARDCODED]` — `timeout-minutes: 15` literal on both shadow workflow steps, no config.py
+   tunable or documented-fixed-constant status. Route to **tech-lead** for a disposition call.
+2. **REV-016** `[OPERATIONAL]` — NSE migration not yet applied to live Supabase (accurately disclosed by
+   dev, safe no-op failure mode confirmed). Route to **release/dev** as a pre-go-live action item.
+3. **REV-017** `[BLOAT]`/doc staleness — design.md's header still says GATE 3 is pending when it has been
+   approved and INC-1 has shipped through qa. Route to **tech-lead**.
+4. **REV-018** `[CODE-GAP]` — pre-existing `SystemExit`-swallowing gap in the shipped `run_shadow.py`
+   (confirmed real, independently re-assessed as defense-in-depth only, not a live isolation breach given
+   `continue-on-error` at the workflow level). Correctly out of INC-1's file scope. Route to **dev** as a
+   small follow-up/maintenance fix.
+5. **REV-002** (carried forward, unchanged) — FR31 shared evaluation harness remains open, correctly
+   scoped to INC-2, not this increment.
+
+**Nothing here requires dev/qa rework before merge.** The orchestrator may proceed to merge `inc-1-nse-
+shadow-wallet-pilot` to main and start INC-2, with REV-015/REV-016/REV-017/REV-018 routed to their owning
+agents in parallel (none of them gate the merge or the start of INC-2).
