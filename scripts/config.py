@@ -94,6 +94,12 @@ SHADOW_NSE_PROMPT_VARIANT = os.environ.get("SHADOW_NSE_PROMPT_VARIANT", "positio
 # SHADOW_SNAPSHOT_LOOKBACK_MIN above, scoped to the NSE track.
 SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN", "20"))
 
+# --- Shared wallet-sim evaluation harness (design §17, INC-2, FR31) ----------
+# Default lookback window (days) eval_shadow.py reports over when --since/
+# --until aren't passed explicitly on the CLI. Covers both shadow tracks; not
+# a per-track value since the harness takes `track` as a separate CLI input.
+EVAL_WINDOW_DAYS = int(os.environ.get("EVAL_WINDOW_DAYS", "14"))
+
 # --- Tunables (solution design 6.3) ------------------------------------------
 # REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule
 # model has no reminder and no cooldown, so neither constant has a consumer.

@@ -1,140 +1,136 @@
-# Handoff — INC-1: NSE Shadow Wallet Pilot
+# Handoff — INC-2: Shared Wallet-Sim Evaluation Harness (FR31)
 
-Source: `docs/design.md` §16 (NSE Shadow Wallet Pilot, FR32–FR39/NFR6) + §0 load-bearing #6/#11;
-`docs/requirements.md` §10.3 (FR32–FR39/NFR6). User condition honored: read `shadow.py`, `run_shadow.py`,
-`config.py`, `state.py`, `sql/shadow_call_log_migration.sql`, `hourly-watchlist.yml`, design.md §16,
-requirements.md §10.3 in full before writing anything.
+Source: `docs/design.md` §17 (Shared wallet-sim evaluation harness, FR31) + §14 increment plan (INC-2
+row) + §0 load-bearing #11 (mutual isolation, read-only harness). `docs/requirements.md` §10.2 (FR31).
+Read first per the task brief: `docs/handoff.md` (INC-1), `scripts/run_shadow.py`,
+`scripts/run_shadow_nse.py`, `scripts/state.py`, `docs/review-log.md` (REV-015, REV-018 — both
+out of INC-2 scope, noted not touched).
 
 ## Files created
-- `sql/shadow_nse_call_log_migration.sql` — structural mirror of `shadow_call_log_migration.sql`,
-  retargeted to `call_log_shadow_nse`. Same columns/types/checks/defaults/indexes, RLS enabled, no
-  policy, no anon/authenticated grant.
-- `scripts/run_shadow_nse.py` — new NSE shadow orchestrator, mirrors `run_shadow.py`'s cycle shape with
-  NSE parameters (own table, own kill switch, NSE market gate, NSE model bucket).
+- `scripts/wallet_sim.py` — pure, zero-I/O module. `walk(rows, *, mark_price=None)` is the **single
+  shared** Buy->holding / Sell->flat / Hold->no-op state machine, replacing the two byte-for-byte-identical
+  inline `_derive_shadow_positions` copies. Input: one ticker's history ordered oldest->newest, each row
+  `{"verdict", "timestamp", "price"}`. Output: `{"position", "round_trips", "open"}` — `position` is exactly
+  what the live orchestrators need (state/entry_price/entry_date); `round_trips` and `open` (marked to
+  `mark_price` when supplied) are the evaluation-only additions design §17.2 asked for. No Supabase/network
+  calls anywhere in the file.
+- `scripts/eval_shadow.py` — thin, read-only CLI entry point (design §17.1/§17.3). `--track {us_ca,nse}`
+  selects `call_log_shadow` / `call_log_shadow_nse`; `--since`/`--until` (ISO date or datetime) override the
+  default `EVAL_WINDOW_DAYS`-day window; `--output PATH` optionally also writes the report as JSON
+  (`sort_keys=True`, so the file itself is byte-identical across reproducible runs). Split into pure
+  compute functions (`build_report`, `render_report`, `default_window`, `parse_window_bound`,
+  `_verdict_counts`) and I/O functions (`fetch_shadow_rows`, `fetch_production_rows`, `main`) so qa can
+  unit-test the report logic without a DB double at all, and integration-test the I/O seam with a fake
+  Supabase double (same pattern as `tests/test_run_shadow_nse.py`'s `FakeShadowNseSupabase`/
+  `FakeCallLogSupabase`). Per ticker and in the totals: verdict counts, closed round-trip count, wins,
+  win rate, summed realized return %, and (if still open) the position marked to its latest snapshot price
+  with unrealized return %. Production baseline pulled from `call_log` for the same tickers/window:
+  verdict counts + `alerted` count (the verdict-change record).
 
 ## Files changed
-- `scripts/config.py` — added `SHADOW_NSE_ENABLED` (fail-open-on-empty, same shape as `SHADOW_ENABLED`),
-  `SHADOW_NSE_PROMPT_VARIANT` (default `position_aware_v1`), `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (default
-  `20`). Corrected `GEMINI_MODEL` default `gemini-3.5-flash` → `gemini-2.5-flash` and
-  `GEMINI_MODEL_BACKUP` default `gemini-3.1-flash-lite` → `gemini-2.5-flash-lite` (design.md Change 2 —
-  the 3.x models showed stability issues; every other track already defaults to the 2.5-flash family).
-  `NSE_GEMINI_MODEL`/`_BACKUP` and `DISCOVERY_GEMINI_MODEL`/`_BACKUP` untouched (already correct/inherit
-  correctly).
-- `scripts/shadow.py` — `judge_batch_shadow(items, models=None)` now takes an optional `models` list,
-  threaded through `ai_judge._models_to_try(models)` (same pattern `ai_judge.judge_batch` already uses).
-  Default `None` preserves today's US/CA behavior exactly (`run_shadow.py` calls it unchanged). Verified
-  by reading the code (not trusting the doc) that `SHADOW_SYSTEM_PROMPT` / `_shadow_ticker_block` are
-  already market-agnostic — the ticker block renders `data['market']` and `fundamentals.currency`
-  generically, no US/CA-specific logic — so no second prompt was needed for NSE.
-- `.github/workflows/hourly-watchlist.yml` — added `timeout-minutes: 15` to the existing US/CA shadow
-  step (per design.md's INC-1 hardening note) and to the new NSE step; added the new "Run NSE shadow
-  verdict track (NSE pilot)" step, gated `if: vars.SHADOW_NSE_ENABLED != 'false'`, `continue-on-error:
-  true`, running strictly after both the production step and the US/CA shadow step, passing
-  `NSE_GEMINI_MODEL`/`_BACKUP` (same vars/fallback chain NSE production already uses),
-  `SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`, `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`, and **no**
-  `NTFY_*` vars at all. Also corrected the `|| 'gemini-3.5-flash'` literal fallbacks (production step,
-  US/CA shadow step, new NSE step) to `|| 'gemini-2.5-flash'` to match the config.py correction above.
+- `scripts/run_shadow.py` / `scripts/run_shadow_nse.py` — `_derive_shadow_positions` in both files now
+  builds the ordered `{"verdict", "timestamp", "price"}` row list from the same Supabase query as before
+  and calls `wallet_sim.walk(walk_rows)["position"]` instead of running its own inline loop. The Supabase
+  query itself, the table/column selection, and the returned `{ticker: {"state", "entry_price",
+  "entry_date"}}` shape are all **unchanged** — only the state-machine body moved into `wallet_sim.walk`.
+- `scripts/config.py` — added `EVAL_WINDOW_DAYS` (default `14`, env-overridable), read by
+  `eval_shadow.default_window`.
 
-## How to run it
+## How the refactor preserves behavior (verified, not assumed)
+1. **Line-by-line equivalence.** `wallet_sim.walk`'s loop is the same three-branch logic
+   (`Buy and flat -> holding`, `Sell and holding -> flat`, else no-op) as the two inline versions it
+   replaces, just reading `price`/`timestamp` from a flattened row instead of `data_snapshot.get("price")`/
+   `r.get("timestamp")` inline — the flattening happens in the caller (`_derive_shadow_positions`) before
+   the call, so the *inputs* `wallet_sim.walk` sees are identical to what the old inline loop read.
+2. **Existing test suite passes unchanged.** `tests/test_run_shadow_nse.py`'s wallet-walk tests
+   (`test_nse_wallet_walk_buy_flips_flat_to_holding`, `..._sell_flips_holding_to_flat`, `..._hold_is_a_no_op`,
+   `..._empty_history_is_flat`, `..._covers_only_requested_tickers_independently`,
+   `..._reads_only_call_log_shadow_nse_never_call_log_or_call_log_shadow`) all call
+   `run_shadow_nse._derive_shadow_positions(sb, tickers)` — the public function signature and return shape
+   are untouched, so these tests exercise the new `wallet_sim.walk`-backed implementation without any
+   change and all pass. Full suite: **209 passed, 0 failed** (`python3 -m pytest tests/ -q`), no regressions
+   vs. before the refactor.
+3. **Manual equivalence check.** Ran both the old inline logic (from git history) and the new
+   `wallet_sim.walk`-backed `_derive_shadow_positions` against the same synthetic Buy/Sell/Hold histories
+   (including Buy-while-holding and Sell-while-flat no-ops) and confirmed identical `{state, entry_price,
+   entry_date}` output.
+
+## How to run `eval_shadow.py`
 ```
-FORCE_RUN=true GEMINI_API_KEY=... SUPABASE_URL=... SUPABASE_SECRET_KEY=... \
-  python3 scripts/run_shadow_nse.py
+GEMINI_API_KEY=... SUPABASE_URL=... SUPABASE_SECRET_KEY=... \
+  python3 scripts/eval_shadow.py --track us_ca
+python3 scripts/eval_shadow.py --track nse --since 2026-07-01 --until 2026-07-14
+python3 scripts/eval_shadow.py --track us_ca --output report.json
 ```
-Normal operation is via the new workflow step (`.github/workflows/hourly-watchlist.yml`), which fires
-automatically after the US/CA shadow step on every hourly dispatch, gated by NSE market hours (or
-`FORCE_RUN` from a manual `workflow_dispatch`). `SHADOW_NSE_ENABLED=false` (repo Variable) disables the
-whole track with no code change.
+`--track` is required (`us_ca` or `nse`); `--since`/`--until` default to the last `EVAL_WINDOW_DAYS` (14)
+days ending now. Prints a deterministic report to stdout; `--output` additionally writes the same data as
+sorted-keys JSON. `GEMINI_API_KEY` is required only because `config.require_secrets()` is a shared
+fail-fast gate across all three secrets — this script never calls Gemini.
 
-**Migration not yet applied to the live Supabase project** — I don't have Supabase MCP/DB tool access in
-this session (only Read/Write/Edit/Grep/Glob/Bash). `sql/shadow_nse_call_log_migration.sql` is committed
-and versioned but still needs to be applied (e.g. via `apply_migration` or the SQL editor) before
-`run_shadow_nse.py` can write successfully in production — until then every cycle will fail at the
-`sb.table("call_log_shadow_nse").insert(...)` call, get caught by the top-level try/except, log an ERROR
-line, and exit 0 (harmless no-op, but no rows will land).
+## Read-only guarantee (verified)
+`grep -n "\.insert(\|\.update(\|\.upsert(\|\.delete(" scripts/eval_shadow.py scripts/wallet_sim.py` matches
+only the docstring's own prose (`No .insert(/.update(/.upsert(/.delete( calls...`), not a real call. All
+Supabase access in `eval_shadow.py` is `.select(...).eq(...).gte(...).lte(...).order(...).execute()` reads
+via `state.client()`. `wallet_sim.py` makes no Supabase/network calls at all.
 
-## Isolation checks (FR35, FR36, FR37 — verified explicitly)
-1. **Never alerts (FR36):** `grep notify scripts/run_shadow_nse.py scripts/shadow.py` — no import/call
-   of `notify` in either file (only a doc-comment mention). Every row written has `alert_type=None,
-   alerted=False`. The workflow step passes no `NTFY_TOPIC`/`NSE_NTFY_TOPIC`/`DETAIL_PAGE_BASE` — verified
-   by grepping the new step's `env:` block.
-2. **Isolated storage, no anon read path (FR35):** `sql/shadow_nse_call_log_migration.sql` enables RLS
-   with no policy and no `grant` statement to `anon`/`authenticated` — structurally identical to
-   `shadow_call_log_migration.sql`. `run_shadow_nse.py` only ever calls
-   `sb.table("call_log_shadow_nse")` — greped, confirmed no reference to `call_log` or `call_log_shadow`
-   as a write target (only as an upstream *read* source for the production snapshot, which is FR34's
-   intended reuse, not a write).
-3. **Cannot fail production or the US/CA shadow track (FR37):** separate process/entry point
-   (`run_shadow_nse.main()`), top-level `try/except (Exception, SystemExit)` always exits 0 (smoke-tested
-   below, including the missing-secrets and network-failure paths), separate workflow step with
-   `continue-on-error: true` and `timeout-minutes: 15`, runs strictly after both prior steps, separate
-   table, separate independent kill switch (`SHADOW_NSE_ENABLED`, verified fail-open-on-empty and
-   fail-closed-on-typo by smoke test).
-4. **Real holdings/cost-basis never leak into NSE shadow rows:** `run_shadow_nse.py` never calls
-   `state.get_holdings_map` or `state.build_position` — positions come only from
-   `_derive_shadow_positions`, which reads only `call_log_shadow_nse`. Grepped to confirm.
-5. **Separate kill switches, separate market gates:** `SHADOW_NSE_ENABLED` is independent of
-   `SHADOW_ENABLED`; `is_nse_open` (IST) is independent of `is_market_open` (ET) — flipping/misfiring one
-   cannot touch the other track.
+## What qa should focus on
+- **Reproducibility (FR31's acceptance bar):** two `build_report(...)` calls over the same shadow/production
+  row lists produce byte-identical dicts (verified manually — see smoke tests below — but qa should own the
+  committed test). `render_report`/JSON output must not depend on dict/set iteration order (verdict counts
+  use a fixed `("Buy","Sell","Hold")` tuple; tickers/per_ticker keys are sorted).
+- **`wallet_sim.walk` unit tests**: Buy/Sell/Hold no-op rules, empty input, Buy-while-holding and
+  Sell-while-flat no-ops, `None` prices (a Sell with no price yields `return_pct: None`, not a crash), the
+  `mark_price` open-position marking path, division-by-zero guard when `entry_price` is `0`, and the
+  round-trip list's `entry_price`/`entry_date`/`exit_price`/`exit_date`/`return_pct` shape.
+- **`eval_shadow.py`'s read-only guarantee** — worth a standing regression test grepping for
+  insert/update/upsert/delete, since this is the hard design requirement (§17.3).
+- **CLI argument parsing**: `--since`/`--until` accepting bare dates vs. full ISO datetimes;
+  `--track` rejecting values outside `{us_ca, nse}` (argparse `choices` already enforces this — confirm the
+  error path).
+- The refactored `_derive_shadow_positions` in both `run_shadow.py`/`run_shadow_nse.py` — confirm no
+  behavior change against the pre-refactor tests (already covered by the existing NSE suite; consider
+  adding an equivalent test file for `run_shadow.py` if none exists — `tests/test_run_shadow_nse.py`'s
+  `test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap` test currently imports `run_shadow` but
+  there's no dedicated `tests/test_run_shadow.py`).
 
-## Deviation from design.md §16 (and why — flagged, not silently resolved)
-- **§16.3 "avoid duplicating the cycle body... factor a shared `run_shadow_cycle(track)` / `ShadowTrack`
-  spec" vs. duplication:** design.md explicitly leaves this as "dev's choice of mechanism," and the task
-  brief additionally steered toward the simpler/duplicate option consistent with this codebase's existing
-  US/TSX-vs-NSE convention (`run_hourly.py._sessions`). I duplicated `run_shadow.py`'s cycle body into
-  `run_shadow_nse.py` rather than introducing a shared helper. This is **not** a contradiction of design's
-  hard requirement: design.md §17.2 ("the wallet-walk state machine MUST be the single shared function")
-  is explicitly INC-2 scope (`wallet_sim.walk`, not yet built) — §17.2 itself describes the refactor as
-  something both orchestrators do *when INC-2 lands*, implying separate inline walks exist until then.
-  No design/requirements contradiction; this is sequencing, not a gap.
-- **`timeout-minutes` value (15 min) is not specified anywhere as a config tunable.** Treated as a
-  GitHub Actions structural setting (like `runs-on`/`python-version` elsewhere in the same file), not a
-  business tunable — no config.py entry added for it. Flag to tech-lead only if this reasoning should
-  change.
-
-## Real bug found and fixed while verifying FR37 (not a design deviation, a correctness fix)
-`config.require_secrets()` raises `SystemExit`, which `except Exception` does **not** catch (`SystemExit`
-subclasses `BaseException`, not `Exception`). Smoke-tested: `FORCE_RUN=true` with no secrets set exited 1
-on the original `except Exception` pattern — silently breaking the literal "main() always exits 0"
-guarantee in that one edge case (though `continue-on-error: true` at the workflow level still would have
-prevented it from failing the run — a second belt catching what the first missed). I widened
-`run_shadow_nse.py`'s catch to `except (Exception, SystemExit)`. **The identical gap exists in the
-shipped `scripts/run_shadow.py`** (verified by the same smoke test against it) — out of INC-1's scope to
-touch, not fixed there, flagged here for tech-lead/qa awareness.
-
-## What qa should pay special attention to
-- The two `tests/test_config.py` failures (`test_default_model_is_gemini_3_5_flash`,
-  `test_default_backup_model`) are **expected** — they assert the old, incorrect model-default strings
-  that design.md's Change 2 explicitly requires correcting. All other 163 existing tests pass unchanged
-  (full suite: 165 total, 2 expected failures, 0 unexpected). qa owns updating these two assertions to the
-  new defaults.
-- Cross-track isolation: confirm a kill-switch flip or induced failure on one shadow track never appears
-  in the other track's table/log output.
-- The `_derive_shadow_positions` wallet-walk in `run_shadow_nse.py` is a byte-for-byte port of
-  `run_shadow.py`'s, just pointed at `call_log_shadow_nse` — worth a diff-based regression check against
-  `run_shadow.py`'s version if/when INC-2's `wallet_sim.walk` consolidates them.
-- The migration file is committed but **not yet applied** to Supabase (see above) — qa cannot verify live
-  writes until it's applied.
+## Deviations from design.md §17 (and why)
+- **Row/price shape for `wallet_sim.walk`.** Design describes the function's *intent*
+  ("`wallet_sim.walk(rows)` operating on ordered rows") but not a literal signature. I chose plain
+  `{"verdict", "timestamp", "price"}` dicts (price already extracted from `data_snapshot`) rather than
+  passing raw `call_log`/`call_log_shadow` rows with nested `data_snapshot`, so `wallet_sim.py` stays
+  schema-agnostic and doesn't need to know about `data_snapshot`'s shape at all — the callers (both
+  orchestrators and `eval_shadow.py`) do that one-line flattening themselves. This is a design *choice*
+  within the stated intent, not a deviation from a hard requirement.
+- **A versioned SQL view (§17.1, "MAY additionally be committed").** Not built — explicitly optional in
+  the design ("the Python harness is the source of truth"), and the Python harness alone satisfies FR31.
+  Flagging so it isn't mistaken for an oversight.
+- **No committed CSV/JSON output by default.** `--output` is opt-in per the task brief's "use your
+  judgement" on this being optional; default behavior is stdout-only, matching §17.3's baseline requirement.
 
 ## Smoke tests performed
-- Installed `requirements.txt` into a clean venv; all new/changed modules import cleanly
-  (`config`, `shadow`, `run_shadow_nse`, `run_shadow`, `run_hourly`, `ai_judge`, `state`, `ingest`,
-  `notify`).
-- `config.SHADOW_NSE_ENABLED`/`SHADOW_NSE_PROMPT_VARIANT`/`SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`/
-  `nse_models()`/corrected `GEMINI_MODEL`/`GEMINI_MODEL_BACKUP` all verified by direct import.
-  `SHADOW_NSE_ENABLED=false` → `False`; `SHADOW_NSE_ENABLED=flase` (typo) → `False` (fails closed, per
-  FR38).
-- `python3 scripts/run_shadow_nse.py` with no env at all (market closed at test time) → clean no-op, exit
-  0.
-- `FORCE_RUN=true` with no secrets → caught, logged, exit 0 (post-fix; was exit 1 pre-fix).
-- `FORCE_RUN=true` with fake secrets (real network call to an invalid Supabase host) → caught, logged,
-  exit 0.
-- `.github/workflows/hourly-watchlist.yml` parses as valid YAML (`yaml.safe_load`).
-- `python3 -m pytest tests/ -q` from repo root: **163 passed, 2 failed** (the two expected
-  model-default assertions above). No other regressions.
+- Installed `requirements.txt` + `pytest` + `pyyaml` in a clean venv; `wallet_sim`, `eval_shadow`,
+  `run_shadow`, `run_shadow_nse`, `config`, `state`, `shadow` all import cleanly.
+- `grep` confirmed no `.insert(`/`.update(`/`.upsert(`/`.delete(` calls in `eval_shadow.py` or
+  `wallet_sim.py` (only the docstring's own prose mentions the strings).
+- Built a fake Supabase double (same shape as `tests/test_run_shadow_nse.py`'s fakes) with synthetic
+  `call_log_shadow` + `call_log` rows spanning a Buy->Hold->Sell round trip (AAPL) and an open Buy (MSFT);
+  called `fetch_shadow_rows`/`fetch_production_rows`/`build_report`/`render_report` directly and confirmed
+  correct round-trip P&L, win rate, and open-position marking, and that two `build_report` calls on the
+  same input produce an identical dict (`report1 == report2`).
+- Ran `eval_shadow.main()` end-to-end with `state.client` monkeypatched to a fake Supabase double serving
+  NSE data via `--track nse --output ...` and confirmed a correct printed report plus a valid, deterministic
+  sorted-keys JSON file.
+- `python3 -m pytest tests/ -q` from repo root: **209 passed, 0 failed** — full regression suite,
+  confirming the `run_shadow.py`/`run_shadow_nse.py` wallet-walk refactor changed no observable behavior.
 
 ## Known limitations
-- SQL migration not applied to live Supabase (no DB tool access this session) — needs applying before
-  the track can write.
-- `wallet_sim.walk` consolidation (§17.2) deliberately deferred to INC-2, per design.md's own phasing.
-- `timeout-minutes: 15` is a judgment-call value, not derived from any requirement; revisit if real NSE
-  shadow batches run close to that bound.
+- No dedicated `tests/test_run_shadow.py` exists yet (only `tests/test_run_shadow_nse.py`, which also
+  imports and exercises a couple of `run_shadow` behaviors) — qa's call whether to add one, e.g. to unit-test
+  `run_shadow._derive_shadow_positions` directly the way the NSE suite does for its counterpart.
+- `eval_shadow.py`'s production-baseline query scopes `call_log` to exactly the tickers present in the
+  shadow-table rows for the window (not the full watchlist) — a ticker with shadow rows but zero production
+  rows in the window (e.g. a cycle gap) will show `checks=0` on the production side for that ticker; this is
+  intentional (comparing like-for-like), not a bug, but worth qa calling out explicitly if it's surprising.
+- REV-015 (hardcoded `timeout-minutes` on the shadow workflow steps) and REV-018 (the pre-existing
+  `run_shadow.py` `except Exception` / `SystemExit` gap) are unrelated to INC-2 and were not touched — both
+  remain open items routed to tech-lead per the prior handoff.

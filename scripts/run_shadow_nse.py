@@ -53,6 +53,7 @@ from datetime import datetime, timedelta, timezone
 import config
 import state
 import shadow
+import wallet_sim
 
 NSE_MARKETS = {"NSE"}
 
@@ -82,14 +83,12 @@ def _latest_production_snapshots(sb, tickers: list[str], since_iso: str) -> dict
 
 
 def _derive_shadow_positions(sb, tickers: list[str]) -> dict:
-    """Wallet-walk each ticker's OWN call_log_shadow_nse history to today's
-    position.
+    """Today's position per ticker, from call_log_shadow_nse's own history only.
 
-    Buy flips flat->holding only if flat; Sell flips holding->flat only if
-    holding; Hold (incl. every fail-safe Hold) is a no-op. Entry price/date come
-    from the Buy that opened the current position. Derived solely from
-    call_log_shadow_nse -- never from real call_log or call_log_shadow. Empty
-    history => flat.
+    Derived solely from call_log_shadow_nse -- never from real call_log or
+    call_log_shadow. Empty history => flat. The Buy/Sell/Hold state machine
+    itself lives in wallet_sim.walk (design.md §17.2) so this orchestrator and
+    eval_shadow.py's harness can never silently diverge.
     Returns {ticker: {"state": "holding"|"flat", "entry_price", "entry_date"}}.
     """
     rows = (sb.table("call_log_shadow_nse")
@@ -104,18 +103,12 @@ def _derive_shadow_positions(sb, tickers: list[str]) -> dict:
 
     positions: dict = {}
     for t in tickers:
-        state_flag, entry_price, entry_date = "flat", None, None
-        for r in hist[t]:
-            v = r.get("verdict")
-            if v == "Buy" and state_flag == "flat":
-                state_flag = "holding"
-                snap = r.get("data_snapshot") or {}
-                entry_price = snap.get("price")
-                entry_date = r.get("timestamp")
-            elif v == "Sell" and state_flag == "holding":
-                state_flag, entry_price, entry_date = "flat", None, None
-            # Hold: no-op
-        positions[t] = {"state": state_flag, "entry_price": entry_price, "entry_date": entry_date}
+        walk_rows = [
+            {"verdict": r.get("verdict"), "timestamp": r.get("timestamp"),
+             "price": (r.get("data_snapshot") or {}).get("price")}
+            for r in hist[t]
+        ]
+        positions[t] = wallet_sim.walk(walk_rows)["position"]
     return positions
 
 
