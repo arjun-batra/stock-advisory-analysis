@@ -274,3 +274,146 @@ stale test-plan reference corrected. REV-006 explicitly marked `ACCEPTED-DEBT` (
 automate; remains `qa/test-plan-full-codebase.md`'s domain by design) rather than silently left off a
 checklist. Full suite: **164 passed / 0 failed / 164 total.** No production code (`scripts/`) was changed
 to produce this pass — only `tests/`, this report, and `qa/test-plan-full-codebase.md`.
+
+---
+
+## 9. INC-1 — NSE Shadow Wallet Pilot (FR32–FR39, NFR6) — 2026-07-14
+
+**Owner:** qa. Tested dev's commit `e738d6f` ("dev: implement INC-1 NSE shadow wallet pilot (FR32–FR39,
+NFR6) — pending QA") against `docs/requirements.md` §10.3 and `docs/design.md` §16, not against what the
+code happened to do. `docs/handoff.md` read in full first.
+
+### 9.1 Files added/extended this pass
+- **NEW** `tests/test_run_shadow_nse.py` (29 tests) — FR32–FR39 coverage for `scripts/run_shadow_nse.py` /
+  `scripts/shadow.py`'s new `models` param / the SQL migration / the workflow YAML.
+- **EXTENDED** `tests/test_config.py` (+12 tests) — `SHADOW_NSE_ENABLED` fail-open/fail-closed matrix
+  (mirroring the existing `SHADOW_ENABLED` pattern), kill-switch mutual independence, `SHADOW_NSE_PROMPT_VARIANT`,
+  `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (incl. the FR34 under-30-min assertion), `config.nse_models()`. Also
+  **corrected the two now-outdated model-default assertions** (Change 2): renamed
+  `test_default_model_is_gemini_3_5_flash` → `test_default_model_is_gemini_2_5_flash`, asserting
+  `GEMINI_MODEL == "gemini-2.5-flash"`; `test_default_backup_model` now asserts
+  `GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"`. These were the two intentionally-failing tests dev's
+  handoff flagged as qa's to fix.
+- **EXTENDED** `tests/test_import_smoke.py` (+1 parametrized case) — `run_shadow_nse` added to the
+  entry-point list (`main()` present, no import-time side effects).
+
+### 9.2 Requirement-by-requirement verification
+
+| ID | What was checked | Result |
+|---|---|---|
+| **FR32** | `run_shadow_nse.NSE_MARKETS == {"NSE"}` (no US/TSX); source grepped/asserted for no `call_log_shadow` (US/CA table) write reference. | PASS |
+| **FR33** | Wallet-walk ported to `test_run_shadow_nse.py` (Buy flat→holding, Sell holding→flat, Hold no-op, entry price/date recorded, empty history→flat, per-ticker independence) against `run_shadow_nse._derive_shadow_positions`, using a fake Supabase double that **raises `AssertionError` on any read from a table other than `call_log_shadow_nse`** — proves the walk never touches `call_log` or `call_log_shadow`, not just that it produces the right numbers. | PASS |
+| **FR34** | `_latest_production_snapshots` asserted to read table `call_log`, filter `label="watchlist"`, `in_("ticker", …)`, newest-first-wins-per-ticker dedup. `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` default confirmed `20` and asserted `< 30` (the NSE dispatch cadence) directly in the test, not just eyeballed. | PASS |
+| **FR35 (HARD)** | `sql/shadow_nse_call_log_migration.sql` diffed structurally against `sql/shadow_call_log_migration.sql`: RLS enabled on both, no `create policy`, no actual `grant` **SQL statement** (comment-stripped before the check — first draft of this test false-positived on a comment that merely *mentions* "grant"; fixed in my own test, not production code), identical column set, both shadow-only columns present, same 2-index shape. Source-level check confirms `run_shadow_nse.py` writes only to `call_log_shadow_nse`. | PASS |
+| **FR36 (HARD)** | `inspect.getsource` on both `run_shadow_nse.py` and `shadow.py` asserts no `import notify` / `notify.` reference. Workflow-level: NSE step's `env` block asserted to contain none of `NTFY_TOPIC`/`NSE_NTFY_TOPIC`/`DETAIL_PAGE_BASE`. | PASS |
+| **FR37 (HARD)** | See §9.3 below — the most extensively tested requirement this increment. | PASS (+ 1 pre-existing bug found, not in INC-1 scope — see §9.4) |
+| **FR38** | `SHADOW_NSE_ENABLED` matrix: unset→True, empty→True, `"false"`→False, `"FALSE"`→False, typos `"flase"`/`"no"`/`"0"`→False (all three explicitly parametrized, not just one typo). | PASS |
+| **FR39** | `_run_cycle`'s source order asserted kill-switch check precedes `is_nse_open` check (string-offset assertion on the real source, not a re-implementation). Real-entry-point run with no env at all → clean no-op, exit 0 (§9.5). Unit-level: kill-switch-off and market-closed-and-not-forced cases both return without ever reaching `require_secrets()`/DB. | PASS |
+| **Model config correction (Change 2)** | `config.GEMINI_MODEL == "gemini-2.5-flash"`, `config.GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"` confirmed via the two corrected test_config.py assertions. `NSE_GEMINI_MODEL`/`_BACKUP` and `DISCOVERY_GEMINI_MODEL`/`_BACKUP` confirmed untouched (existing tests still pass unchanged). | PASS |
+| **Non-negotiable: no hardcoded tunables** | All three new NSE config values (`SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`, `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`) confirmed to read from `os.environ` with configurability tests that change the env var and assert the resulting behavior actually changes (not just that the attribute exists). | PASS |
+| **`judge_batch_shadow(items, models=None)` non-negotiable** | Explicit test asserts passing `models=["nse-model-a", "nse-model-b"]` drives the call with that exact order; a **separate** test asserts the **default** (`models` omitted) resolves through `ai_judge._models_to_try(None)` to `config.GEMINI_MODEL`/`_BACKUP` exactly as before — i.e. the existing US/CA caller (`run_shadow.py`, which calls `judge_batch_shadow(items)` with no `models` arg) is unaffected. | PASS |
+
+### 9.3 FR37 — mutual isolation, tested at three levels
+
+1. **Kill-switch independence** (`test_config.py`): flipping `SHADOW_NSE_ENABLED` off leaves `SHADOW_ENABLED`
+   `True` and vice versa — both directions tested in one function.
+2. **Exception safety, incl. the SystemExit gap dev found and fixed:**
+   - `run_shadow_nse.main()` with a mocked `_run_cycle` raising a plain `RuntimeError` → swallowed, `main()`
+     returns normally. PASS.
+   - `run_shadow_nse.main()` with a mocked `_run_cycle` raising `SystemExit` (simulating
+     `config.require_secrets()`'s real failure mode) → **swallowed**, `main()` returns normally. This proves
+     dev's `except (Exception, SystemExit)` fix actually works, both at the unit level and confirmed live at
+     the real entry point (§9.5, test 3: `FORCE_RUN=true` + no secrets → `exit=0`).
+   - Independently confirmed dev's claim that **`run_shadow.py` (US/CA) has the identical, unfixed bug**: a
+     test mocks `run_shadow._run_cycle` to raise `SystemExit` and asserts (`pytest.raises(SystemExit)`) that
+     `run_shadow.main()` does **not** swallow it — the `except Exception` catch in the shipped US/CA module
+     does not catch `SystemExit` (a `BaseException` subclass). Confirmed live at the real entry point too
+     (§9.5, test 4): `FORCE_RUN=true python3 scripts/run_shadow.py` with no secrets set exits **1**, not 0.
+     **Filed below as a finding, not fixed** (out of INC-1 scope; production code is dev's).
+3. **Workflow-level:** both the US/CA and NSE shadow steps asserted to carry `continue-on-error: true` and a
+   positive `timeout-minutes`; step order asserted `production < US/CA shadow < NSE shadow`; each step's
+   `if:` gate asserted to reference its own independent kill-switch Variable
+   (`vars.SHADOW_ENABLED`/`vars.SHADOW_NSE_ENABLED` respectively, never the other). These tests use
+   `pytest.importorskip("yaml")` since PyYAML is not a `requirements.txt` dependency (qa does not add
+   production/test dependencies unilaterally to dev-owned `requirements.txt`); they run and pass in an
+   environment with `pyyaml` installed (confirmed this pass) and skip cleanly without it.
+
+### 9.4 Finding — pre-existing bug in shipped `run_shadow.py` (confirmed, out of INC-1 scope)
+
+**Not filed as a numbered BUG-NNN** (no FR/NFR of THIS increment is violated by it — `run_shadow.py` is
+existing, already-shipped code, not new/changed in INC-1's file list) but flagged here explicitly per the
+task brief, for tech-lead/dev awareness on a future increment:
+
+- **What:** `scripts/run_shadow.py::main()` (line ~212-215) catches only `except Exception`. `SystemExit`
+  is a `BaseException` subclass, not an `Exception` subclass, so it is **not** caught. `config.require_secrets()`
+  raises `SystemExit` on a missing secret. If `_run_cycle()` reaches that call and a secret is missing,
+  `main()` propagates `SystemExit` instead of swallowing it — breaking the "main() always exits 0, shadow
+  can never affect the production run" guarantee that FR29/NFR5 (the US/CA analogs of FR37/NFR6) require,
+  in that one edge case.
+- **Confirmed independently by qa, two ways:** (1) unit test
+  `test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap` — `pytest.raises(SystemExit)` around
+  `run_shadow.main()` with a mocked `SystemExit`-raising `_run_cycle`. (2) Live at the real entry point:
+  `env -i PATH="$PATH" FORCE_RUN=true python3 scripts/run_shadow.py` with no secrets set → prints the
+  `require_secrets()` message and **exits 1**, whereas the equivalent NSE command
+  (`python3 scripts/run_shadow_nse.py`) exits 0.
+- **Mitigating factor:** the workflow step's `continue-on-error: true` still prevents this from failing the
+  overall Actions run — so it is a defense-in-depth gap (the module's own documented guarantee is broken),
+  not a currently-observable production incident.
+- **Disposition:** dev fixed this in the new `run_shadow_nse.py` (`except (Exception, SystemExit)`) but did
+  not backport the fix to `run_shadow.py` (correctly out of INC-1's stated file scope). Recommend a small
+  follow-up increment/ticket to apply the same one-line fix to `run_shadow.py` for consistency — routed here
+  for tech-lead/dev, not fixed by qa.
+
+### 9.5 Shippability check — real entry point, INC-1 scope
+
+Ran `scripts/run_shadow_nse.py` directly (not just via pytest mocks), from a clean environment
+(`env -i PATH="$PATH" ...`, no `.env`, no leaked shell state):
+
+1. No env at all (market closed at test time, no `FORCE_RUN`) → `[shadow-nse] NSE closed (force_run=False)
+   — no-op.` — **exit 0**.
+2. `SHADOW_NSE_ENABLED=false` → `[shadow-nse] SHADOW_NSE_ENABLED=false — NSE shadow track disabled, no-op.`
+   — **exit 0**. Confirms the independent kill switch actually works at the real entry point, not only
+   under test mocks.
+3. `FORCE_RUN=true`, no secrets set → `[shadow-nse] ERROR (cycle skipped, production/US-CA-shadow
+   unaffected): SystemExit: Missing required environment secrets: ...` — **exit 0**. Confirms dev's
+   SystemExit fix live.
+4. `FORCE_RUN=true`, fake (non-resolvable) Supabase URL + fake keys → real network `ConnectError` raised
+   inside `_run_cycle`, caught, logged — **exit 0**.
+5. For contrast, the same test #3 conditions against `scripts/run_shadow.py` (US/CA) → **exit 1** (§9.4).
+
+All four NSE-track scenarios behaved as designed at the real entry point — this is a genuinely shippable
+increment, not just something that passes isolated unit tests.
+
+### 9.6 Full regression
+
+**Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, pytest 9.1.1, `requirements.txt` + `pyyaml`
+installed in an isolated venv per this repo's established pattern — no project-level test-runner config
+exists yet, so this mirrors dev's own smoke-test setup described in `docs/handoff.md`).
+
+**Before this pass (dev's INC-1 commit, unmodified):** 163 passed / 2 failed / 165 total — the 2 failures
+were the expected, dev-flagged stale model-default assertions (§9.1).
+
+**After this pass:** **207 passed / 0 failed / 207 total.** 42 new tests added this increment (29 in the
+new `tests/test_run_shadow_nse.py`, 12 new in `tests/test_config.py`, 1 new parametrized case in
+`tests/test_import_smoke.py`), plus the 2 corrected assertions now passing. **Zero unexpected
+regressions** — every pre-existing test (FR1–FR31/NFR1–NFR5 baseline coverage) still passes unchanged.
+
+Existing US/CA shadow pilot behavior confirmed byte-for-byte unchanged in outcome: all of
+`tests/test_shadow.py`'s original 14 tests (control flow, wallet-walk, same-data reuse) still pass without
+modification, and the new `judge_batch_shadow(items, models=None)` default-path test in
+`tests/test_run_shadow_nse.py` independently re-confirms the default resolves exactly as before.
+
+### 9.7 Verdict — INC-1 (FR32–FR39, NFR6)
+
+**PASS.** All 8 functional/hard requirements (FR32–FR39) and NFR6 verified against `docs/requirements.md`
+§10.3 / `docs/design.md` §16, with tests written against the requirement text, not reverse-engineered from
+the implementation. Both intentionally-stale `test_config.py` assertions corrected. Full suite: **207
+passed / 0 failed**. Real-entry-point shippability check passed for all NSE-track scenarios. No production
+code was modified by qa.
+
+**One finding logged for tech-lead/dev, not a blocker for INC-1:** the pre-existing `SystemExit`-swallowing
+gap in `scripts/run_shadow.py::main()` (§9.4) — confirmed real, out of INC-1's file scope, does not violate
+any FR/NFR this increment claims, mitigated by `continue-on-error: true` at the workflow level. Recommend a
+follow-up fix for consistency with the now-corrected `run_shadow_nse.py`.
+
+**Ready for reviewer.**
