@@ -427,13 +427,13 @@ follow-up fix for consistency with the now-corrected `run_shadow_nse.py`.
 happened to do. `docs/handoff.md` (INC-2) read in full first.
 
 ### 10.1 Files added this pass
-- **NEW** `tests/test_wallet_sim.py` (26 tests) — direct unit tests of `wallet_sim.walk`, the pure state
+- **NEW** `tests/test_wallet_sim.py` (20 tests) — direct unit tests of `wallet_sim.walk`, the pure state
   machine, plus the zero-I/O non-negotiable.
-- **NEW** `tests/test_eval_shadow.py` (40 tests) — `build_report`/`render_report` correctness, the FR31
+- **NEW** `tests/test_eval_shadow.py` (34 tests) — `build_report`/`render_report` correctness, the FR31
   determinism acceptance test, the read-only-guarantee regression guard, CLI parsing (`_parse_args`),
   `default_window`/`parse_window_bound`, the `fetch_shadow_rows`/`fetch_production_rows` I/O seam against a
   fake Supabase double, and an `EVAL_WINDOW_DAYS` configurability check through `main()`.
-- **NEW** `tests/test_run_shadow.py` (10 tests) — closes the gap the handoff flagged under "Known
+- **NEW** `tests/test_run_shadow.py` (9 tests) — closes the gap the handoff flagged under "Known
   limitations": no dedicated test file existed for `run_shadow.py`'s (US/CA) `_derive_shadow_positions`
   before this pass. Mirrors `test_run_shadow_nse.py`'s wallet-walk coverage, retargeted to the US/CA track,
   confirming the refactored `wallet_sim.walk`-backed implementation is correct on its own (not just
