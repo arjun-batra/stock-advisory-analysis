@@ -366,8 +366,8 @@ tunables, not fixed requirements.
 ### Core system
 | Key | Default | Purpose |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-3.5-flash` (documented default) — see discrepancy note below | Primary watchlist AI model |
-| `GEMINI_MODEL_BACKUP` | `gemini-3.1-flash-lite` (documented default) — see discrepancy note below | Fallback model (empty disables fallback) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Primary watchlist AI model |
+| `GEMINI_MODEL_BACKUP` | `gemini-2.5-flash-lite` | Fallback model (empty disables fallback) |
 | `NSE_GEMINI_MODEL` / `NSE_GEMINI_MODEL_BACKUP` | inherit US/TSX pair | NSE watchlist model pair (quota isolation option) |
 | `DISCOVERY_GEMINI_MODEL` / `_BACKUP` | `gemini-2.5-flash` / `-lite` | Discovery model pair (separate daily quota bucket) |
 | `GEMINI_TIMEOUT_MS` | `180000` | Per-request Gemini timeout (ms) |
@@ -390,17 +390,13 @@ tunables, not fixed requirements.
 | `NSE_MARKET_OPEN` / `NSE_MARKET_CLOSE` | `09:15` / `15:30` IST | NSE session bounds |
 | `RUNTIME_CLOSE_GRACE_MIN` | `10` | Runtime close-grace minutes (dispatch-to-execution latency) |
 
-> **Discrepancy note — `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` (doc-vs-actual-operation):** the literal
-> defaults documented in code (`scripts/config.py:26-27`) are `gemini-3.5-flash` (primary) and
-> `gemini-3.1-flash-lite` (backup). These do **not** match actual current operation: the system runs
-> `gemini-2.5-flash` across the board — production watchlist, NSE watchlist, discovery, and both shadow
-> tracks — on Google's paid tier, because `gemini-3.5-flash` and `gemini-3.1-flash-lite` showed
-> stability issues in practice. This is a documentation correction (owned by pm), following the same
-> precedent as the 2026-07-12 REV-001/BUG-001 fix where a doc-vs-code mismatch was corrected in the
-> docs rather than the code. If the literal defaults in `scripts/config.py` should be changed to match
-> real operation (`gemini-2.5-flash`), that is dev's job once tech-lead scopes it — pm does not edit
-> code. `DISCOVERY_GEMINI_MODEL` already documents `gemini-2.5-flash` and is not part of this
-> discrepancy.
+> **Historical note (closed) — `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP`:** these keys previously carried a
+> doc-vs-actual-operation mismatch — the literal defaults in `scripts/config.py` were `gemini-3.5-flash` /
+> `gemini-3.1-flash-lite` while real operation ran the `gemini-2.5-flash` family (paid tier) due to
+> stability issues with the 3.x models. That gap is now **CLOSED**: INC-1 (2026-07-13 change request)
+> changed the literal `scripts/config.py` defaults to `gemini-2.5-flash` / `gemini-2.5-flash-lite`, so
+> code and operation now agree — the table above states the current true defaults. qa's `test-report.md`
+> §9.2 asserts `config.GEMINI_MODEL == "gemini-2.5-flash"`.
 
 ### Discovery prefilter / quality gates (all tunable)
 | Key | Default | Purpose |
