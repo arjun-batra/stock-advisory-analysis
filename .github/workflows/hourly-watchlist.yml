@@ -116,7 +116,10 @@ jobs:
         # shadow step that runs after it. Chosen well under the workflow's
         # overall runner budget; a hang here fails only this step
         # (continue-on-error), never the run.
-        timeout-minutes: 15
+        # REV-015: promoted to a shared repo Variable (design §9) so the bound
+        # can be raised without a commit as NSE batches grow; `fromJSON` coerces
+        # the Variable's string to the number `timeout-minutes` requires.
+        timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -146,10 +149,12 @@ jobs:
       # (FR37/NFR6, load-bearing #11). `continue-on-error: true` +
       # `timeout-minutes` are the same two belts as the US/CA shadow step; no
       # NTFY_* vars are passed at all — this track never alerts (FR36).
+      # REV-015: shares the same SHADOW_TIMEOUT_MINUTES Variable as the US/CA
+      # shadow step above — one generic runner-hang guard for both tracks.
       - name: Run NSE shadow verdict track (NSE pilot)
         if: ${{ vars.SHADOW_NSE_ENABLED != 'false' }}
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

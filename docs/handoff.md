@@ -149,3 +149,17 @@ via `state.client()`. `wallet_sim.py` makes no Supabase/network calls at all.
   the bug is fixed, that assertion is stale/inverted by design — the test's own docstring says it documents a
   bug that was "out of INC-1 scope to fix." No other test touches this path. Not fixed here since `tests/` is
   qa's territory, not dev's — flagging for qa to retire or invert this test now that REV-018 is resolved.
+
+## Addendum: REV-015 fix (2026-07-15)
+
+- **File changed:** `.github/workflows/hourly-watchlist.yml` only.
+- **Fix:** replaced the bare `timeout-minutes: 15` literal on both the US/CA shadow step ("Run shadow
+  verdict track (US/CA pilot)") and the NSE shadow step ("Run NSE shadow verdict track (NSE pilot)") with
+  `timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`, per tech-lead's disposition
+  recorded in design.md §9 (REV-015 disposition) / §16.4 / §16.6 config table. One shared repo Variable
+  drives both shadow steps' hang-isolation bound (default `15`, unchanged behavior until an operator sets
+  `SHADOW_TIMEOUT_MINUTES`); `fromJSON` coerces the Variable's string to the number GitHub Actions requires
+  for `timeout-minutes`. This is a workflow-engine setting, not a `config.py` env-var tunable (evaluated by
+  the runner before Python starts), so no `config.py` change was made. Resolves **REV-015**.
+- **Verification:** `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/hourly-watchlist.yml'))"`
+  parses cleanly (no syntax errors). No Python code touched, so no pytest re-run was needed for this change.

@@ -801,9 +801,9 @@ by shipped code; there are no un-designed and no un-implemented requirements.
 > Artifacts: `scripts/run_shadow_nse.py` (entry point), `scripts/shadow.py` (parametrized
 > `judge_batch_shadow(items, models=…)`), `sql/shadow_nse_call_log_migration.sql`, the NSE shadow step in
 > `.github/workflows/hourly-watchlist.yml`, and NSE-shadow vars in `scripts/config.py`. Reuse over
-> duplication (§8) throughout. **Operational note (REV-016):** the migration must be applied to the live
-> Supabase project before the NSE track writes rows; until then the track no-ops-with-error-log every
-> cycle (a safe failure mode — FR37 isolation holds), tracked as a pre-go-live action item.
+> duplication (§8) throughout. **Operational note (REV-016):** the migration has been applied to the live
+> Supabase project; `call_log_shadow_nse` exists (RLS enabled) and is ready to receive writes on the
+> next NSE shadow cycle.
 
 ### 16.1 Purpose & scope (FR32)
 An independent position-aware verdict track for **NSE watchlist tickers only**
