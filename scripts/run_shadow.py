@@ -204,9 +204,13 @@ def main() -> None:
     # Hard isolation belt: NOTHING in the shadow track may propagate out. Any
     # failure is logged explicitly (no silent failures) and swallowed; the process
     # exits cleanly so it can never affect the production dispatch.
+    # Catches SystemExit too (not just Exception): config.require_secrets() raises
+    # SystemExit on a missing secret, which `except Exception` alone would miss
+    # (SystemExit is a BaseException) — a real gap, verified by smoke test, in
+    # the always-exits-0 guarantee this function exists to provide.
     try:
         _run_cycle()
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         print(f"[shadow] ERROR (cycle skipped, production unaffected): {type(e).__name__}: {e}")
 
 
