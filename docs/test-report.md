@@ -492,11 +492,11 @@ in an isolated venv, same pattern as INC-1).
 **Before this pass (dev's INC-2 commit, unmodified — INC-1 baseline):** 209 passed / 0 failed / 209 total
 (per `docs/handoff.md`).
 
-**After this pass: 274 passed / 0 failed / 274 total.** 65 new tests added this increment (26 in
-`tests/test_wallet_sim.py`, 40 in `tests/test_eval_shadow.py` — wait, actual count 39 — see file for exact
-breakdown; combined new-file total is 76, plus 2 in `tests/test_config.py`, minus the pre-existing 209 =
-65 net new). **Zero regressions** — every pre-existing test (FR1–FR39/NFR1–NFR6 baseline coverage, incl.
-both shadow tracks' wallet-walk tests) still passes unchanged.
+**After this pass: 274 passed / 0 failed / 274 total.** 65 new tests added this increment: 20 in
+`tests/test_wallet_sim.py`, 34 in `tests/test_eval_shadow.py`, and 9 in `tests/test_run_shadow.py` (all
+three new files, combined new-file total 63), plus 2 new tests added to the pre-existing
+`tests/test_config.py`, for 65 net new. **Zero regressions** — every pre-existing test (FR1–FR39/NFR1–NFR6
+baseline coverage, incl. both shadow tracks' wallet-walk tests) still passes unchanged.
 
 ### 10.6 Bugs filed
 
