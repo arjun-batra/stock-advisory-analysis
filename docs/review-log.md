@@ -998,3 +998,180 @@ orchestrator/user (none of them block qa's end-to-end closure test or pm's FR/NF
 but I'd flag REV-017 (stale design.md status headers) as the one worth a quick fix before closure
 specifically, since a design doc that still says "DRAFT pending GATE 3 approval" at the moment of declaring
 the project done is the kind of self-contradiction a future reader would immediately notice.
+
+---
+
+## Pass 5 — 2026-07-15 (post-Pass-4 cleanup round — independent verification)
+
+Scope: independent re-verification of the six items the orchestrator reported as fixed after Pass 4
+(REV-015, REV-017, REV-018, REV-019, REV-020, plus the bonus GEMINI_MODEL discrepancy-note item), by
+reading the current file contents myself rather than trusting the fix summaries. **Method note:** no
+shell/execute tool available in this reviewer session (Read/Grep/Glob only) — I could not run
+`python3 -m pytest tests/ -q` myself, and Supabase MCP tools were not present in this session's tool list
+either, so REV-016's Pass-4 caveat (no independent reviewer re-check of the live migration) is **not
+lifted this pass** — it remains resting on the orchestrator's earlier stated verification, not mine. Both
+limitations are disclosed here rather than silently assumed away.
+
+### Item-by-item verification
+
+**REV-015 — RESOLVED 2026-07-15, confirmed.** Read `.github/workflows/hourly-watchlist.yml` in full. Both
+shadow steps now read `timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}` (lines 122
+and 157), with explanatory `# REV-015:` comments at both sites (lines 119-121, 152-153). No bare literal
+`15` remains on either step. `docs/design.md` §9 (lines 569-584) documents the `SHADOW_TIMEOUT_MINUTES`
+Variable and its rationale; §16.6's tunable table (line 907) and §16.4 (lines 871-874) both reference it
+too — the key name and default (`15`) are consistent across the workflow and all three design.md
+locations. **However, found a residual staleness these design.md passages introduce themselves**: §9
+(line 569, "currently sits as a bare literal"; line 580, "this is a small follow-up flagged to dev"),
+§16.4 (line 873, "As-built this is a literal `15`; the REV-015 follow-up... promotes it"), and §16.6's
+table (line 907, "As-built the two steps carry a bare literal `15`; the follow-up promotes it to this
+Variable") all still describe the fix as a **pending future disposition**, not as done — but the workflow
+file already has the Variable-driven fix live. This is now itself a fresh doc-staleness gap (design.md
+lagging the code it's supposed to describe), logged below as new finding **REV-021**. The underlying
+`[HARDCODED]` finding (REV-015) is correctly RESOLVED in the code; the doc wording around it is not yet
+caught up.
+
+**REV-016 — status unchanged from Pass 4 (`RESOLVED`, with an un-lifted caveat).** Per the task brief,
+Supabase MCP tools are not available in my tool list this session (no `list_tables`/equivalent present),
+so I could not attempt the live re-check at all this pass (Pass 4 at least attempted the call and got a
+"tool not available" error; this pass's tool list simply doesn't include Supabase MCP tools to try). Per
+the task instruction, leaving Pass 4's RESOLVED status as-is, not re-opening it — the orchestrator's
+earlier live verification via Supabase MCP stands as the basis for that resolution. Separately confirmed
+`docs/design.md` §16.5 (lines 892-899, "Applied via Supabase `apply_migration`; committed to `sql/` for
+reproducibility") and the §16.4 "Operational note (REV-016)" (lines 804-806: "the migration has been
+applied to the live Supabase project; `call_log_shadow_nse` exists (RLS enabled) and is ready to receive
+writes on the next NSE shadow cycle") both now describe the migration as applied, not as a pending
+pre-go-live action item — this doc-side follow-through is genuinely new since Pass 4 and is accurate
+regardless of my inability to re-verify the live database directly.
+
+**REV-017 — RESOLVED 2026-07-15, confirmed.** Read `docs/design.md`'s top header (lines 1-16) and the
+§14/§15/§16/§17 banners in full:
+- Header (lines 3-10): now reads "the whole document is now DESCRIPTIVE / as-built... became as-built once
+  the 2026-07-13 change request shipped... both INC-1... and INC-2... have been implemented, passed qa, and
+  been reviewer-cleared with 0 blockers / 0 majors each." No "DRAFT pending GATE 3" language remains.
+- §14 (line 740): "Increment plan (2026-07-13 change request — DELIVERED, GATE 3 approved)"; line 744:
+  "Both are now DELIVERED."
+- §15 (lines 785-791): "shipped, reviewer-cleared" for both FR31 and FR32-39/NFR6; "Every FR/NFR is covered
+  by shipped code; there are no un-designed and no un-implemented requirements."
+- §16 banner (line 797): "Status: SHIPPED (INC-1, reviewer-cleared Pass 3, 2026-07-14)."
+- §17 banner (line 918): "Status: SHIPPED (INC-2, reviewer-cleared Pass 4, 2026-07-15)."
+All five locations Pass 4 flagged as stale ("FORWARD design"/"DRAFT"/"NOT YET BUILT"/"pending approval")
+are now corrected to as-built/shipped framing. The specific §16 "Operational note (REV-016)" near-text
+called out in the task is also confirmed updated (see REV-016 above). REV-017 is genuinely resolved — with
+the caveat that fixing it surfaced the narrower, new REV-021 staleness noted above (a doc fix that was
+thorough at the section-banner level but didn't catch the SHADOW_TIMEOUT_MINUTES prose it references).
+
+**REV-018 — RESOLVED 2026-07-15, confirmed.** Read `scripts/run_shadow.py::main()` (lines 203-218) in
+full: `except (Exception, SystemExit) as e:` (line 213), with an inline comment explaining the SystemExit
+gap and referencing the smoke-test verification — now byte-for-byte matching `run_shadow_nse.py`'s
+existing pattern. Read `tests/test_run_shadow_nse.py` lines 339-352: the new test
+`test_run_shadow_main_us_ca_track_now_swallows_systemexit_matching_nse` exists, with a docstring explicitly
+labeled "REV-018 fix verification," raises `SystemExit` via a monkeypatched `_run_cycle`, and asserts
+`run_shadow.main()` does not propagate it — this genuinely tests the fix working, not merely re-describing
+the historical bug. This sits alongside (not replacing) the pre-existing
+`test_run_shadow_nse_main_swallows_systemexit_and_returns`, so both tracks now have positive regression
+coverage of the same guarantee.
+
+**REV-019 — RESOLVED 2026-07-15, confirmed.** Read `docs/requirements.md` §11 in full. A new subsection
+"### Experimental — shared wallet-sim evaluation harness (§10.2, FR31)" (line 434) now exists with a table
+listing `EVAL_WINDOW_DAYS` (default `14`, purpose described including the `--since`/`--until` interaction)
+at line 437 — matching `docs/design.md` §9/§17.4's existing entry. No sync gap remains between the two
+docs' tunable tables.
+
+**REV-020 — STILL OPEN (partially fixed, not fully resolved).** Read `docs/test-report.md` §10.5 (lines
+487-499): the per-file breakdown is now correct — "20 in `tests/test_wallet_sim.py`, 34 in
+`tests/test_eval_shadow.py`, and 9 in `tests/test_run_shadow.py` (all three new files, combined new-file
+total 63)" — and I independently re-counted all three files myself (`grep -c '^def test_'`):
+`test_wallet_sim.py` = **20**, `test_eval_shadow.py` = **34**, `test_run_shadow.py` = **9**, exactly
+matching. The "wait, actual count..." artifact is gone from §10.5. **However**, `docs/test-report.md` §10.1
+("Files added this pass," lines 429-442) was **not** updated to match: it still reads "**NEW**
+`tests/test_wallet_sim.py` (**26** tests)" (line 430), "**NEW** `tests/test_eval_shadow.py` (**40**
+tests)" (line 432), and "**NEW** `tests/test_run_shadow.py` (**10** tests)" (line 436) — the same stale,
+wrong numbers §10.5 used to have before its fix, now contradicting the corrected §10.5 within the same
+document. This is the same class of defect REV-020 was originally logged for (`[BLOAT]`, doc-accuracy,
+internal inconsistency), just relocated to a different section of the same file — the fix was applied to
+only one of the two places the wrong counts appeared. **Not a blocker, not a major** — as before, the
+load-bearing 209→274 totals and the 65-net-new figure are correct and unaffected; this is purely
+illustrative per-file prose being wrong in one place while correct in another. **REV-020 remains OPEN.**
+**Owner: qa** — correct §10.1's three counts (26→20, 40→34, 10→9) to match §10.5, or better, have §10.1
+reference §10.5 instead of repeating the numbers a second time (avoids this exact class of drift
+recurring).
+
+**Bonus item — GEMINI_MODEL discrepancy note — RESOLVED 2026-07-15, confirmed.** Read `docs/requirements.md`
+§11 in full. The core-system config table (lines 369-370) plainly lists `GEMINI_MODEL` = `gemini-2.5-flash`
+and `GEMINI_MODEL_BACKUP` = `gemini-2.5-flash-lite` with no discrepancy caveat inline. Immediately below the
+table (lines 393-399), a "**Historical note (closed)**" explicitly states the prior `gemini-3.5-flash` /
+`gemini-3.1-flash-lite` vs. `gemini-2.5-flash` mismatch is "now **CLOSED**," that INC-1 changed the literal
+`config.py` defaults to match real operation, and cites qa's `test-report.md` §9.2 assertion as
+corroborating evidence. Cross-checked against the actual code: `scripts/config.py:26-27` reads
+`GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")` and `GEMINI_MODEL_BACKUP =
+os.environ.get("GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")` — table, note, and code all agree. No
+"OPEN"/discrepancy framing remains anywhere in §11. Resolved.
+
+**Test suite — NOT independently executed this pass.** No Bash/shell tool was available in this reviewer
+session's tool list, so I could not run
+`python3 -m pytest tests/ -q` myself to confirm the claimed 274 passed / 0 failed. This mirrors the same
+method limitation disclosed in Pass 2 and Pass 4. As a partial substitute, I independently re-counted the
+three INC-2 test files by hand (`grep -c '^def test_'`) and confirmed 20 + 34 + 9 = 63 matches
+`docs/test-report.md` §10.5's own arithmetic exactly (63 + 2 = 65 net new; 209 + 65 = 274) — this is
+static-inspection corroboration, not a substitute for an actual pytest run. **The orchestrator or qa should
+run the live pytest command once as a final machine-verified confirmation before Phase 4 closure is
+presented to the user, exactly as flagged (and never actually closed out) since Pass 2.**
+
+### New findings this pass
+
+**REV-021 — [BLOAT] minor (doc staleness) — `docs/design.md` §9 (lines 569, 580), §16.4 (line 873), §16.6
+table (line 907).** These three passages describe the `SHADOW_TIMEOUT_MINUTES` workflow-Variable fix as a
+**pending, not-yet-done "follow-up flagged to dev"** ("currently sits as a bare literal," "As-built the two
+steps carry a bare literal `15`; the follow-up promotes it") — but `.github/workflows/hourly-watchlist.yml`
+already implements the fix live (`timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}` on
+both shadow steps, confirmed above under REV-015). This is a smaller-scope version of the same staleness
+class REV-017 just got cleared for (design.md text lagging shipped code) — introduced by the fact that
+REV-017's fix updated the section-status banners but not this specific piece of prose that cross-references
+REV-015. **Not a blocker, not a major** — purely descriptive text; no prescriptive/requirement content is
+wrong, and no reader would be misled about what to build (the fix already shipped). **Owner: tech-lead**
+(design.md owner) — reword the three passages from future/pending framing ("currently... the follow-up
+promotes it") to as-built framing ("the two shadow steps read `timeout-minutes` from the
+`SHADOW_TIMEOUT_MINUTES` repo Variable, defaulting to `15`") to match REV-015's actual resolved state.
+
+### Pass 5 summary
+
+**Resolved this pass (5):** REV-015, REV-017, REV-018, REV-019, plus the bonus GEMINI_MODEL
+discrepancy-note item — all independently confirmed against current file contents, not taken on trust.
+
+**Still open (1, carried forward, partially addressed):** REV-020 — `docs/test-report.md` §10.5's per-file
+counts are now correct, but §10.1's counts were not updated to match and still show the old wrong numbers
+(26/40/10 vs. the correct 20/34/9) — an internal inconsistency within the same document. Owner: qa.
+
+**Unchanged, resting on a prior verification, not re-checked this pass:** REV-016 — no Supabase MCP tool
+available in this session to attempt independent re-verification; Pass 4's RESOLVED status (based on the
+orchestrator's earlier live MCP check) is left as-is per the task's explicit instruction, not re-opened.
+
+**New this pass (1):** REV-021 `[BLOAT]` minor — design.md §9/§16.4/§16.6 still frame the
+`SHADOW_TIMEOUT_MINUTES` fix as pending future work when the workflow already implements it; a narrow
+residual of the same staleness class REV-017 addressed. Owner: tech-lead.
+
+**Open blocker count: 0.**
+**Open major count: 0.**
+**Open minor count: 2** (REV-020 carried forward/partially fixed; REV-021 new this pass). REV-002-class
+items (FR31) and REV-006 (ACCEPTED-DEBT) remain fully resolved/disposed of from Pass 4, not reopened.
+
+### Final verdict — 2026-07-13 change request (INC-1 + INC-2 + this cleanup round)
+
+**NOT YET at zero open minors, but still 0 blockers and 0 majors.** Five of the six items the orchestrator
+reported fixed are genuinely, independently confirmed fixed (REV-015, REV-017, REV-018, REV-019, and the
+GEMINI_MODEL bonus item) — read directly in the current files, not rubber-stamped. REV-016 remains resolved
+on the strength of an earlier live verification this session's tools could not repeat (disclosed, not
+silently trusted). **REV-020 is only half-fixed**: the fix landed in `test-report.md` §10.5 but the
+identical wrong numbers still sit uncorrected in §10.1 of the same document — this is a genuine, if minor,
+finding that should not be waved through as closed. This pass's own thoroughness also surfaced one small
+new item, **REV-021**, a narrow doc-staleness residue of the REV-017 fix.
+
+Given both open items are minor, doc-only, non-functional, and neither represents an undelivered
+requirement, a security issue, or a functional defect, **this does not block Phase 4 closure from a
+severity standpoint** (0 blockers, 0 majors, consistent with every prior pass's disposition). However, per
+this reviewer's standing practice of not rubber-stamping "someone said it's fixed," I am explicitly
+declining to declare this cleanup round **fully** closed: **2 open minors remain (REV-020, REV-021)**,
+both cheap, mechanical, doc-only fixes. Recommend the orchestrator route both back for a quick correction
+before presenting Phase 4 closure to the user, alongside the standing, never-yet-executed request (since
+Pass 2) that qa or the orchestrator run one live `python3 -m pytest tests/ -q` to machine-verify the
+274/0 claim, since no reviewer session so far has had shell access to do it independently.
