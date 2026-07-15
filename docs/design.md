@@ -566,22 +566,23 @@ established convention for workflow knobs an operator may need to change **witho
 Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action `@vN` pins, the
 `concurrency` group) stay as bare literals and are **not** tunables.
 
-- **REV-015 disposition — `timeout-minutes` on the two shadow steps → repo Variable (follow-up for dev).**
-  The shadow steps' `timeout-minutes: 15` (hang-isolation bound, §16.4 / load-bearing #11) currently sits
-  as a bare literal on both the US/CA and NSE shadow steps. Unlike `runs-on`/`python-version` (fixed facts),
+- **REV-015 disposition — `timeout-minutes` on the two shadow steps → repo Variable (IMPLEMENTED).**
+  The shadow steps' `timeout-minutes` (hang-isolation bound, §16.4 / load-bearing #11) previously sat
+  as a bare literal `15` on both the US/CA and NSE shadow steps. Unlike `runs-on`/`python-version` (fixed facts),
   15 is an **operational judgment** about batch-size / API-latency headroom that dev's own INC-1 handoff
   flagged may need raising as NSE batches grow — i.e. exactly the "change without a commit" profile every
-  other `vars.X` knob in this file already has. Disposition: **promote it to a single repo Variable
-  `SHADOW_TIMEOUT_MINUTES` (default `15`) driving both shadow steps** via
+  other `vars.X` knob in this file already has. Disposition (**now live in
+  `.github/workflows/hourly-watchlist.yml`**): a single repo Variable
+  `SHADOW_TIMEOUT_MINUTES` (default `15`) drives both shadow steps via
   `timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}` (the `fromJSON` is required
   because `timeout-minutes` takes a number, not a string). One shared Variable for both shadow steps (the
   bound is a generic runner-hang guard, not a per-track behavior knob; both belts — `continue-on-error` and
-  non-overlapping sessions — protect the run regardless of its value). This is a small **follow-up flagged
-  to dev** (INC-1/INC-2 already shipped); not a `config.py` entry — it is a workflow-engine setting.
-  Rationale for choosing a Variable over documenting it as an accepted-fixed constant: it is more consistent
-  with this file's dominant convention (operator-facing knobs are Variables) and with dev's stated need to
-  be able to raise it, whereas the accepted-fixed pattern is reserved for physically-justified constants
-  with an explicit "don't change" instruction (the SQL close-boundary numbers, §0 item 9) — which 15 is not.
+  non-overlapping sessions — protect the run regardless of its value). Not a `config.py` entry — it is a
+  workflow-engine setting. Rationale for choosing a Variable over documenting it as an accepted-fixed
+  constant: it is more consistent with this file's dominant convention (operator-facing knobs are Variables)
+  and with dev's stated need to be able to raise it, whereas the accepted-fixed pattern is reserved for
+  physically-justified constants with an explicit "don't change" instruction (the SQL close-boundary
+  numbers, §0 item 9) — which 15 is not.
 
 ---
 
@@ -870,9 +871,9 @@ cross-shadow-track isolation the user required (FR37/NFR6, load-bearing #11):
     `SHADOW_ENABLED`) leaves the other track running untouched — neither can disable the other.
   - *Hang isolation:* each shadow step carries a `timeout-minutes` bound (INC-1 adds one to the existing
     US/CA step too, §13.4), so a hang self-bounds instead of holding the shared runner and delaying the
-    sibling step. As-built this is a literal `15`; the REV-015 follow-up (§9) promotes it to a single
-    `SHADOW_TIMEOUT_MINUTES` repo Variable (default `15`, `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15')`)
-    driving both shadow steps, so ops can raise it without a commit. Additionally the two shadow steps
+    sibling step. Per the REV-015 disposition (§9), both shadow steps are driven by a single
+    `SHADOW_TIMEOUT_MINUTES` repo Variable (default `15`, `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15')`),
+    now live in `.github/workflows/hourly-watchlist.yml`, so ops can raise it without a commit. Additionally the two shadow steps
     self-gate by **non-overlapping ET/IST sessions**:
     whenever one track is doing real Gemini work the other no-ops in milliseconds, so a hang in the active
     track cannot collide with real work in the other. (These two mechanisms are why a separate step, rather
@@ -904,7 +905,7 @@ to "NSE"). Applied via Supabase `apply_migration`; committed to `sql/` for repro
 | `SHADOW_NSE_ENABLED` | **`true` on unset/empty only (fail-OPEN-on-empty accepted risk, FR38/NFR6)** | Independent NSE kill switch, resolved `(os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"` — **identical shape to `SHADOW_ENABLED`**. Checked at the workflow step (`if: vars.SHADOW_NSE_ENABLED != 'false'`) and again in `config.py`. Fail-open fires **only** for unset/empty; `"false"` or any other non-empty value including a typo (`"flase"`, `"no"`, `"0"`) fails **CLOSED**. Separate from `SHADOW_ENABLED`. |
 | `SHADOW_NSE_PROMPT_VARIANT` | `position_aware_v1` | Tag written to `call_log_shadow_nse.prompt_variant` (same variant as §13). |
 | `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback to reuse the same-cycle NSE production snapshot; **must stay under the 30-min NSE cadence** (FR34). |
-| `SHADOW_TIMEOUT_MINUTES` *(workflow Variable, REV-015 follow-up)* | `15` | Hang-isolation bound on **both** shadow workflow steps (§16.4). A workflow-engine setting, not a `config.py` env-var tunable (evaluated before Python starts, §9); driven by `${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. As-built the two steps carry a bare literal `15`; the follow-up promotes it to this Variable. |
+| `SHADOW_TIMEOUT_MINUTES` *(workflow Variable, implemented)* | `15` | Hang-isolation bound on **both** shadow workflow steps (§16.4). A workflow-engine setting, not a `config.py` env-var tunable (evaluated before Python starts, §9); driven by `${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. Live in `.github/workflows/hourly-watchlist.yml` (both shadow steps). |
 
 **Accepted risk, recorded (FR38, NFR6, load-bearing #11):** identical in shape to §13.6/FR30 — the
 fail-open default is a deliberate one-Variable opt-out, but a deleted/unset/blank `SHADOW_NSE_ENABLED`
