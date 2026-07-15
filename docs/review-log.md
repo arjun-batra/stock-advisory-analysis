@@ -668,3 +668,333 @@ found there.
 **Nothing here requires dev/qa rework before merge.** The orchestrator may proceed to merge `inc-1-nse-
 shadow-wallet-pilot` to main and start INC-2, with REV-015/REV-016/REV-017/REV-018 routed to their owning
 agents in parallel (none of them gate the merge or the start of INC-2).
+
+---
+
+## Pass 4 — 2026-07-15 (INC-2: Shared Wallet-Sim Evaluation Harness, FR31 — pre-merge audit)
+
+Scope: full 5-pass audit of INC-2 (dev commit `2d2cc13`, qa commit `211700b`, "qa: test INC-2 shared
+wallet-sim evaluation harness — PASS", 274/0 tests). This is also the **last** increment in the current
+plan (§14 has only INC-1/INC-2) — clearing this is a precondition for Phase 4 closure consideration. Read
+`docs/requirements.md` §10.2 (FR31), `docs/design.md` §17 + §14 + §9, `docs/handoff.md` (INC-2),
+`docs/test-report.md` §10, and this log's full history first, then independently re-verified the actual
+code myself rather than trusting the handoff/test-report summaries: `scripts/wallet_sim.py` (full read),
+`scripts/eval_shadow.py` (full read), `scripts/run_shadow.py` and `scripts/run_shadow_nse.py` (full reads,
+diffed against Pass 3's versions to confirm the refactor), `scripts/config.py` (full read),
+`.github/workflows/hourly-watchlist.yml` (grepped `timeout-minutes`), `tests/test_wallet_sim.py`,
+`tests/test_eval_shadow.py`, `tests/test_run_shadow.py` (all full reads), `tests/test_config.py` (relevant
+slice). **Method note (unchanged from Pass 2):** no shell/execute tool available this session either — the
+"274/0 tests" claim is verified by static inspection (every new/changed test file read in full, test
+counts independently confirmed by `grep -c '^def test_'`, cross-summed against qa's stated total) rather
+than by running `pytest` myself. Also attempted to independently re-verify REV-016's live-Supabase claim
+via MCP `list_tables` this session — the tool was not available in this reviewer session, so REV-016's
+resolution below rests on the task brief's stated verification (done by the orchestrator earlier this
+session with the actual Supabase MCP tools), not an independent re-check by me this pass.
+
+### Re-check of prior open items
+
+**REV-002 — RESOLVED 2026-07-15.** FR31 ("a defined, committed, reproducible evaluation method... MUST
+exist, and it MUST cover both the US/CA shadow track and the NSE shadow track... demonstrated
+reproducible") is now built and independently verified against the actual code, not just qa's or dev's
+claims:
+- `scripts/eval_shadow.py --track us_ca` and `--track nse` both route to real, distinct tables
+  (`TRACKS = {"us_ca": "call_log_shadow", "nse": "call_log_shadow_nse"}`, confirmed at
+  `eval_shadow.py:29`) through the same `build_report`/`render_report` pipeline — both tracks genuinely
+  work end-to-end through one shared implementation, not two parallel one-off scripts.
+- Reproducibility is demonstrated, not just asserted: read `tests/test_eval_shadow.py`'s determinism tests
+  myself (`test_build_report_is_deterministic_identical_input_identical_output`,
+  `test_build_report_deterministic_regardless_of_input_row_order`,
+  `test_json_output_is_reproducible_byte_identical_with_sort_keys`) — these assert real dict/JSON equality
+  across two independent calls on identical input, including an explicit order-independence check (shuffled
+  row order still produces the same output), which is the genuine FR31 acceptance bar design §17.3
+  specifies ("two runs over the same data produce identical output"). Not vacuous ("no exception raised")
+  assertions.
+- No committed wallet-sim harness existed anywhere in the repo as of Pass 1/2/3 (confirmed repeatedly by
+  direct `sql/` inspection); it now does, as a versioned, re-runnable Python CLI (`scripts/wallet_sim.py` +
+  `scripts/eval_shadow.py`), matching design §17.1's stated preference for a Python artifact over the
+  original ad-hoc SQL-editor CTE. FR31 is delivered. Marking REV-002 RESOLVED — see this pass's findings
+  below for the detailed verification.
+
+**REV-016 — RESOLVED 2026-07-15 (per task brief; not independently re-verified by reviewer this pass).**
+The task brief states the orchestrator applied `sql/shadow_nse_call_log_migration.sql` to the live
+Supabase project earlier this session via Supabase MCP tools, and verified `call_log_shadow_nse` exists
+live, RLS on, 0 rows, matching the committed migration. My own Supabase MCP tool access was unavailable
+this session (`list_tables` call failed with "No such tool available"), so I could not independently
+re-confirm this myself as I would prefer to for a HARD-isolation-adjacent item. Marking RESOLVED on the
+strength of the task brief's explicit, itemized verification (table exists, RLS on, 0 rows, matches
+committed migration) rather than reviewer's own tool-based confirmation — flagging the method gap
+explicitly rather than silently treating it as independently reviewer-verified.
+
+**REV-015 — still open, unchanged, carried forward.** Re-grepped `.github/workflows/hourly-watchlist.yml`:
+`timeout-minutes: 15` is still a bare literal on both shadow steps (lines 119, 152), still with no
+`config.py` tunable and still absent from `docs/requirements.md` §11 / `docs/design.md` §9's tunable
+tables (spot-checked both this pass — no new entry appeared). Not touched by INC-2 (correctly out of its
+file scope). **Owner: tech-lead**, unaddressed since Pass 3.
+
+**REV-017 — still open, and now somewhat broader; carried forward.** `docs/design.md:3-7`'s header still
+reads "FORWARD design — DRAFT pending user GATE 3 approval... No dev work on INC-1/INC-2 starts before
+that approval," and §16/§17's own section headers still read "Status: NOT YET BUILT — prescriptive design
+for INC-1" / "for INC-2" (confirmed at lines 764 and 878 this pass). Both INC-1 and INC-2 have now shipped
+through dev, qa, and (as of this pass) reviewer for INC-2 — the staleness is no longer just the top header,
+it now also affects §14 ("designed, planned, not yet built" is stated for FR31 in §15's coverage map too)
+and both forward-design section banners. Still **not a blocker** (the prescriptive content of §16/§17 was
+followed accurately — this is a status-tracking staleness, not a content discrepancy) but the surface area
+of the staleness has grown since Pass 3, not shrunk. **Owner: tech-lead**, unaddressed since Pass 3 —
+recommend a single pass updating §0–§1 header, §14, §15, §16 banner, and §17 banner together once INC-2
+merges, rather than another piecemeal fix.
+
+**REV-018 — still open, unchanged; scoping re-confirmed correct.** Re-read `scripts/run_shadow.py::main()`
+myself this pass (it was touched by INC-2's refactor, since `_derive_shadow_positions` now calls
+`wallet_sim.walk`): line 209 is still `except Exception as e:`, still does not catch `SystemExit`. INC-2
+did not fix this — correctly so, since the bug is in `main()`'s exception handling, a different function
+from the one INC-2's refactor scope (`_derive_shadow_positions`) touched, and dev's handoff explicitly
+lists REV-018 as "unrelated to INC-2 and not touched." I independently confirm this scoping is still
+correct: INC-2 touching `run_shadow.py` for an unrelated reason does not make REV-018 more urgent than
+Pass 3 assessed it (still a defense-in-depth gap, not a live isolation breach, since
+`continue-on-error: true` on the workflow step independently covers the same failure mode). **Owner: dev**,
+unaddressed since Pass 3 — the one-line `except (Exception, SystemExit)` fix `run_shadow_nse.py` already
+has is still the recommended follow-up.
+
+### Pass 1 — Traceability, requirements → code (FR31)
+
+Independently verified every FR31 clause against the actual code (not taken on qa's or dev's word):
+- **Both tracks genuinely work end-to-end:** `eval_shadow.py --track us_ca`/`--track nse` both resolve to
+  real, correctly-scoped table reads (`fetch_shadow_rows`/`fetch_production_rows`, `eval_shadow.py:171-188`)
+  and flow through the same `build_report`. Confirmed via `tests/test_eval_shadow.py`'s
+  `test_fetch_shadow_rows_reads_the_correct_table_for_track` and
+  `test_fetch_shadow_rows_never_touches_call_log_or_other_shadow_table`, which use a table-keyed fake
+  Supabase double that **raises on any unexpected table access** — a genuine isolation-proving test
+  pattern, not just a happy-path mock.
+- **Single shared wallet-walk, no divergence (design §17.2):** `wallet_sim.walk` is called from exactly
+  three places — `run_shadow.py._derive_shadow_positions`, `run_shadow_nse.py._derive_shadow_positions`,
+  and `eval_shadow.py.build_report` (confirmed by direct read of all three call sites). This is the key
+  correctness property FR31 depends on and it holds.
+- **Reproducibility demonstrated, not asserted (design §17.3's explicit acceptance bar):** see REV-002
+  resolution above — genuine dict/JSON-equality assertions across independent calls, plus an
+  order-independence check, both read and confirmed by me directly in `tests/test_eval_shadow.py`.
+- **Read-only guarantee (also a Pass 4/security-relevant property, cross-referenced below).**
+
+No traceability gaps. FR31 has design coverage (§17), implementation (verified above), and automated tests
+that assert real outcomes (determinism, correct P&L math, correct table scoping), not vacuous mocks.
+
+### Pass 2 — Traceability, code → requirements (scope creep)
+
+Re-read every new/changed file end to end. No undocumented behavior found:
+- `eval_shadow.py --output PATH`'s local JSON file write is explicitly anticipated by design §17.1/§17.3
+  ("optionally a committed CSV/JSON artifact") — not scope creep, and it writes to the filesystem, not to
+  any Supabase table, so it does not violate the "harness never writes to any table" guarantee (verified
+  this is the correct reading of that guarantee: design §17.3 says "NEVER writes to any table," scoped to
+  Supabase, not to "never writes anything anywhere").
+- `config.require_secrets()` being called from `eval_shadow.main()` even though the script never calls
+  Gemini (so `GEMINI_API_KEY` is required but unused by this script) is a minor operational quirk (reusing
+  the shared fail-fast gate across all three secrets) but is disclosed plainly in `docs/handoff.md` ("this
+  script never calls Gemini") rather than hidden — not undocumented behavior, just a documented judgment
+  call. Not flagged as a finding; it does not weaken any guarantee.
+- No new dependencies added to `requirements.txt`, no new network calls, no new file writes beyond the
+  documented opt-in `--output` path. **No `[SCOPE-CREEP]` findings.**
+
+### Pass 3 — Hardcoding audit
+
+`EVAL_WINDOW_DAYS` (`scripts/config.py:101`, `int(os.environ.get("EVAL_WINDOW_DAYS", "14"))`) is genuinely
+config-driven, not hardcoded in code — confirmed by direct read and by
+`tests/test_eval_shadow.py::test_main_uses_config_eval_window_days_not_a_hardcoded_value`, which spies on
+the actual queried window through a monkeypatched config value and proves it is read live, not baked in.
+`docs/design.md` §17.4 and §9 both list it correctly (confirmed at lines 920 and 550).
+
+**REV-019 — [HARDCODED] minor (doc-sync gap, same pattern as REV-011/REV-015) —
+`docs/requirements.md` §11.** `EVAL_WINDOW_DAYS` does not appear anywhere in `docs/requirements.md` §11
+(the reviewer's own stated hardcoding-audit baseline) — I read §11 in full this pass (Core system,
+Discovery prefilter, Experimental shadow wallet pilot, Experimental NSE shadow wallet pilot tables) and
+confirmed no row for it in any of the four tables. `docs/design.md` §9/§17.4 correctly document it, so this
+is a one-sided sync gap (design.md is current, requirements.md's audit-baseline table is stale), not a
+missing tunable in the actual config surface. Same disposition class as REV-011 (tech-lead/pm judgment
+call on which doc's table is the canonical audit baseline going forward) — not a code defect, and not a
+blocker. **Owner: pm** (requirements.md §11 is pm-owned) — add an "Experimental — shared wallet-sim
+evaluation harness (§10.2)" row/table mirroring design.md §17.4's entry.
+
+No other new hardcoded literals found in the INC-2 file set. `wallet_sim.py` introduces no tunables at all
+(pure function, no config surface needed — correct, since the state-machine rules themselves are the
+requirement, not a threshold). `TRACKS`/`VERDICTS` constants in `eval_shadow.py` are the requirement's own
+fixed vocabulary (Buy/Sell/Hold, us_ca/nse), not tunables — correctly not flagged, same reasoning Pass 3
+applied to `NSE_MARKETS = {"NSE"}`.
+
+### Pass 4 — Security audit
+
+- **Read-only guarantee (the security-relevant property for this increment) — verified directly, not
+  taken on qa's grep claim.** I read `scripts/eval_shadow.py` and `scripts/wallet_sim.py` in full myself:
+  every Supabase call chain in `eval_shadow.py` (`fetch_shadow_rows`, `fetch_production_rows`) ends in
+  `.select(...).eq(...).gte(...).lte(...).order(...).execute()` — no `.insert(`, `.update(`, `.upsert(`, or
+  `.delete(` call anywhere in either file (confirmed by my own read of the full source, not a grep I ran
+  blind — I read every line). `wallet_sim.py` makes no Supabase/network call of any kind (zero imports at
+  all, confirmed by reading the file top to bottom — not even stdlib). The only "write" in scope is the
+  local `--output` JSON file (`open(args.output, "w")`, `eval_shadow.py:226`), which is filesystem-only,
+  explicitly opt-in, and explicitly anticipated by design §17.1/§17.3 (see Pass 2 above) — not a table
+  write, not a violation of the guarantee as written.
+- **Same secret-key read pattern, no new credential-handling surface:** `eval_shadow.main()` calls
+  `config.require_secrets()` then `state.client()` — the identical pattern `run_shadow.py`/
+  `run_shadow_nse.py` already use, reading `SUPABASE_SECRET_KEY`/`GEMINI_API_KEY`/`SUPABASE_URL` from env
+  only (`scripts/config.py:13-17`). No new env var, no new credential type, no credential ever logged or
+  printed (confirmed: `render_report`/`print` calls in `eval_shadow.py` only ever emit ticker/verdict/
+  P&L/window data).
+- **No holdings/cost-basis leakage in report output:** independently verified — `fetch_production_rows`
+  selects only `ticker,verdict,timestamp,alerted` from `call_log` (`eval_shadow.py:184`), never `shares`/
+  `cost_basis`/any holdings field; `fetch_shadow_rows` selects only `ticker,verdict,timestamp,data_snapshot`
+  from the shadow tables, and shadow tables never contain real holdings data in the first place (FR27/FR35,
+  confirmed in Pass 3's prior audit and unchanged). The report's `open_position`/`round_trips` fields are
+  entirely *simulated* wallet-walk state derived from shadow verdict history and snapshot prices, never
+  real position data. No leakage.
+- **No committed secrets:** grepped the four new/changed files
+  (`scripts/wallet_sim.py`, `scripts/eval_shadow.py`, `tests/test_wallet_sim.py`,
+  `tests/test_eval_shadow.py`, `tests/test_run_shadow.py`) for API-key/token/PAT-shaped patterns (`AIzaSy`,
+  `ghp_`, `github_pat_`, `sb_secret_`) — no hits. `scripts/config.py`'s only change this increment
+  (`EVAL_WINDOW_DAYS`) is a non-secret integer tunable.
+- **No overly permissive file/network operation:** the `--output` file write is to an operator-supplied
+  CLI argument path (not derived from any external/network/user-facing input — this is a local CLI tool,
+  not a server endpoint), so there is no path-traversal/untrusted-input trust-boundary concern of the kind
+  this pass's brief asks about; it's operationally equivalent to any `--output` flag on a CLI script run by
+  the operator themselves.
+
+**No new `[SECURITY]` findings this pass.** FR31's read-only guarantee (the one security-relevant property
+design §17.3 calls out as HARD) holds, independently verified by direct code read.
+
+### Pass 5 — Leanness audit
+
+- **`wallet_sim.py` minimality:** 72 lines, zero imports, one public function (`walk`) plus one private
+  helper (`_return_pct`). Confirmed appropriately minimal — no unused code, no premature abstraction, and
+  correctly has no config surface of its own (the state-machine rules are fixed by the requirement, not a
+  tunable).
+- **Duplication genuinely eliminated (design §17.2's explicit ask) — verified by direct diff, not assumed.**
+  Read both `run_shadow.py._derive_shadow_positions` and `run_shadow_nse.py._derive_shadow_positions` in
+  full: both now build a flattened `{"verdict","timestamp","price"}` row list from their own Supabase query
+  (unchanged from before) and then call `wallet_sim.walk(walk_rows)["position"]` — the old inline
+  Buy/Sell/Hold three-branch loop that Pass 3 confirmed was duplicated byte-for-byte between the two files
+  is now **gone from both**, not left dead alongside the new call. Grepped both files for the old inline
+  pattern (`state_flag == "flat"` / `state_flag == "holding"` assignment logic) — zero matches outside
+  `wallet_sim.py` itself. This is a real refactor, not an addition-alongside-the-old-code.
+- **`eval_shadow.py`'s pure/IO split is real, not just described that way.** Read the file top to bottom:
+  everything above the `# --- I/O: reads only, never writes` marker (`default_window`, `parse_window_bound`,
+  `_verdict_counts`, `build_report`, `render_report`, `_fmt_counts`) takes only plain dicts/lists/strings
+  and returns plain values — no `sb`/Supabase parameter anywhere in any of those six functions' signatures,
+  confirmed by reading each signature directly. Everything below the marker (`fetch_shadow_rows`,
+  `fetch_production_rows`) takes `sb` and does nothing but a `.select()` chain — no business logic. `main()`
+  is the only place the two are wired together. This is a genuine, clean split, not a description that
+  doesn't match the code.
+- No dead code, no unused imports, no commented-out code in any of the four new/changed production files
+  (`wallet_sim.py`, `eval_shadow.py`, `run_shadow.py`, `run_shadow_nse.py`) or the three new/changed test
+  files. Docstrings and inline comments remain substantive (e.g., `eval_shadow.py`'s own read-only-guarantee
+  docstring doubles as a grep-verifiable contract, consistent with this codebase's established comment
+  style) — not narration filler.
+
+**REV-020 — [BLOAT] minor (doc accuracy) — `docs/test-report.md` §10.5, lines ~495-497.** The per-file new-
+test-count breakdown is materially wrong and self-contradictory as written: it claims "26 in
+`tests/test_wallet_sim.py`, 40 in `tests/test_eval_shadow.py` — wait, actual count 39 — see file for exact
+breakdown; combined new-file total is 76." I counted the actual files myself
+(`grep -c '^def test_'`): `tests/test_wallet_sim.py` has **20** test functions (not 26),
+`tests/test_eval_shadow.py` has **34** (not 40, and not the self-corrected "39" either), and
+`tests/test_run_shadow.py` (mentioned elsewhere in §10.1 as "10 tests") has **9** (not 10). The document
+even flags its own uncertainty inline ("wait, actual count 39") without resolving it before committing —
+the kind of stray edit-in-progress note `docs/handoff.md`/`docs/test-report.md` don't otherwise contain.
+**Notably, the final, load-bearing numbers are still correct despite the wrong per-file breakdown:**
+20 + 34 + 9 = 63, **+ 2** (`tests/test_config.py`'s `EVAL_WINDOW_DAYS` tests, confirmed correct) **= 65 net
+new**, and 209 (Pass 3's confirmed baseline) + 65 = **274**, matching §10.5's stated final total exactly —
+so the increment's actual test count and regression claim are NOT in question, only the illustrative
+per-file prose is wrong. **Not a blocker, not a major** — it doesn't misstate the increment's real coverage
+or verdict, but per `CLAUDE.md`'s "docs stay in sync with reality" non-negotiable, a committed test-report
+section with visibly unresolved arithmetic is a genuine (if cosmetic) doc-quality defect, similar in kind
+to REV-013's prior finding on `qa/test-plan-full-codebase.md`. **Owner: qa** (this file's owner) — correct
+the per-file breakdown to 20/34/9/+2=65 (or simply drop the illustrative per-file numbers and keep only the
+independently-verifiable 209→274 totals, which are the only figures that actually matter for the
+regression claim).
+
+### Spot-checks
+
+- **`--track us_ca` and `--track nse` both genuinely work end-to-end (not just accept the flag):**
+  confirmed via `tests/test_eval_shadow.py::test_end_to_end_fetch_and_build_report_via_fake_double` and
+  qa's own §10.4 real-entry-point CLI run (argparse error paths + a full `main()` run through a fake
+  Supabase double) — read both directly, both exercise the actual `main(argv)` function, not just internal
+  helpers.
+- **Mock-everything-test-nothing check:** none found in the three new/changed test files. All three mock
+  only the Supabase transport boundary (`FakeEvalSupabase`/`FakeShadowSupabase`, table-keyed doubles that
+  **raise on unexpected table access** — a genuinely isolation-proving pattern, not a rubber-stamp mock) and
+  assert on real computed outcomes (P&L math checked against the literal formula, win/loss classification,
+  determinism via dict equality) — none of the three over-mock to the point of tautology.
+
+### Pass 4 summary
+
+**New findings by tag:**
+- `[HARDCODED]`: 1 (REV-019, minor — `EVAL_WINDOW_DAYS` missing from requirements.md §11's audit baseline;
+  design.md §9/§17.4 already correct)
+- `[BLOAT]` (doc accuracy): 1 (REV-020, minor — test-report.md §10.5's per-file test-count breakdown is
+  wrong/self-contradictory; the load-bearing 209→274 totals are independently confirmed correct)
+- `[SCOPE-CREEP]`: 0
+- `[SECURITY]`: 0
+- `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` / `[CODE-GAP]` / `[TEST-GAP]`: 0 (FR31 fully delivered, traced, and
+  genuinely tested — see REV-002 resolution)
+
+**Resolved this pass:** REV-002 (FR31 delivered — the shared evaluation harness now exists, covers both
+tracks, and demonstrates reproducibility via real determinism tests, all independently verified against the
+actual code and tests, not taken on trust), REV-016 (NSE migration applied live — resolved per the task
+brief's stated verification; reviewer's own Supabase MCP tool access was unavailable this session, so this
+is not an independently reviewer-confirmed resolution, flagged as a method caveat above).
+
+**Carried forward, unaddressed since Pass 3:** REV-015 (`timeout-minutes: 15` hardcoded, routed to
+tech-lead), REV-017 (design.md status-tracking staleness — now broader in surface area, not just the top
+header, routed to tech-lead), REV-018 (`run_shadow.py`'s `except Exception`/`SystemExit` gap, routed to
+dev; re-confirmed still correctly out-of-scope for INC-2 despite INC-2 touching the same file for an
+unrelated reason).
+
+**Open blocker count: 0.**
+**Open major count: 0.**
+**Open minor count: 5** (REV-015, REV-017, REV-018 carried forward; REV-019, REV-020 new this pass).
+**ACCEPTED-DEBT count: 1** (REV-006, unchanged, not re-examined this pass — out of INC-2's scope).
+
+### Verdict — INC-2 (FR31)
+
+**CLEAR TO MERGE. 0 blockers, 0 majors.** FR31's requirement text was independently verified clause-by-
+clause against the actual code (not taken on qa's or dev's word): both `--track us_ca` and `--track nse`
+genuinely work end-to-end through one shared `build_report`/`render_report` pipeline; reproducibility is
+demonstrated by real determinism tests (dict/JSON equality across independent calls, plus order-
+independence), not merely asserted; the single-shared-wallet-walk design property (§17.2) holds — I
+confirmed by direct read that the old duplicated inline state machine is genuinely gone from both
+`run_shadow.py` and `run_shadow_nse.py`, replaced by real calls to `wallet_sim.walk`, not left dead
+alongside a new addition; the read-only guarantee (the one HARD, security-relevant property this increment
+introduces) holds under my own direct read of the full source of both new files, not just qa's grep claim.
+`EVAL_WINDOW_DAYS` is genuinely config-driven. Test quality is genuine: all three new/changed test files use
+isolation-proving fake doubles (raise-on-unexpected-table-access) and assert real computed outcomes, not
+vacuous mocks.
+
+**Five open minor items, none blocking, two new this pass:**
+1. **REV-015** (carried forward) — `timeout-minutes: 15` hardcoded on both shadow workflow steps. Route to
+   **tech-lead**.
+2. **REV-017** (carried forward, broader) — design.md's forward-design status markers (top header, §16/§17
+   banners, §14/§15) are now stale across more of the document than Pass 3 flagged, since both INC-1 and
+   INC-2 have shipped. Route to **tech-lead**.
+3. **REV-018** (carried forward) — pre-existing `SystemExit`-swallowing gap in `run_shadow.py::main()`,
+   re-confirmed still correctly out of INC-2's scope despite the file being touched for an unrelated reason
+   this increment. Route to **dev**.
+4. **REV-019** (new) — `EVAL_WINDOW_DAYS` missing from `docs/requirements.md` §11's audit-baseline table
+   (design.md §9/§17.4 already correct). Route to **pm**.
+5. **REV-020** (new) — `docs/test-report.md` §10.5's per-file new-test-count breakdown is wrong and visibly
+   self-contradictory, though the load-bearing 209→274 totals are independently confirmed correct. Route to
+   **qa**.
+
+**Method caveats, disclosed plainly (not silently assumed away):** (a) no shell-execution tool available
+this reviewer session — the "274/0 tests" claim rests on static inspection (full reads of all new/changed
+test files, hand/grep-verified counts, no skip/xfail markers found) rather than an independent live
+`pytest` run; (b) REV-016's resolution rests on the task brief's stated Supabase MCP verification, not an
+independent reviewer re-check, since the MCP tool was unavailable in this session.
+
+**Closure-readiness read (reviewer's professional opinion, not a decision reviewer makes):** with INC-2
+clearing at 0 blockers/0 majors, the increment plan (§14) is now fully delivered — FR24–FR39/NFR5/NFR6/FR31
+all have design coverage, implementation, and genuine test coverage, independently verified across Pass 3
+and this pass. The five open minor items (REV-015, REV-017, REV-018, REV-019, REV-020) are all real but
+genuinely cosmetic/non-functional (a workflow timeout literal, two doc-staleness items, a pre-existing
+defense-in-depth gap covered by a second belt, and a test-count typo) — none of them represent an
+undelivered requirement, a security hole, or a functional defect. **My read: this change request (NSE
+shadow pilot + eval harness + paid-tier correction) looks substantively ready for Phase 4 closure
+consideration** — the FR/NFR delivery is genuinely complete and verified, not just claimed. Whether the
+five open minors should be cleaned up *before* or *in parallel with* Phase 4 is a judgment call for the
+orchestrator/user (none of them block qa's end-to-end closure test or pm's FR/NFR delivery confirmation),
+but I'd flag REV-017 (stale design.md status headers) as the one worth a quick fix before closure
+specifically, since a design doc that still says "DRAFT pending GATE 3 approval" at the moment of declaring
+the project done is the kind of self-contradiction a future reader would immediately notice.
