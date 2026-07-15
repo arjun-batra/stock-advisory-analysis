@@ -134,3 +134,18 @@ via `state.client()`. `wallet_sim.py` makes no Supabase/network calls at all.
 - REV-015 (hardcoded `timeout-minutes` on the shadow workflow steps) and REV-018 (the pre-existing
   `run_shadow.py` `except Exception` / `SystemExit` gap) are unrelated to INC-2 and were not touched — both
   remain open items routed to tech-lead per the prior handoff.
+
+## Addendum: REV-018 fix (2026-07-15)
+
+- **File changed:** `scripts/run_shadow.py` only.
+- **Fix:** widened `main()`'s `except Exception` to `except (Exception, SystemExit)` (with the same
+  explanatory comment already present in `run_shadow_nse.py`'s `main()`), so a `SystemExit` raised by
+  `config.require_secrets()` on a missing secret is now caught and swallowed instead of propagating out of
+  `main()` — restoring the "main() always exits 0" isolation guarantee for the US/CA shadow track, matching
+  the fix already applied to `run_shadow_nse.py` during INC-1. Resolves **REV-018**.
+- **Verification:** `python3 -m pytest tests/ -q` — 273 passed, 1 failed. The 1 failure is
+  `tests/test_run_shadow_nse.py::test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap`, which was
+  written to *confirm the bug's existence* (`pytest.raises(SystemExit)` around `run_shadow.main()`); now that
+  the bug is fixed, that assertion is stale/inverted by design — the test's own docstring says it documents a
+  bug that was "out of INC-1 scope to fix." No other test touches this path. Not fixed here since `tests/` is
+  qa's territory, not dev's — flagging for qa to retire or invert this test now that REV-018 is resolved.
