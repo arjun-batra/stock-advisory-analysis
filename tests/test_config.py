@@ -296,6 +296,18 @@ def test_nse_market_closed_past_grace_after_close():
     assert config.is_nse_open(_ist(15, 41)) is False
 
 
+# --- EVAL_WINDOW_DAYS (design §17.4, INC-2, FR31) ------------------------------
+
+def test_eval_window_days_defaults_to_14(reload_config):
+    cfg = reload_config(EVAL_WINDOW_DAYS=None)
+    assert cfg.EVAL_WINDOW_DAYS == 14
+
+
+def test_eval_window_days_override_propagates(reload_config):
+    cfg = reload_config(EVAL_WINDOW_DAYS="7")
+    assert cfg.EVAL_WINDOW_DAYS == 7
+
+
 # --- require_secrets() fail-fast behavior ---------------------------------------
 
 def test_require_secrets_fails_fast_when_missing(reload_config):

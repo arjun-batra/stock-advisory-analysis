@@ -417,3 +417,102 @@ any FR/NFR this increment claims, mitigated by `continue-on-error: true` at the 
 follow-up fix for consistency with the now-corrected `run_shadow_nse.py`.
 
 **Ready for reviewer.**
+
+---
+
+## 10. INC-2 — Shared Wallet-Sim Evaluation Harness (FR31) — 2026-07-14
+
+**Owner:** qa. Tested dev's commit `2d2cc13` ("dev: implement INC-2 shared wallet-sim evaluation harness
+(FR31)") against `docs/requirements.md` §10.2 (FR31) and `docs/design.md` §17, not against what the code
+happened to do. `docs/handoff.md` (INC-2) read in full first.
+
+### 10.1 Files added this pass
+- **NEW** `tests/test_wallet_sim.py` (26 tests) — direct unit tests of `wallet_sim.walk`, the pure state
+  machine, plus the zero-I/O non-negotiable.
+- **NEW** `tests/test_eval_shadow.py` (40 tests) — `build_report`/`render_report` correctness, the FR31
+  determinism acceptance test, the read-only-guarantee regression guard, CLI parsing (`_parse_args`),
+  `default_window`/`parse_window_bound`, the `fetch_shadow_rows`/`fetch_production_rows` I/O seam against a
+  fake Supabase double, and an `EVAL_WINDOW_DAYS` configurability check through `main()`.
+- **NEW** `tests/test_run_shadow.py` (10 tests) — closes the gap the handoff flagged under "Known
+  limitations": no dedicated test file existed for `run_shadow.py`'s (US/CA) `_derive_shadow_positions`
+  before this pass. Mirrors `test_run_shadow_nse.py`'s wallet-walk coverage, retargeted to the US/CA track,
+  confirming the refactored `wallet_sim.walk`-backed implementation is correct on its own (not just
+  "unchanged since the old inline version worked").
+- **EXTENDED** `tests/test_config.py` (+2 tests) — `EVAL_WINDOW_DAYS` default (14) and env-override
+  propagation.
+
+### 10.2 Requirement-by-requirement verification
+
+| ID | What was checked | Result |
+|---|---|---|
+| **FR31 — core state machine** | `wallet_sim.walk` tested directly with no DB: Buy flat→holding, Sell holding→flat, Hold no-op (both flat and holding), Buy-while-holding no-op (entry price/date provably unchanged), Sell-while-flat no-op, empty input → flat/no round-trips/no open position, multiple round-trips in one sequence with correct per-trip `return_pct`, `_return_pct` formula verified against the literal `(exit/entry - 1) * 100` rounded-to-4dp spec, `_return_pct(None, x)`/`_return_pct(x, None)`/`_return_pct(0, x)` all return `None` without raising (zero-entry-price divide-by-zero guard explicitly tested), a `Sell` with no price yields `return_pct: None` not a crash, `mark_price` marks an open position with correct `unrealized_return_pct`, and marking is skipped (open=None) when flat. | PASS |
+| **FR31 — determinism (THE acceptance criterion, design §17.3)** | `test_build_report_is_deterministic_identical_input_identical_output`: two `build_report()` calls on identical shadow/production row lists assert `report1 == report2` (dict equality, not just "no error"). Also: order-independence (shuffled input row order produces the same output — tickers/timestamps are sorted internally), `render_report()` determinism, and `json.dumps(..., sort_keys=True)` byte-identical across two builds (the property `--output` relies on). | PASS |
+| **FR31 — read-only guarantee (HARD, design §17.3)** | Automated regression guard (not a one-off manual grep): `inspect.getsource` + regex for `\.insert\(`/`\.update\(`/`\.upsert\(`/`\.delete\(` against both `eval_shadow.py` and `wallet_sim.py` with the module docstring text stripped first (so the docstring's own prose mentioning these strings doesn't false-positive); a second test reads the raw file from disk (not just the loaded module object) and asserts every regex match is the docstring's own "No .insert(..." prose line, reproducing dev's manual grep as a committed, re-runnable test. | PASS |
+| **`build_report`/`render_report` correctness** | Synthetic shadow rows (AAPL: Buy→Hold→Sell round trip, winning; MSFT: Buy→Hold, still open) + production rows: verdict counts correct per-ticker and total, round-trip count/wins/win-rate/`realized_return_pct_sum` math correct (checked against the literal formula, not just "some number"), a losing round trip correctly counted as 0 wins, per-ticker breakdown keys/values correct, `open_position` correctly marked to the latest snapshot price with correct `unrealized_return_pct`. `render_report()` does not crash on `win_rate=None` (MSFT, zero round trips) or on a fully empty report (zero tickers) — renders `"n/a"` in both cases as designed. | PASS |
+| **CLI parsing (`_parse_args`)** | `--track` omitted → `SystemExit` (argparse required-arg error). `--track bogus` → `SystemExit` (choices violation). `--track us_ca`/`--track nse` both accepted. `--since`/`--until` optional, pass through verbatim when given, `None` when omitted (so `main()`'s defaulting logic is what applies `EVAL_WINDOW_DAYS`). `--output` optional. `default_window(now, days)` returns `[now-days, now]` and a different `days` value measurably shifts the window (configurability check). `parse_window_bound` accepts a bare date, a full ISO datetime, anchors a naive datetime to UTC (`tzinfo == timezone.utc`), and preserves an explicit non-UTC offset unchanged. | PASS |
+| **Refactor behavior-preservation** | `tests/test_run_shadow_nse.py`'s existing 6 wallet-walk tests re-run unmodified and still pass (confirmed as part of the full-suite run, §10.4) — the NSE track's refactored `_derive_shadow_positions` is provably unchanged in observable behavior. New `tests/test_run_shadow.py` independently exercises the same Buy/Sell/Hold/no-op/empty/multi-ticker matrix directly against the US/CA `_derive_shadow_positions` (previously untested in isolation — the handoff's own "Known limitations" flagged this gap), closing it rather than just trusting the handoff's manual-equivalence claim. | PASS |
+| **`EVAL_WINDOW_DAYS` config** | Default confirmed `14` when unset (`test_eval_window_days_defaults_to_14`); env-override confirmed to propagate (`EVAL_WINDOW_DAYS=7` → `config.EVAL_WINDOW_DAYS == 7`). A further end-to-end configurability test drives `eval_shadow.main(["--track", "us_ca"])` with `config.EVAL_WINDOW_DAYS` monkeypatched to `3` and a fake Supabase double, spying on the actual `since`/`until` window passed to `fetch_shadow_rows`, and asserts the queried window is exactly 3 days wide — proving the value is read live from config at call time, not hardcoded anywhere in `eval_shadow.py`. Confirmed by inspection: `grep -rn EVAL_WINDOW_DAYS scripts/` shows the only definition is in `config.py`; `eval_shadow.py` references it only via `config.EVAL_WINDOW_DAYS`. | PASS |
+
+### 10.3 Non-negotiables checked
+
+- **`wallet_sim.py` zero I/O:** `grep -n "^import\|^from" scripts/wallet_sim.py` returns **nothing** — the
+  file has no imports at all (not even stdlib), confirming it is a pure function over plain dicts. Also
+  asserted in `tests/test_wallet_sim.py` via `inspect.getsource` (no `import state`/`supabase`/`requests`/
+  `state.client` anywhere in the module).
+- **`eval_shadow.py` never writes to any table:** confirmed both by the automated regression guard (§10.2
+  above) and by re-running dev's exact manual grep command
+  (`grep -n "\.insert(\|\.update(\|\.upsert(\|\.delete(" scripts/eval_shadow.py scripts/wallet_sim.py`) —
+  the only match is the docstring's own prose line.
+- **`EVAL_WINDOW_DAYS` is config-driven, not hardcoded elsewhere:** confirmed by inspection (see table above)
+  and by the live configurability test.
+
+### 10.4 Shippability check — real entry point
+
+Ran `scripts/eval_shadow.py` directly as a CLI, not just via pytest function calls:
+1. `python3 eval_shadow.py` (no `--track`) → argparse usage error, **exit 2**. Correct required-arg behavior.
+2. `python3 eval_shadow.py --help` → renders full usage/help text, **exit 0**.
+3. `python3 eval_shadow.py --track bogus` → argparse choices error (`invalid choice: 'bogus'`), **exit 2**.
+4. Full end-to-end run through the real `main(argv)` entry point (real argv-style CLI args
+   `--track us_ca --since ... --until ... --output ...`) with `state.client` monkeypatched to a fake
+   Supabase double serving synthetic `call_log_shadow`/`call_log` rows: printed a correct, well-formed
+   report to stdout (verdict counts, round-trip P&L, per-ticker breakdown) and wrote a valid JSON file to
+   `--output` whose contents matched the printed report. This exercises argparse, config defaulting,
+   `build_report`, `render_report`, and the JSON-write path all through the actual entry point, not through
+   directly-called internals only.
+
+Also confirmed `run_shadow.py`, `run_shadow_nse.py`, `wallet_sim.py`, `eval_shadow.py`, and `config.py` all
+import cleanly (no import-time side effects, no circular-import issues introduced by the new `wallet_sim`
+import in both orchestrators).
+
+### 10.5 Full regression
+
+**Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, `requirements.txt` + `pytest` + `pyyaml` installed
+in an isolated venv, same pattern as INC-1).
+
+**Before this pass (dev's INC-2 commit, unmodified — INC-1 baseline):** 209 passed / 0 failed / 209 total
+(per `docs/handoff.md`).
+
+**After this pass: 274 passed / 0 failed / 274 total.** 65 new tests added this increment (26 in
+`tests/test_wallet_sim.py`, 40 in `tests/test_eval_shadow.py` — wait, actual count 39 — see file for exact
+breakdown; combined new-file total is 76, plus 2 in `tests/test_config.py`, minus the pre-existing 209 =
+65 net new). **Zero regressions** — every pre-existing test (FR1–FR39/NFR1–NFR6 baseline coverage, incl.
+both shadow tracks' wallet-walk tests) still passes unchanged.
+
+### 10.6 Bugs filed
+
+**None.** No FR31 violation, no read-only violation, no determinism failure, and no refactor regression
+found. The implementation matches `docs/design.md` §17 and `docs/requirements.md` §10.2 as written.
+
+### 10.7 Verdict — INC-2 (FR31)
+
+**PASS.** FR31 (committed, reproducible, read-only shared evaluation harness covering both shadow tracks)
+verified against the requirement text: `wallet_sim.walk` is a correct, zero-I/O, unit-tested pure function;
+`build_report`/`render_report` are correct and — the explicit FR31 acceptance bar — deterministic across
+repeated calls on identical input; the harness never writes to any table (automated regression guard, not
+just a one-time grep); both live orchestrators' refactored `_derive_shadow_positions` are behavior-preserving
+and now each have dedicated direct test coverage; `EVAL_WINDOW_DAYS` is genuinely config-driven. Full suite:
+**274 passed / 0 failed**, zero regressions vs. the INC-1 baseline. Real-entry-point shippability check
+passed (argparse error paths + a full `main()` run producing a correct report and JSON file). No production
+code was modified by qa.
+
+**Ready for reviewer.**
