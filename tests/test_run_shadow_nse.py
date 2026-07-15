@@ -336,19 +336,20 @@ def test_run_shadow_nse_main_swallows_systemexit_and_returns(monkeypatch):
     run_shadow_nse.main()   # must NOT propagate SystemExit -- this is the regression test
 
 
-def test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap(monkeypatch):
-    """CONFIRMS a pre-existing bug in the shipped US/CA track (out of INC-1
-    scope to fix; flagged in docs/test-report.md for tech-lead/dev):
-    run_shadow.py's main() catches only `except Exception`, which does NOT
-    catch SystemExit. A missing-secrets SystemExit from config.require_secrets()
-    during _run_cycle() therefore propagates out of main() uncaught, breaking
-    the "main() always exits 0" isolation guarantee FR29/NFR5 rely on."""
+def test_run_shadow_main_us_ca_track_now_swallows_systemexit_matching_nse(monkeypatch):
+    """REV-018 fix verification: run_shadow.py's main() previously caught only
+    `except Exception`, which does NOT catch SystemExit (a BaseException). A
+    missing-secrets SystemExit from config.require_secrets() during
+    _run_cycle() therefore propagated out of main() uncaught, breaking the
+    "main() always exits 0" isolation guarantee FR29/NFR5 rely on. dev widened
+    the catch to (Exception, SystemExit), matching run_shadow_nse.py's
+    existing pattern (see test_run_shadow_nse_main_swallows_systemexit_and_returns
+    above) -- this test proves the US/CA track fix actually works."""
     def _boom():
         raise SystemExit("Missing required environment secrets: GEMINI_API_KEY")
     monkeypatch.setattr(run_shadow, "_run_cycle", _boom)
 
-    with pytest.raises(SystemExit):
-        run_shadow.main()   # BUG: propagates instead of being swallowed
+    run_shadow.main()   # must NOT propagate SystemExit -- the gap is now closed
 
 
 # --- FR37: mutual isolation -- independent kill switches (see also test_config.py)

@@ -1,10 +1,13 @@
 # Stock Advisory Agent — Solution Design (as-built)
 
-**Owner:** tech-lead. **Status:** §§0–13, 15 are DESCRIPTIVE / as-built (Phases 0–7 live in production).
-**§14 (increment plan), §16 (NSE shadow pilot) and §17 (FR31 evaluation harness) are FORWARD design —
-DRAFT pending user GATE 3 approval** (2026-07-13 change request: requirements §10.2/§10.3, FR31 upgraded
-in-scope + FR32–FR39/NFR6 new + system-wide paid-tier correction). No dev work on INC-1/INC-2 starts
-before that approval.
+**Owner:** tech-lead. **Status:** the whole document is now DESCRIPTIVE / as-built. §§0–13, 15 document
+Phases 0–7 (live in production); **§14 (increment plan), §16 (NSE shadow pilot) and §17 (FR31 evaluation
+harness) were FORWARD design as of 2026-07-13, and became as-built once the 2026-07-13 change request
+shipped**: the user approved GATE 3, and **both INC-1 (NSE shadow pilot, FR32–FR39/NFR6) and INC-2 (shared
+wallet-sim harness, FR31) have been implemented, passed qa, and been reviewer-cleared with 0 blockers /
+0 majors each** (`docs/review-log.md` Pass 3 — INC-1, 2026-07-14; Pass 4 — INC-2, 2026-07-15). Read §16
+and §17 as descriptions of shipped code, the same way §§1–13 already read. The 2026-07-13 change request
+also carried a system-wide paid-tier / model-default correction, now applied.
 **Provenance:** This document was produced during the 2026-07-12 multi-agent-template adoption pass by
 condensing the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into
 this template's format, and by adding the previously-undocumented shadow wallet pilot section (§13) from
@@ -374,7 +377,7 @@ a total Supabase/pg_cron outage. An out-of-band uptime ping is the documented, u
 | `verdict_state` | ticker, current_verdict, last_checked_at | Change-detection for the single rule (FR7/FR8); shrunk to 3 cols when cooldown/reminder retired |
 | `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp (UTC), label (watchlist/new-candidate), alert_type (change/null), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source (FR14) |
 | `call_log_shadow` | (mirror of `call_log`) + `prompt_variant`, `shadow_position_state` (jsonb) | US/CA shadow pilot (FR24–FR30); **RLS on, NO anon policy/grant** — internal-only (§13.5) |
-| `call_log_shadow_nse` | (mirror of `call_log_shadow`) + `prompt_variant`, `shadow_position_state` (jsonb) | **NSE shadow pilot (FR32–FR39, NFR6)** — dedicated table, **RLS on, NO anon policy/grant** — internal-only (§16.5); INC-1, not yet built |
+| `call_log_shadow_nse` | (mirror of `call_log_shadow`) + `prompt_variant`, `shadow_position_state` (jsonb) | **NSE shadow pilot (FR32–FR39, NFR6)** — dedicated table, **RLS on, NO anon policy/grant** — internal-only (§16.5); INC-1, shipped |
 | `monitor_alerts` | check_name (PK), last_state, last_alerted_at, updated_at | Dead-man monitor dedup (NFR2) |
 | `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat (NFR2). Keys: `hourly-watchlist` (shared across sessions), `daily-discovery` (NA), `daily-discovery-in` (NSE), `publish-prices` |
 
@@ -553,6 +556,33 @@ Dashboard auto-refresh interval is build-time config (FR22). US/CA shadow: see �
 match real paid-tier operation. **The dashboard auto-refresh interval and all discovery thresholds are
 tunables, not requirements — no tunable may live only in code.**
 
+**Workflow-level (YAML) tunables — a distinct surface from `config.py`.** A few operational knobs are
+evaluated by GitHub's workflow engine *before* the Python process starts, so they cannot be `config.py`
+env-var tunables (config.py only sees them after the runner is already provisioned). `config.py` is the
+home for **application/business** tunables; the workflow-engine settings are their own surface. This repo's
+established convention for workflow knobs an operator may need to change **without a commit** is a repo
+**Variable with a literal fallback** — `${{ vars.X || '<default>' }}` — used throughout
+`hourly-watchlist.yml` (`GEMINI_MODEL`, `GEMINI_MAX_RETRIES`, `SHADOW_ENABLED`, `SHADOW_NSE_ENABLED`, …).
+Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action `@vN` pins, the
+`concurrency` group) stay as bare literals and are **not** tunables.
+
+- **REV-015 disposition — `timeout-minutes` on the two shadow steps → repo Variable (follow-up for dev).**
+  The shadow steps' `timeout-minutes: 15` (hang-isolation bound, §16.4 / load-bearing #11) currently sits
+  as a bare literal on both the US/CA and NSE shadow steps. Unlike `runs-on`/`python-version` (fixed facts),
+  15 is an **operational judgment** about batch-size / API-latency headroom that dev's own INC-1 handoff
+  flagged may need raising as NSE batches grow — i.e. exactly the "change without a commit" profile every
+  other `vars.X` knob in this file already has. Disposition: **promote it to a single repo Variable
+  `SHADOW_TIMEOUT_MINUTES` (default `15`) driving both shadow steps** via
+  `timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}` (the `fromJSON` is required
+  because `timeout-minutes` takes a number, not a string). One shared Variable for both shadow steps (the
+  bound is a generic runner-hang guard, not a per-track behavior knob; both belts — `continue-on-error` and
+  non-overlapping sessions — protect the run regardless of its value). This is a small **follow-up flagged
+  to dev** (INC-1/INC-2 already shipped); not a `config.py` entry — it is a workflow-engine setting.
+  Rationale for choosing a Variable over documenting it as an accepted-fixed constant: it is more consistent
+  with this file's dominant convention (operator-facing knobs are Variables) and with dev's stated need to
+  be able to raise it, whereas the accepted-fixed pattern is reserved for physically-justified constants
+  with an explicit "don't change" instruction (the SQL close-boundary numbers, §0 item 9) — which 15 is not.
+
 ---
 
 ## 10. Detail page & dashboard rendering authority
@@ -700,17 +730,19 @@ three isolation guarantees (FR27–FR29) hold; if any is weakened, the fail-open
 The former open gap — no committed, reproducible evaluation method; the migration comments' "wallet-sim
 recursive-CTE walk" / "wallet-sim harness" living only in the ad hoc Supabase SQL editor — is **resolved
 by the 2026-07-13 change request: FR31 is now in-scope deliverable work**, designed forward in **§17** and
-delivered by **INC-2** (§14). The harness is a committed, versioned, re-runnable artifact covering **both**
-this track (`call_log_shadow`) and the NSE track (`call_log_shadow_nse`, §16). Owner: dev builds; qa
-verifies reproducibility. Until INC-2 lands, neither shadow pilot can be assessed or graduate.
+delivered by **INC-2** (§14, shipped and reviewer-cleared Pass 4). The harness is a committed, versioned,
+re-runnable artifact covering **both** this track (`call_log_shadow`) and the NSE track
+(`call_log_shadow_nse`, §16). Built by dev; reproducibility verified by qa. Both shadow pilots can now be
+assessed via the §17 harness; graduation/retirement remains a user decision (see requirements changelog).
 
 ---
 
-## 14. Increment plan (2026-07-13 change request — FORWARD, DRAFT pending GATE 3)
+## 14. Increment plan (2026-07-13 change request — DELIVERED, GATE 3 approved)
 
-Phases 0–7 (FR1–FR30 / NFR1–NFR5) are delivered as-built (§§4–13). The 2026-07-13 change request adds two
-vertical-slice increments: FR32–FR39/NFR6 (new NSE shadow track) and FR31 (shared evaluation harness, now
-in-scope). Each slice is shippable and passes dev → qa → reviewer before the next starts (CLAUDE.md).
+Phases 0–7 (FR1–FR30 / NFR1–NFR5) are delivered as-built (§§4–13). The 2026-07-13 change request added two
+vertical-slice increments: FR32–FR39/NFR6 (new NSE shadow track) and FR31 (shared evaluation harness).
+**Both are now DELIVERED**: GATE 3 was approved by the user, and INC-1 and INC-2 each passed dev → qa →
+reviewer (0 blockers / 0 majors, `docs/review-log.md` Pass 3 and Pass 4) before the next started (CLAUDE.md).
 
 **Sequencing rationale:** NSE first, harness second. The harness (INC-2) evaluates *real* shadow history;
 NSE has none until its track exists and starts accruing rows, so building NSE first then the shared harness
@@ -722,8 +754,8 @@ The prior FR31 stub in this section is **SUPERSEDED** by INC-2.
 | INC | Slice (shippable, end-to-end) | FR / NFR | Key deliverables |
 |---|---|---|---|
 | ~~old FR31 stub~~ | **SUPERSEDED by INC-2** | — | The deferred, unscheduled FR31 harness stub is replaced by the scheduled INC-2 below. |
-| **INC-1** | **NSE shadow wallet pilot** — a working, isolated NSE shadow track that writes position-aware verdicts to `call_log_shadow_nse` end-to-end on each open NSE cycle, invisible to production and to the US/CA shadow track | FR32–FR39, NFR6 | `sql/shadow_nse_call_log_migration.sql`; `SHADOW_NSE_ENABLED` / `_PROMPT_VARIANT` / `_SNAPSHOT_LOOKBACK_MIN` in `config.py`; parametrize `shadow.judge_batch_shadow(items, models=…)`; `scripts/run_shadow_nse.py` (reusing the shared cycle logic + shared wallet-walk); new NSE shadow workflow step in `hourly-watchlist.yml` (`if: vars.SHADOW_NSE_ENABLED != 'false'`, `continue-on-error`, `timeout-minutes`, NSE model vars, no `NTFY_*`), plus a `timeout-minutes` bound on the existing US/CA shadow step; cross-track isolation per §16.4 / load-bearing #11. **Bundled quick fix (Change 2):** correct the `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` literal defaults in `config.py` (and the `|| 'gemini-3.5-flash'` fallbacks in the workflow) to `gemini-2.5-flash` / `gemini-2.5-flash-lite`. Design: §16. |
-| **INC-2** | **Shared wallet-sim evaluation harness** — a committed, re-runnable command that reports simulated shadow-vs-production performance for either shadow track over a window | FR31 | `scripts/wallet_sim.py` (pure wallet-walk state machine + P&L, no I/O, unit-testable); `scripts/eval_shadow.py` (thin, read-only entry point); refactor `run_shadow.py` and `run_shadow_nse.py` to call the **single shared** `wallet_sim.walk` (so live position derivation and the harness never diverge); `EVAL_WINDOW_DAYS` config; deterministic report covering `call_log_shadow` + `call_log_shadow_nse`. qa verifies reproducibility (two runs over the same data → identical output). Design: §17. |
+| **INC-1** ✓ SHIPPED (reviewer-cleared, Pass 3) | **NSE shadow wallet pilot** — a working, isolated NSE shadow track that writes position-aware verdicts to `call_log_shadow_nse` end-to-end on each open NSE cycle, invisible to production and to the US/CA shadow track | FR32–FR39, NFR6 | `sql/shadow_nse_call_log_migration.sql`; `SHADOW_NSE_ENABLED` / `_PROMPT_VARIANT` / `_SNAPSHOT_LOOKBACK_MIN` in `config.py`; parametrize `shadow.judge_batch_shadow(items, models=…)`; `scripts/run_shadow_nse.py` (reusing the shared cycle logic + shared wallet-walk); new NSE shadow workflow step in `hourly-watchlist.yml` (`if: vars.SHADOW_NSE_ENABLED != 'false'`, `continue-on-error`, `timeout-minutes`, NSE model vars, no `NTFY_*`), plus a `timeout-minutes` bound on the existing US/CA shadow step; cross-track isolation per §16.4 / load-bearing #11. **Bundled quick fix (Change 2):** correct the `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` literal defaults in `config.py` (and the `|| 'gemini-3.5-flash'` fallbacks in the workflow) to `gemini-2.5-flash` / `gemini-2.5-flash-lite`. Design: §16. |
+| **INC-2** ✓ SHIPPED (reviewer-cleared, Pass 4) | **Shared wallet-sim evaluation harness** — a committed, re-runnable command that reports simulated shadow-vs-production performance for either shadow track over a window | FR31 | `scripts/wallet_sim.py` (pure wallet-walk state machine + P&L, no I/O, unit-testable); `scripts/eval_shadow.py` (thin, read-only entry point); refactor `run_shadow.py` and `run_shadow_nse.py` to call the **single shared** `wallet_sim.walk` (so live position derivation and the harness never diverge); `EVAL_WINDOW_DAYS` config; deterministic report covering `call_log_shadow` + `call_log_shadow_nse`. qa verifies reproducibility (two runs over the same data → identical output). Design: §17. |
 
 No other increments are open.
 
@@ -750,24 +782,28 @@ No other increments are open.
 | NFR3 | §4.6, §4.7, §7.2 |
 | NFR4 | §4.1 cadence, §11 freshness posture |
 | FR24–FR30, NFR5 | §13.1–§13.6 US/CA shadow pilot (as-built) |
-| **FR31** | **§17 shared wallet-sim harness (INC-2) — designed, planned, not yet built (supersedes the §13.7 gap)** |
-| **FR32–FR39, NFR6** | **§16 NSE shadow pilot (INC-1) — designed, planned, not yet built** |
+| **FR31** | **§17 shared wallet-sim harness (INC-2) — shipped, reviewer-cleared (supersedes the §13.7 gap)** |
+| **FR32–FR39, NFR6** | **§16 NSE shadow pilot (INC-1) — shipped, reviewer-cleared** |
 
-**Coverage:** FR1–FR30 and NFR1–NFR5 are covered as-built. **FR31 (§17) and FR32–FR39 / NFR6 (§16) are
-fully designed** and scheduled as INC-2 and INC-1 respectively (§14) — DRAFT pending GATE 3, not yet
-implemented. There are no longer any un-designed requirements.
+**Coverage:** FR1–FR30 and NFR1–NFR5 are covered as-built. **FR31 (§17, INC-2) and FR32–FR39 / NFR6 (§16,
+INC-1) are now delivered as-built** — GATE 3 approved, both increments implemented, qa-passed, and
+reviewer-cleared (0 blockers / 0 majors, `docs/review-log.md` Pass 3 and Pass 4). Every FR/NFR is covered
+by shipped code; there are no un-designed and no un-implemented requirements.
 
 ---
 
-## 16. NSE Shadow Wallet Pilot — FORWARD design (FR32–FR39, NFR6) — DRAFT, EXPERIMENTAL / non-production
+## 16. NSE Shadow Wallet Pilot — as-built (FR32–FR39, NFR6) — EXPERIMENTAL / non-production
 
-> **Status: NOT YET BUILT — prescriptive design for INC-1.** Unlike §13 (retrospective, already shipped),
-> this section tells dev what to build. A second, fully independent shadow track mirroring §13 but on NSE
-> tickers: its own table, its own kill switch, NSE market-hours gating, and mutual isolation from both
-> production and the US/CA shadow track (load-bearing #11). New/changed artifacts: `scripts/run_shadow_nse.py`
-> (new entry point), `scripts/shadow.py` (parametrized `judge_batch_shadow(items, models=…)`),
-> `sql/shadow_nse_call_log_migration.sql` (new), a new step in `.github/workflows/hourly-watchlist.yml`,
-> and NSE-shadow vars in `scripts/config.py`. Prefer reuse over duplication (§8) throughout.
+> **Status: SHIPPED (INC-1, reviewer-cleared Pass 3, 2026-07-14).** This section was FORWARD design for
+> INC-1 as of 2026-07-13; it is now descriptive of shipped code, like §13. A second, fully independent
+> shadow track mirroring §13 but on NSE tickers: its own table, its own kill switch, NSE market-hours
+> gating, and mutual isolation from both production and the US/CA shadow track (load-bearing #11).
+> Artifacts: `scripts/run_shadow_nse.py` (entry point), `scripts/shadow.py` (parametrized
+> `judge_batch_shadow(items, models=…)`), `sql/shadow_nse_call_log_migration.sql`, the NSE shadow step in
+> `.github/workflows/hourly-watchlist.yml`, and NSE-shadow vars in `scripts/config.py`. Reuse over
+> duplication (§8) throughout. **Operational note (REV-016):** the migration must be applied to the live
+> Supabase project before the NSE track writes rows; until then the track no-ops-with-error-log every
+> cycle (a safe failure mode — FR37 isolation holds), tracked as a pre-go-live action item.
 
 ### 16.1 Purpose & scope (FR32)
 An independent position-aware verdict track for **NSE watchlist tickers only**
@@ -834,7 +870,10 @@ cross-shadow-track isolation the user required (FR37/NFR6, load-bearing #11):
     `SHADOW_ENABLED`) leaves the other track running untouched — neither can disable the other.
   - *Hang isolation:* each shadow step carries a `timeout-minutes` bound (INC-1 adds one to the existing
     US/CA step too, §13.4), so a hang self-bounds instead of holding the shared runner and delaying the
-    sibling step. Additionally the two shadow steps self-gate by **non-overlapping ET/IST sessions**:
+    sibling step. As-built this is a literal `15`; the REV-015 follow-up (§9) promotes it to a single
+    `SHADOW_TIMEOUT_MINUTES` repo Variable (default `15`, `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15')`)
+    driving both shadow steps, so ops can raise it without a commit. Additionally the two shadow steps
+    self-gate by **non-overlapping ET/IST sessions**:
     whenever one track is doing real Gemini work the other no-ops in milliseconds, so a hang in the active
     track cannot collide with real work in the other. (These two mechanisms are why a separate step, rather
     than a separate parallel job, is sufficient here — see the note below.)
@@ -865,6 +904,7 @@ to "NSE"). Applied via Supabase `apply_migration`; committed to `sql/` for repro
 | `SHADOW_NSE_ENABLED` | **`true` on unset/empty only (fail-OPEN-on-empty accepted risk, FR38/NFR6)** | Independent NSE kill switch, resolved `(os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"` — **identical shape to `SHADOW_ENABLED`**. Checked at the workflow step (`if: vars.SHADOW_NSE_ENABLED != 'false'`) and again in `config.py`. Fail-open fires **only** for unset/empty; `"false"` or any other non-empty value including a typo (`"flase"`, `"no"`, `"0"`) fails **CLOSED**. Separate from `SHADOW_ENABLED`. |
 | `SHADOW_NSE_PROMPT_VARIANT` | `position_aware_v1` | Tag written to `call_log_shadow_nse.prompt_variant` (same variant as §13). |
 | `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback to reuse the same-cycle NSE production snapshot; **must stay under the 30-min NSE cadence** (FR34). |
+| `SHADOW_TIMEOUT_MINUTES` *(workflow Variable, REV-015 follow-up)* | `15` | Hang-isolation bound on **both** shadow workflow steps (§16.4). A workflow-engine setting, not a `config.py` env-var tunable (evaluated before Python starts, §9); driven by `${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. As-built the two steps carry a bare literal `15`; the follow-up promotes it to this Variable. |
 
 **Accepted risk, recorded (FR38, NFR6, load-bearing #11):** identical in shape to §13.6/FR30 — the
 fail-open default is a deliberate one-Variable opt-out, but a deleted/unset/blank `SHADOW_NSE_ENABLED`
@@ -873,11 +913,12 @@ FR35–FR37 isolation guarantees hold; if any is weakened, the fail-open-on-empt
 
 ---
 
-## 17. Shared wallet-sim evaluation harness — FORWARD design (FR31) — DRAFT
+## 17. Shared wallet-sim evaluation harness — as-built (FR31)
 
-> **Status: NOT YET BUILT — prescriptive design for INC-2.** Supersedes the former §13.7 open gap.
-> Delivers the committed, versioned, reproducible evaluation method FR31 now requires, covering **both**
-> `call_log_shadow` (§13) and `call_log_shadow_nse` (§16). Owner: dev builds; qa verifies reproducibility.
+> **Status: SHIPPED (INC-2, reviewer-cleared Pass 4, 2026-07-15).** This section was FORWARD design for
+> INC-2 as of 2026-07-13; it is now descriptive of shipped code. Supersedes the former §13.7 open gap.
+> Delivers the committed, versioned, reproducible evaluation method FR31 requires, covering **both**
+> `call_log_shadow` (§13) and `call_log_shadow_nse` (§16). Built by dev; reproducibility verified by qa.
 
 ### 17.1 What it is
 A committed, re-runnable evaluation artifact — **not** ad-hoc SQL-editor logic — that, for a given track

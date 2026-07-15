@@ -516,3 +516,21 @@ passed (argparse error paths + a full `main()` run producing a correct report an
 code was modified by qa.
 
 **Ready for reviewer.**
+
+### 10.8 Addendum — REV-018 fix: stale test corrected 2026-07-15
+
+dev fixed REV-018: `scripts/run_shadow.py::main()` now catches `except (Exception, SystemExit)`, matching
+`run_shadow_nse.py`'s existing pattern (see §9.4 finding, now resolved). This made
+`test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap` (in `tests/test_run_shadow_nse.py`) stale —
+it was a `pytest.raises(SystemExit)` assertion written specifically to confirm the bug existed, and with the
+bug fixed that assertion is now inverted (would fail against correct behavior).
+
+**Fix applied by qa (test-only, no production code touched):** renamed the test to
+`test_run_shadow_main_us_ca_track_now_swallows_systemexit_matching_nse` and repurposed it to assert the
+fixed behavior: `run_shadow.main()` is called with a mocked `_run_cycle` that raises `SystemExit`, and the
+test now asserts `main()` completes normally without raising — mirroring
+`test_run_shadow_nse_main_swallows_systemexit_and_returns`'s existing structure for the NSE track. Coverage
+of the SystemExit-swallowing guarantee is preserved (upgraded, not deleted) for both tracks.
+
+**Full regression after this fix:** `python3 -m pytest tests/ -q` → **274 passed / 0 failed**. Test count
+unchanged (assertion corrected, not added/removed), zero regressions.
