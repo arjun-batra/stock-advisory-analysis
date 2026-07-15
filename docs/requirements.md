@@ -156,9 +156,11 @@ reference, not a spec for a contractor.
 
 ## 6. Non-Functional Requirements
 
-- **NFR1 — Cost:** Target $0–15/month. Checks every 30 minutes against free-tier data APIs keeps this
-  realistic; push notification services (ntfy.sh is free, Pushover is a small one-time fee per platform)
-  remove the per-message SMS cost entirely.
+- **NFR1 — Cost:** Target $0–15/month (unchanged cap). Gemini now runs on Google's **paid tier** (not
+  free tier); the budget is held by keeping call volume low — one batched Gemini call per run per track
+  (production watchlist, NSE watchlist, daily discovery, and each shadow track), on the ~30-minute
+  cadence, against otherwise-free data APIs. Push notification services (ntfy.sh is free, Pushover is a
+  small one-time fee per platform) remove the per-message SMS cost entirely.
 - **NFR2 — Reliability:** The system actively alerts the user when a scheduled run is missed, fails to
   trigger, or completes degraded — silence from the monitor means healthy. Passive "last run" visibility
   is not sufficient; a run that never triggers must surface as loudly as one that runs and fails.
@@ -267,19 +269,92 @@ position-aware prompt variant. Files: `scripts/shadow.py`, `scripts/run_shadow.p
   pilot and is recorded here as a requirement-level item (mirroring the SD.md §2 accepted-risk style),
   not left implicit in a code comment.
 
-### 10.2 Requirement Gaps (open)
+### 10.2 Shared Evaluation Method (both shadow tracks — in scope)
 
-- **FR31 [REQUIREMENTS-GAP] — Committed, reproducible evaluation method (BLOCKS graduation).** The
-  entire purpose of the shadow pilot is comparing shadow vs. production verdict/wallet performance, but
-  no committed, versioned evaluation mechanism exists in the repo. The SQL migration's own comments
-  reference a "wallet-sim recursive-CTE walk" and a "wallet-sim harness" that do **not** exist anywhere
-  in the codebase (verified across `sql/`); they are described as living only in the ad hoc Supabase SQL
-  editor. There is therefore no reproducible way to actually run the two-week evaluation the pilot exists
-  for. **Requirement:** before the shadow pilot can graduate to any production consideration, a defined,
-  committed, reproducible evaluation method (the wallet-sim walk/harness, versioned in the repo) MUST
-  exist. **Owner:** dev (to commit the wallet-sim walk/harness as versioned SQL/scripts), with qa to
-  define and verify the evaluation is reproducible. Until then this pilot cannot be assessed and MUST NOT
-  graduate. Marked as an open gap, not a delivered requirement.
+- **FR31 — Committed, reproducible evaluation method (both shadow tracks).** The entire purpose of the
+  shadow pilots is comparing shadow vs. production verdict/wallet performance, but no committed, versioned
+  evaluation mechanism exists in the repo. The `call_log_shadow` SQL migration's own comments reference a
+  "wallet-sim recursive-CTE walk" and a "wallet-sim harness" that do **not** exist anywhere in the
+  codebase (verified across `sql/`); they are described as living only in the ad hoc Supabase SQL editor.
+  There is therefore no reproducible way to actually run the evaluation the pilots exist for.
+  **Requirement:** a defined, committed, reproducible evaluation method (the wallet-sim walk/harness,
+  versioned in the repo as SQL/scripts) MUST exist, and it MUST cover **both** the US/CA shadow track
+  (`call_log_shadow`, FR24–FR30) **and** the NSE shadow track (`call_log_shadow_nse`, FR32–FR39). Neither
+  shadow pilot can graduate to any production consideration until this evaluation method exists and is
+  demonstrated reproducible. **Owner:** dev (to commit the wallet-sim walk/harness as versioned
+  SQL/scripts covering both tracks), with qa to define and verify the evaluation is reproducible.
+  **Status (2026-07-13 change request):** upgraded from an open [REQUIREMENTS-GAP] to an in-scope
+  requirement — the user explicitly pulled the evaluation method into scope as part of the NSE-shadow
+  change request (decision #5). It is no longer a deferred gap; it is deliverable work for this change.
+
+### 10.3 NSE Shadow Wallet Pilot (NOT core v1 scope)
+
+> **Status:** Experimental / non-production. Added 2026-07-13 by user change request: run an independent
+> shadow-wallet experiment on NSE tickers, mirroring the US/CA pilot (§10.1) but as a fully separate
+> track. Same hypothesis (position-aware prompt vs. production's watch-only-style prompt), applied to NSE
+> watchlist tickers (decision #1). Nothing here may weaken or alter any FR1–FR23 / NFR1–NFR4 behavior,
+> and it must not affect production **or** the US/CA shadow track (§10.1).
+
+**Context.** A second parallel, non-production AI verdict track ("NSE shadow wallet") for NSE watchlist
+tickers only. Like §10.1 it reuses production's already-fetched market-data snapshot from the same cycle
+and production's model-call machinery, and swaps in the same position-aware prompt variant — the only
+change from §10.1 is that it operates on NSE tickers, writes to its own dedicated table, and is gated by
+its own kill switch and NSE market hours. The specific model/quota bucket used for the NSE shadow call is
+a design detail deferred to tech-lead (the user did not require an NSE-specific model pairing — decision
+#1).
+
+- **FR32 — Existence & purpose.** The system MAY run an NSE shadow verdict track that produces an
+  independent Buy/Sell/Hold verdict per **NSE** watchlist ticker using the same *position-aware* prompt
+  variant as §10.1, for the sole purpose of A/B testing whether position-awareness changes verdict
+  quality/behavior versus production's current watch-only-style prompt. It MUST cover NSE watchlist
+  tickers only and MUST NOT include US or TSX tickers (those belong to the §10.1 track).
+- **FR33 — Self-derived simulated position ("wallet-walk").** The NSE shadow track MUST track its own
+  simulated buy/sell position per ticker, derived *purely from its own prior NSE-shadow history* (in
+  `call_log_shadow_nse`): a Buy flips flat→holding, a Sell flips holding→flat, a Hold is a no-op. When
+  the model issues a Sell against a simulated holding, the prompt variant MUST require it to cite a
+  specific reversal-since-entry. The simulated position going into each call (state, entry price, entry
+  date) MUST be recorded so the exact context given to the model is auditable. This history MUST be
+  derived solely from `call_log_shadow_nse` — never from `call_log`, never from `call_log_shadow`.
+- **FR34 — Same-data reuse.** To isolate the position-awareness variable, the NSE shadow call MUST judge
+  the *same* market-data snapshot production judged for NSE tickers in that cycle, reusing production's
+  persisted snapshot rather than re-fetching. The lookback window used to locate that snapshot is
+  configurable (see Configuration) and MUST stay under one dispatch cadence step so it can never pick up
+  a prior cycle's snapshot.
+- **FR35 — Isolated storage; no dashboard/anon read path (HARD).** The NSE shadow track MUST write only
+  to its own dedicated table (`call_log_shadow_nse`), never to `call_log` and never to `call_log_shadow`.
+  That table MUST have RLS enabled with **no** anon/authenticated policy or grant, so it is
+  readable/writable *only* by the server secret key (which bypasses RLS). It MUST NOT be readable by the
+  anon/dashboard (publishable) key. There MUST be no read path from the NSE shadow table into the
+  dashboard, the GitHub Pages output, or any notification channel. (Mirrors FR27's isolation pattern for
+  the new table.)
+- **FR36 — MUST NOT alert (HARD).** The NSE shadow track MUST NOT send any alert or push notification on
+  any channel (including the NSE ntfy topic, FR18). It does not import or invoke any notification code;
+  `alerted` is always false on this track. (Mirrors FR28.)
+- **FR37 — MUST NOT affect production OR the US/CA shadow track if it fails (HARD).** An NSE shadow
+  failure, hang, or timeout MUST NOT affect or block the production pipeline, and MUST NOT affect the
+  US/CA shadow track (§10.1) either. The three tracks are mutually isolated: a fault, hang, timeout, or
+  kill-switch flip in any one MUST NOT be able to take down either of the others. The NSE shadow step MUST
+  run in a way that a fault in it cannot fail the run (e.g. strictly after production and
+  `continue-on-error`, the mechanism being a design detail for tech-lead), and its execution MUST be
+  structurally separate from the US/CA shadow track's execution. Real holdings / cost-basis data MUST NOT
+  leak into NSE shadow rows. (Extends FR29 with the additional cross-shadow-track isolation the user
+  required — decision #3.)
+- **FR38 — Independent kill switch.** The NSE shadow track MUST be gated by its own independent kill
+  switch (`SHADOW_NSE_ENABLED`), separate from the US/CA track's `SHADOW_ENABLED`, so the NSE track can be
+  toggled without touching the US/CA track and vice versa. It MUST be checked both at the workflow-step
+  level and again in code, so it can be disabled with a zero-code-change config flip. **Accepted risk
+  (recorded, not hidden), mirroring FR30:** the kill switch defaults **fail-OPEN, but only on a truly
+  unset/empty Variable** — when the `SHADOW_NSE_ENABLED` Variable is unset or empty, the value resolves to
+  `true` and the NSE pilot runs. Any explicitly-set value that is not the literal (case- and
+  whitespace-insensitive) string `true` disables the NSE pilot (`false`, or *any other non-empty value
+  including a typo* such as `flase`, `no`, `0`, all **fail CLOSED**). So the only fail-open case is a
+  genuinely absent/empty Variable. This residual fail-open-on-empty risk is accepted for the NSE pilot,
+  the same accepted-risk shape as FR30, recorded here at requirement level (decision #4).
+- **FR39 — NSE market-hours gating.** The NSE shadow track MUST be gated by the same NSE market-hours
+  window production uses for NSE (fixed IST window, no DST — see FR17). Outside that window (and absent a
+  force-run), the NSE shadow track is a clean no-op. NSE holidays are not separately detected; a closure
+  surfaces as no usable data and falls through the skip-with-log path, same posture as production NSE
+  (FR17).
 
 ## 11. Configuration (tunables audit baseline)
 
@@ -291,8 +366,8 @@ tunables, not fixed requirements.
 ### Core system
 | Key | Default | Purpose |
 |---|---|---|
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Primary watchlist AI model |
-| `GEMINI_MODEL_BACKUP` | `gemini-3.1-flash-lite` | Fallback model (empty disables fallback) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Primary watchlist AI model |
+| `GEMINI_MODEL_BACKUP` | `gemini-2.5-flash-lite` | Fallback model (empty disables fallback) |
 | `NSE_GEMINI_MODEL` / `NSE_GEMINI_MODEL_BACKUP` | inherit US/TSX pair | NSE watchlist model pair (quota isolation option) |
 | `DISCOVERY_GEMINI_MODEL` / `_BACKUP` | `gemini-2.5-flash` / `-lite` | Discovery model pair (separate daily quota bucket) |
 | `GEMINI_TIMEOUT_MS` | `180000` | Per-request Gemini timeout (ms) |
@@ -314,6 +389,14 @@ tunables, not fixed requirements.
 | `MARKET_OPEN` / `MARKET_CLOSE` | `09:30` / `16:00` ET | US/TSX session bounds |
 | `NSE_MARKET_OPEN` / `NSE_MARKET_CLOSE` | `09:15` / `15:30` IST | NSE session bounds |
 | `RUNTIME_CLOSE_GRACE_MIN` | `10` | Runtime close-grace minutes (dispatch-to-execution latency) |
+
+> **Historical note (closed) — `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP`:** these keys previously carried a
+> doc-vs-actual-operation mismatch — the literal defaults in `scripts/config.py` were `gemini-3.5-flash` /
+> `gemini-3.1-flash-lite` while real operation ran the `gemini-2.5-flash` family (paid tier) due to
+> stability issues with the 3.x models. That gap is now **CLOSED**: INC-1 (2026-07-13 change request)
+> changed the literal `scripts/config.py` defaults to `gemini-2.5-flash` / `gemini-2.5-flash-lite`, so
+> code and operation now agree — the table above states the current true defaults. qa's `test-report.md`
+> §9.2 asserts `config.GEMINI_MODEL == "gemini-2.5-flash"`.
 
 ### Discovery prefilter / quality gates (all tunable)
 | Key | Default | Purpose |
@@ -341,6 +424,26 @@ tunables, not fixed requirements.
 | `SHADOW_PROMPT_VARIANT` | `position_aware_v1` | Prompt-variant tag written to `call_log_shadow.prompt_variant` |
 | `SHADOW_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback window to reuse the same-cycle production snapshot (must stay under the 30-min cadence) |
 
+### Experimental — NSE shadow wallet pilot (§10.3)
+| Key | Default | Purpose |
+|---|---|---|
+| `SHADOW_NSE_ENABLED` | `true` when unset/empty (fail-OPEN-on-empty — accepted risk, FR38) | Independent kill switch for the NSE shadow track; enabled only on unset/empty or literal `true`; `false` or any other non-empty value (incl. typos) disables (fails closed). Separate from `SHADOW_ENABLED` |
+| `SHADOW_NSE_PROMPT_VARIANT` | `position_aware_v1` | Prompt-variant tag written to `call_log_shadow_nse.prompt_variant` (same variant as §10.1) |
+| `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback window to reuse the same-cycle production NSE snapshot (must stay under the NSE dispatch cadence) |
+
+### Experimental — shared wallet-sim evaluation harness (§10.2, FR31)
+| Key | Default | Purpose |
+|---|---|---|
+| `EVAL_WINDOW_DAYS` | `14` | Default lookback window (days) for `eval_shadow.py`'s report — the "two-week" comparison — used when `--since`/`--until` are not passed explicitly. Applies to whichever shadow track `eval_shadow.py` is run against (`track` is a separate CLI input), not per-track. |
+
+> **Note (for tech-lead):** the exact model/quota bucket the NSE shadow call uses is a design detail to
+> record in design.md — no longer an open question requiring a user trade-off. As of the 2026-07-13
+> paid-tier correction, there is no free-tier quota pressure (Gemini runs on Google's paid tier
+> system-wide) and the model is standardized on the paid-tier `gemini-2.5-flash` family across all
+> tracks (production watchlist, NSE watchlist, discovery, and both shadow tracks). The NSE shadow call
+> should use that same `gemini-2.5-flash` family, consistent with every other track; the user did not
+> require an NSE-specific model pairing (decision #1). Just record the choice in design.md.
+
 ---
 
 ## Changelog
@@ -350,12 +453,16 @@ tunables, not fixed requirements.
 | 2026-07-12 | **Adoption-pass port.** Created `docs/requirements.md` by porting FR1–FR23 / NFR1–NFR4, the Problem/Goals/Scope sections, and the full Decisions Log (#1–#18) verbatim (lightly reformatted, no meaning changes) from `requirements_docs/stock-advisory-agent-requirements.md` (v5). Original v5 doc retained untouched in `requirements_docs/` as historical record. Added a Configuration section (§11) as the reviewer hardcoding-audit baseline, populated from `scripts/config.py` and SD.md. | Multi-agent-template adoption: port current source-of-truth docs into the new `docs/` locations without altering meaning. |
 | 2026-07-12 | **New Experimental Tracks section (§10).** Added FR24–FR30 + NFR5 for the previously-undocumented shadow wallet pilot, and FR31 [REQUIREMENTS-GAP] for its missing evaluation method. IDs continue from where v5 (FR23/NFR4) leaves off; FR1–FR23/NFR1–NFR4 numbering unchanged. Marked explicitly as experimental / non-production, outside core v1 scope. Recorded the kill-switch fail-open default as an accepted risk (FR30 / NFR5). | Documenting shipped-but-undocumented shadow code as explicit requirements per user decision #2, with hard non-production/isolation constraints and the flagged evaluation gap. |
 | 2026-07-12 | **Synced §11 audit baseline with 6 newly-extracted tunables.** Added `YF_HISTORY_RETRIES` (`2`), `YF_HISTORY_PERIOD` (`3mo`), `HEADLINES_LIMIT` (`5`), `NOTIF_BODY_MAX` (`150`), `RATIONALE_MAX` (`280`) to the Core system table and `DISCOVERY_EARNINGS_RECENT_DAYS` (`2`) to the Discovery prefilter table. Each default equals the literal it replaced (no behavior change from these keys). Baseline-only sync; no new/changed FR/NFR. | Dev's debt-cleanup pass moved these previously-hardcoded literals into `scripts/config.py` as env-overridable tunables, resolving reviewer findings REV-007–REV-012; the hardcoding-audit baseline table must list every tunable. |
+| 2026-07-13 | **Change request — NSE shadow wallet pilot (new §10.3, FR32–FR39, NFR6) + FR31 upgraded to in-scope.** User (Arjun) requested an independent shadow experiment on NSE stocks mirroring the US/CA shadow pilot. Added §10.3 with FR32 (existence/purpose — same position-aware hypothesis, NSE tickers only), FR33 (self-derived wallet-walk from `call_log_shadow_nse`), FR34 (same-cycle NSE snapshot reuse), FR35 (isolated `call_log_shadow_nse` table, RLS/no-anon-read — HARD), FR36 (never alerts — HARD), FR37 (must not affect production **or** the US/CA shadow track — HARD, cross-track isolation), FR38 (independent `SHADOW_NSE_ENABLED` kill switch, same fail-open-on-empty accepted risk as FR30), FR39 (NSE market-hours gating per FR17). Added NFR6 mirroring NFR5 for the NSE track incl. mutual isolation of all three tracks. Added `SHADOW_NSE_ENABLED` / `SHADOW_NSE_PROMPT_VARIANT` / `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` to §11. **Upgraded FR31 from an open [REQUIREMENTS-GAP] to an in-scope requirement** (renamed §10.2 to "Shared Evaluation Method"): the committed, versioned, reproducible wallet-sim harness must now be delivered as part of this change and must cover BOTH shadow tracks. Grounded in the 5 user decisions relayed 2026-07-13: (1) same hypothesis, NSE tickers, no NSE-specific model requirement; (2) new dedicated `call_log_shadow_nse` table; (3) isolated from production AND the US/CA shadow track; (4) independent kill switch, same fail-open-on-empty posture; (5) evaluation method pulled into scope, covering both tracks. Model/quota-bucket choice for the NSE shadow call flagged to tech-lead as a design decision. Core FR1–FR23/NFR1–NFR4 untouched; still explicitly outside core v1 scope. | User change request per CLAUDE.md Change Requests process; all ambiguities resolved by the user before writing (no-inference rule satisfied). |
+| 2026-07-13 | **Paid-tier correction (NFR1, §11 config table + discrepancy note, §10.3 tech-lead note, idea-brief Constraints).** User (Arjun) confirmed Gemini is no longer on the free tier — it now runs on Google's **paid tier**, and this is **system-wide**: production watchlist, NSE production watchlist, daily discovery, and BOTH shadow tracks all run under the paid tier, not only the new NSE shadow track. Budget: NFR1's **$0–15/month cap is unchanged numerically** — only the free-tier rationale/framing was corrected (cost held by low per-run call volume, not a free-tier daily request cap). Model reality: the system currently runs **`gemini-2.5-flash` across the board** due to stability issues with `gemini-3.5-flash` and `gemini-3.1-flash-lite`, which remain the literal defaults in `scripts/config.py:26-27`; added a §11 discrepancy note (doc-vs-actual-operation) following the 2026-07-12 REV-001/BUG-001 precedent — corrected in docs, code change (if any) is dev's job once tech-lead scopes it. This **resolves the previously-open NSE-shadow model/quota-bucket question**: no free-tier quota pressure remains and the model is standardized on the paid-tier `gemini-2.5-flash` family across all tracks, so it is now a design detail for tech-lead to record, not a user trade-off. Free-tier framing retained for the other, unaffected APIs (Yahoo data, ntfy push). No FR/NFR IDs added or renumbered. | User clarification (paid tier) relayed 2026-07-13; all scope/budget/model ambiguities resolved by the user before writing (no-inference rule satisfied). |
+| 2026-07-15 | **Doc-sync: added `EVAL_WINDOW_DAYS` to §11 config audit baseline (REV-019).** Added a new "Experimental — shared wallet-sim evaluation harness (§10.2, FR31)" subsection listing `EVAL_WINDOW_DAYS` (`14`) — the default lookback window for `eval_shadow.py` when `--since`/`--until` are omitted, covering whichever shadow track it runs against (`track` is a separate CLI input). **Not a new requirement:** the tunable already existed in `scripts/config.py` (env-overridable, added INC-2 for the FR31 shared wallet-sim harness) and was documented in `docs/design.md` §9 and §17.4; it was merely missing from this §11 audit table. Baseline-only cross-listing; no FR/NFR added or changed. | Reviewer finding REV-019: every tunable must appear in the §11 hardcoding-audit baseline. |
 | 2026-07-12 | **Corrected kill-switch behavior wording (FR30, NFR5, §11 config table).** Fixed the factually-wrong claim that a *mistyped* `SHADOW_ENABLED` Variable silently keeps the pilot running. The actual code (`scripts/config.py:65`, `(... or "true") == "true"`) fails open ONLY on a truly unset/empty Variable; any explicitly-set-but-wrong value — including a typo like `flase`, `no`, or `0` — compares unequal to `true` and fails **closed**, disabling the pilot. Accepted-risk framing retained; only the factual description was corrected (fail-open scope narrowed to unset/empty). No change to the requirement itself or the risk-acceptance decision. | Resolving REV-001 (major) / BUG-001 doc-vs-code contradiction via user's chosen Option B (correct the docs, not the code). |
 
-> **Open item flagged for the user (no gate blocking this adoption pass):** FR31's evaluation-method
-> gap and FR30's fail-open kill-switch default are both recorded as accepted/open items rather than
-> resolved. If the user wants the shadow pilot to either graduate or be retired, that is a user decision
-> — captured here so it is not silently defaulted.
+> **Open item flagged for the user:** FR31's evaluation-method requirement is now **in scope** (pulled in
+> by the 2026-07-13 change request) rather than a deferred gap — it must be delivered covering both shadow
+> tracks. FR30/FR38's fail-open-on-empty kill-switch defaults remain recorded accepted risks. If the user
+> wants either shadow pilot to graduate or be retired, that is a user decision — captured here so it is
+> not silently defaulted.
 
 ---
 
@@ -369,3 +476,14 @@ tunables, not fixed requirements.
   (including a typo such as `flase`) fails **closed** and stops the pilot, which is the safer outcome.
   This posture is acceptable only while the pilot is fully isolated per FR27–FR29; if any isolation
   guarantee is weakened, the fail-open-on-empty default MUST be revisited.
+
+- **NFR6 — NSE shadow pilot isolation & fail-open posture (non-production).** The NSE shadow pilot
+  (§10.3) MUST remain operationally invisible to production AND to the US/CA shadow pilot: no alerts
+  (FR36), no anon/dashboard read path (FR35), no ability to fail the production pipeline or the US/CA
+  shadow track (FR37). The three tracks (production, US/CA shadow, NSE shadow) MUST be mutually isolated
+  so a fault or kill-switch flip in one can never take down another. The NSE track's kill switch defaults
+  fail-open (FR38) — an **accepted risk** recorded explicitly at requirement level, scoped precisely to
+  only an *unset or empty* `SHADOW_NSE_ENABLED` Variable; any explicitly-set-but-wrong value (including a
+  typo) fails **closed** and stops the NSE pilot, the safer outcome. This posture is acceptable only
+  while the NSE pilot is fully isolated per FR35–FR37; if any isolation guarantee is weakened, the
+  fail-open-on-empty default MUST be revisited.

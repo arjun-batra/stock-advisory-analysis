@@ -52,8 +52,12 @@ jobs:
           # empty env -> config.py's `if m` filter drops it -> NO fallback model.
           # That is exactly config.py's documented "leave empty to disable the
           # fallback" behavior. So: BACKUP Variable unset means NO backup model,
-          # NOT a silent 'gemini-3.1-flash-lite' fallback.
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          # NOT a silent 'gemini-2.5-flash-lite' fallback.
+          # Literal fallback corrected 3.5/3.1 -> 2.5 family (2026-07-13 change
+          # request, Change 2 / design §4.4): the 3.x models showed stability
+          # issues; real operation and scripts/config.py's own defaults are on
+          # gemini-2.5-flash across every track.
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP }}
           # NSE watchlist model pair (design §12 D3) — same Variable-driven
           # pattern, own free-tier quota bucket. Unset NSE_GEMINI_MODEL -> falls
@@ -61,7 +65,7 @@ jobs:
           # session). NSE_GEMINI_MODEL_BACKUP unset AND GEMINI_MODEL_BACKUP unset
           # -> empty -> config drops it -> no NSE backup, same disable-by-unset
           # behavior as above (no literal lite fallback).
-          NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP }}
           # Gemini transport tuning: retry count / backoff base / per-attempt
           # timeout. Plain `${{ vars.X }}` with NO literal fallback on purpose:
@@ -107,11 +111,20 @@ jobs:
       - name: Run shadow verdict track (US/CA pilot)
         if: ${{ vars.SHADOW_ENABLED != 'false' }}
         continue-on-error: true
+        # Hang isolation belt (INC-1 hardening, design §16.4/load-bearing #11):
+        # bounds a stuck step instead of holding the runner and delaying the NSE
+        # shadow step that runs after it. Chosen well under the workflow's
+        # overall runner budget; a hang here fails only this step
+        # (continue-on-error), never the run.
+        # REV-015: promoted to a shared repo Variable (design §9) so the bound
+        # can be raised without a commit as NSE batches grow; `fromJSON` coerces
+        # the Variable's string to the number `timeout-minutes` requires.
+        timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP }}
           # Same transport tuning as the production step above — the retry loop
           # is the SAME shared function (ai_judge._generate), and passing the
@@ -126,3 +139,44 @@ jobs:
           # shadow track too (against the same forced production snapshot).
           FORCE_RUN: ${{ inputs.force_run }}
         run: python scripts/run_shadow.py
+
+      # --- NSE shadow verdict pilot (NSE, NON-production, design §16) ------------
+      # A second, fully independent shadow track from the US/CA one above: own
+      # table (call_log_shadow_nse), own kill switch (SHADOW_NSE_ENABLED), NSE
+      # market-hours gating, NSE's own model bucket. Runs as a SEPARATE process
+      # STRICTLY AFTER both the production step and the US/CA shadow step above,
+      # so a hang/exception here has no code path back to either of them
+      # (FR37/NFR6, load-bearing #11). `continue-on-error: true` +
+      # `timeout-minutes` are the same two belts as the US/CA shadow step; no
+      # NTFY_* vars are passed at all — this track never alerts (FR36).
+      # REV-015: shares the same SHADOW_TIMEOUT_MINUTES Variable as the US/CA
+      # shadow step above — one generic runner-hang guard for both tracks.
+      - name: Run NSE shadow verdict track (NSE pilot)
+        if: ${{ vars.SHADOW_NSE_ENABLED != 'false' }}
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          # NSE's own model bucket (design §16.2) — same vars production's NSE
+          # group already passes, reused rather than a third model-Variable pair.
+          NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP }}
+          # Same transport tuning as production/US-CA-shadow — shared retry
+          # function (ai_judge._generate). Unset -> empty -> code defaults.
+          GEMINI_MAX_RETRIES: ${{ vars.GEMINI_MAX_RETRIES }}
+          GEMINI_RETRY_BASE_MS: ${{ vars.GEMINI_RETRY_BASE_MS }}
+          GEMINI_TIMEOUT_MS: ${{ vars.GEMINI_TIMEOUT_MS }}
+          # Empty/unset Variable -> config.py resolves the pilot default (on).
+          # Independent of SHADOW_ENABLED (FR38) — setting THIS to 'false' turns
+          # off only the NSE track, with no code change and no effect on US/CA.
+          SHADOW_NSE_ENABLED: ${{ vars.SHADOW_NSE_ENABLED }}
+          SHADOW_NSE_PROMPT_VARIANT: ${{ vars.SHADOW_NSE_PROMPT_VARIANT }}
+          SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN: ${{ vars.SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN }}
+          # Same market-open gate (NSE) as production; a force-run dispatch runs
+          # the NSE shadow track too (against the same forced production snapshot).
+          FORCE_RUN: ${{ inputs.force_run }}
+          # Deliberately NO NTFY_TOPIC / NSE_NTFY_TOPIC / DETAIL_PAGE_BASE — this
+          # track never alerts (FR36) and has no dashboard read path (FR35).
+        run: python scripts/run_shadow_nse.py

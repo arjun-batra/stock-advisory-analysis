@@ -31,7 +31,7 @@ def test_module_imports_cleanly(module_name):
     assert mod is not None
 
 
-@pytest.mark.parametrize("entry_point", ["run_hourly", "run_discovery", "run_shadow", "publish_prices"])
+@pytest.mark.parametrize("entry_point", ["run_hourly", "run_discovery", "run_shadow", "run_shadow_nse", "publish_prices"])
 def test_entry_points_do_not_execute_business_logic_on_import(entry_point):
     """Entry points must be thin orchestrators (design.md §3): importing them
     must never touch Supabase/Gemini/yfinance/ntfy. If import succeeds without

@@ -274,3 +274,300 @@ stale test-plan reference corrected. REV-006 explicitly marked `ACCEPTED-DEBT` (
 automate; remains `qa/test-plan-full-codebase.md`'s domain by design) rather than silently left off a
 checklist. Full suite: **164 passed / 0 failed / 164 total.** No production code (`scripts/`) was changed
 to produce this pass — only `tests/`, this report, and `qa/test-plan-full-codebase.md`.
+
+---
+
+## 9. INC-1 — NSE Shadow Wallet Pilot (FR32–FR39, NFR6) — 2026-07-14
+
+**Owner:** qa. Tested dev's commit `e738d6f` ("dev: implement INC-1 NSE shadow wallet pilot (FR32–FR39,
+NFR6) — pending QA") against `docs/requirements.md` §10.3 and `docs/design.md` §16, not against what the
+code happened to do. `docs/handoff.md` read in full first.
+
+### 9.1 Files added/extended this pass
+- **NEW** `tests/test_run_shadow_nse.py` (29 tests) — FR32–FR39 coverage for `scripts/run_shadow_nse.py` /
+  `scripts/shadow.py`'s new `models` param / the SQL migration / the workflow YAML.
+- **EXTENDED** `tests/test_config.py` (+12 tests) — `SHADOW_NSE_ENABLED` fail-open/fail-closed matrix
+  (mirroring the existing `SHADOW_ENABLED` pattern), kill-switch mutual independence, `SHADOW_NSE_PROMPT_VARIANT`,
+  `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (incl. the FR34 under-30-min assertion), `config.nse_models()`. Also
+  **corrected the two now-outdated model-default assertions** (Change 2): renamed
+  `test_default_model_is_gemini_3_5_flash` → `test_default_model_is_gemini_2_5_flash`, asserting
+  `GEMINI_MODEL == "gemini-2.5-flash"`; `test_default_backup_model` now asserts
+  `GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"`. These were the two intentionally-failing tests dev's
+  handoff flagged as qa's to fix.
+- **EXTENDED** `tests/test_import_smoke.py` (+1 parametrized case) — `run_shadow_nse` added to the
+  entry-point list (`main()` present, no import-time side effects).
+
+### 9.2 Requirement-by-requirement verification
+
+| ID | What was checked | Result |
+|---|---|---|
+| **FR32** | `run_shadow_nse.NSE_MARKETS == {"NSE"}` (no US/TSX); source grepped/asserted for no `call_log_shadow` (US/CA table) write reference. | PASS |
+| **FR33** | Wallet-walk ported to `test_run_shadow_nse.py` (Buy flat→holding, Sell holding→flat, Hold no-op, entry price/date recorded, empty history→flat, per-ticker independence) against `run_shadow_nse._derive_shadow_positions`, using a fake Supabase double that **raises `AssertionError` on any read from a table other than `call_log_shadow_nse`** — proves the walk never touches `call_log` or `call_log_shadow`, not just that it produces the right numbers. | PASS |
+| **FR34** | `_latest_production_snapshots` asserted to read table `call_log`, filter `label="watchlist"`, `in_("ticker", …)`, newest-first-wins-per-ticker dedup. `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` default confirmed `20` and asserted `< 30` (the NSE dispatch cadence) directly in the test, not just eyeballed. | PASS |
+| **FR35 (HARD)** | `sql/shadow_nse_call_log_migration.sql` diffed structurally against `sql/shadow_call_log_migration.sql`: RLS enabled on both, no `create policy`, no actual `grant` **SQL statement** (comment-stripped before the check — first draft of this test false-positived on a comment that merely *mentions* "grant"; fixed in my own test, not production code), identical column set, both shadow-only columns present, same 2-index shape. Source-level check confirms `run_shadow_nse.py` writes only to `call_log_shadow_nse`. | PASS |
+| **FR36 (HARD)** | `inspect.getsource` on both `run_shadow_nse.py` and `shadow.py` asserts no `import notify` / `notify.` reference. Workflow-level: NSE step's `env` block asserted to contain none of `NTFY_TOPIC`/`NSE_NTFY_TOPIC`/`DETAIL_PAGE_BASE`. | PASS |
+| **FR37 (HARD)** | See §9.3 below — the most extensively tested requirement this increment. | PASS (+ 1 pre-existing bug found, not in INC-1 scope — see §9.4) |
+| **FR38** | `SHADOW_NSE_ENABLED` matrix: unset→True, empty→True, `"false"`→False, `"FALSE"`→False, typos `"flase"`/`"no"`/`"0"`→False (all three explicitly parametrized, not just one typo). | PASS |
+| **FR39** | `_run_cycle`'s source order asserted kill-switch check precedes `is_nse_open` check (string-offset assertion on the real source, not a re-implementation). Real-entry-point run with no env at all → clean no-op, exit 0 (§9.5). Unit-level: kill-switch-off and market-closed-and-not-forced cases both return without ever reaching `require_secrets()`/DB. | PASS |
+| **Model config correction (Change 2)** | `config.GEMINI_MODEL == "gemini-2.5-flash"`, `config.GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"` confirmed via the two corrected test_config.py assertions. `NSE_GEMINI_MODEL`/`_BACKUP` and `DISCOVERY_GEMINI_MODEL`/`_BACKUP` confirmed untouched (existing tests still pass unchanged). | PASS |
+| **Non-negotiable: no hardcoded tunables** | All three new NSE config values (`SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`, `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`) confirmed to read from `os.environ` with configurability tests that change the env var and assert the resulting behavior actually changes (not just that the attribute exists). | PASS |
+| **`judge_batch_shadow(items, models=None)` non-negotiable** | Explicit test asserts passing `models=["nse-model-a", "nse-model-b"]` drives the call with that exact order; a **separate** test asserts the **default** (`models` omitted) resolves through `ai_judge._models_to_try(None)` to `config.GEMINI_MODEL`/`_BACKUP` exactly as before — i.e. the existing US/CA caller (`run_shadow.py`, which calls `judge_batch_shadow(items)` with no `models` arg) is unaffected. | PASS |
+
+### 9.3 FR37 — mutual isolation, tested at three levels
+
+1. **Kill-switch independence** (`test_config.py`): flipping `SHADOW_NSE_ENABLED` off leaves `SHADOW_ENABLED`
+   `True` and vice versa — both directions tested in one function.
+2. **Exception safety, incl. the SystemExit gap dev found and fixed:**
+   - `run_shadow_nse.main()` with a mocked `_run_cycle` raising a plain `RuntimeError` → swallowed, `main()`
+     returns normally. PASS.
+   - `run_shadow_nse.main()` with a mocked `_run_cycle` raising `SystemExit` (simulating
+     `config.require_secrets()`'s real failure mode) → **swallowed**, `main()` returns normally. This proves
+     dev's `except (Exception, SystemExit)` fix actually works, both at the unit level and confirmed live at
+     the real entry point (§9.5, test 3: `FORCE_RUN=true` + no secrets → `exit=0`).
+   - Independently confirmed dev's claim that **`run_shadow.py` (US/CA) has the identical, unfixed bug**: a
+     test mocks `run_shadow._run_cycle` to raise `SystemExit` and asserts (`pytest.raises(SystemExit)`) that
+     `run_shadow.main()` does **not** swallow it — the `except Exception` catch in the shipped US/CA module
+     does not catch `SystemExit` (a `BaseException` subclass). Confirmed live at the real entry point too
+     (§9.5, test 4): `FORCE_RUN=true python3 scripts/run_shadow.py` with no secrets set exits **1**, not 0.
+     **Filed below as a finding, not fixed** (out of INC-1 scope; production code is dev's).
+3. **Workflow-level:** both the US/CA and NSE shadow steps asserted to carry `continue-on-error: true` and a
+   positive `timeout-minutes`; step order asserted `production < US/CA shadow < NSE shadow`; each step's
+   `if:` gate asserted to reference its own independent kill-switch Variable
+   (`vars.SHADOW_ENABLED`/`vars.SHADOW_NSE_ENABLED` respectively, never the other). These tests use
+   `pytest.importorskip("yaml")` since PyYAML is not a `requirements.txt` dependency (qa does not add
+   production/test dependencies unilaterally to dev-owned `requirements.txt`); they run and pass in an
+   environment with `pyyaml` installed (confirmed this pass) and skip cleanly without it.
+
+### 9.4 Finding — pre-existing bug in shipped `run_shadow.py` (confirmed, out of INC-1 scope)
+
+**Not filed as a numbered BUG-NNN** (no FR/NFR of THIS increment is violated by it — `run_shadow.py` is
+existing, already-shipped code, not new/changed in INC-1's file list) but flagged here explicitly per the
+task brief, for tech-lead/dev awareness on a future increment:
+
+- **What:** `scripts/run_shadow.py::main()` (line ~212-215) catches only `except Exception`. `SystemExit`
+  is a `BaseException` subclass, not an `Exception` subclass, so it is **not** caught. `config.require_secrets()`
+  raises `SystemExit` on a missing secret. If `_run_cycle()` reaches that call and a secret is missing,
+  `main()` propagates `SystemExit` instead of swallowing it — breaking the "main() always exits 0, shadow
+  can never affect the production run" guarantee that FR29/NFR5 (the US/CA analogs of FR37/NFR6) require,
+  in that one edge case.
+- **Confirmed independently by qa, two ways:** (1) unit test
+  `test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap` — `pytest.raises(SystemExit)` around
+  `run_shadow.main()` with a mocked `SystemExit`-raising `_run_cycle`. (2) Live at the real entry point:
+  `env -i PATH="$PATH" FORCE_RUN=true python3 scripts/run_shadow.py` with no secrets set → prints the
+  `require_secrets()` message and **exits 1**, whereas the equivalent NSE command
+  (`python3 scripts/run_shadow_nse.py`) exits 0.
+- **Mitigating factor:** the workflow step's `continue-on-error: true` still prevents this from failing the
+  overall Actions run — so it is a defense-in-depth gap (the module's own documented guarantee is broken),
+  not a currently-observable production incident.
+- **Disposition:** dev fixed this in the new `run_shadow_nse.py` (`except (Exception, SystemExit)`) but did
+  not backport the fix to `run_shadow.py` (correctly out of INC-1's stated file scope). Recommend a small
+  follow-up increment/ticket to apply the same one-line fix to `run_shadow.py` for consistency — routed here
+  for tech-lead/dev, not fixed by qa.
+
+### 9.5 Shippability check — real entry point, INC-1 scope
+
+Ran `scripts/run_shadow_nse.py` directly (not just via pytest mocks), from a clean environment
+(`env -i PATH="$PATH" ...`, no `.env`, no leaked shell state):
+
+1. No env at all (market closed at test time, no `FORCE_RUN`) → `[shadow-nse] NSE closed (force_run=False)
+   — no-op.` — **exit 0**.
+2. `SHADOW_NSE_ENABLED=false` → `[shadow-nse] SHADOW_NSE_ENABLED=false — NSE shadow track disabled, no-op.`
+   — **exit 0**. Confirms the independent kill switch actually works at the real entry point, not only
+   under test mocks.
+3. `FORCE_RUN=true`, no secrets set → `[shadow-nse] ERROR (cycle skipped, production/US-CA-shadow
+   unaffected): SystemExit: Missing required environment secrets: ...` — **exit 0**. Confirms dev's
+   SystemExit fix live.
+4. `FORCE_RUN=true`, fake (non-resolvable) Supabase URL + fake keys → real network `ConnectError` raised
+   inside `_run_cycle`, caught, logged — **exit 0**.
+5. For contrast, the same test #3 conditions against `scripts/run_shadow.py` (US/CA) → **exit 1** (§9.4).
+
+All four NSE-track scenarios behaved as designed at the real entry point — this is a genuinely shippable
+increment, not just something that passes isolated unit tests.
+
+### 9.6 Full regression
+
+**Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, pytest 9.1.1, `requirements.txt` + `pyyaml`
+installed in an isolated venv per this repo's established pattern — no project-level test-runner config
+exists yet, so this mirrors dev's own smoke-test setup described in `docs/handoff.md`).
+
+**Before this pass (dev's INC-1 commit, unmodified):** 163 passed / 2 failed / 165 total — the 2 failures
+were the expected, dev-flagged stale model-default assertions (§9.1).
+
+**After this pass:** **207 passed / 0 failed / 207 total.** 42 new tests added this increment (29 in the
+new `tests/test_run_shadow_nse.py`, 12 new in `tests/test_config.py`, 1 new parametrized case in
+`tests/test_import_smoke.py`), plus the 2 corrected assertions now passing. **Zero unexpected
+regressions** — every pre-existing test (FR1–FR31/NFR1–NFR5 baseline coverage) still passes unchanged.
+
+Existing US/CA shadow pilot behavior confirmed byte-for-byte unchanged in outcome: all of
+`tests/test_shadow.py`'s original 14 tests (control flow, wallet-walk, same-data reuse) still pass without
+modification, and the new `judge_batch_shadow(items, models=None)` default-path test in
+`tests/test_run_shadow_nse.py` independently re-confirms the default resolves exactly as before.
+
+### 9.7 Verdict — INC-1 (FR32–FR39, NFR6)
+
+**PASS.** All 8 functional/hard requirements (FR32–FR39) and NFR6 verified against `docs/requirements.md`
+§10.3 / `docs/design.md` §16, with tests written against the requirement text, not reverse-engineered from
+the implementation. Both intentionally-stale `test_config.py` assertions corrected. Full suite: **207
+passed / 0 failed**. Real-entry-point shippability check passed for all NSE-track scenarios. No production
+code was modified by qa.
+
+**One finding logged for tech-lead/dev, not a blocker for INC-1:** the pre-existing `SystemExit`-swallowing
+gap in `scripts/run_shadow.py::main()` (§9.4) — confirmed real, out of INC-1's file scope, does not violate
+any FR/NFR this increment claims, mitigated by `continue-on-error: true` at the workflow level. Recommend a
+follow-up fix for consistency with the now-corrected `run_shadow_nse.py`.
+
+**Ready for reviewer.**
+
+---
+
+## 10. INC-2 — Shared Wallet-Sim Evaluation Harness (FR31) — 2026-07-14
+
+**Owner:** qa. Tested dev's commit `2d2cc13` ("dev: implement INC-2 shared wallet-sim evaluation harness
+(FR31)") against `docs/requirements.md` §10.2 (FR31) and `docs/design.md` §17, not against what the code
+happened to do. `docs/handoff.md` (INC-2) read in full first.
+
+### 10.1 Files added this pass
+- **NEW** `tests/test_wallet_sim.py` (20 tests) — direct unit tests of `wallet_sim.walk`, the pure state
+  machine, plus the zero-I/O non-negotiable.
+- **NEW** `tests/test_eval_shadow.py` (34 tests) — `build_report`/`render_report` correctness, the FR31
+  determinism acceptance test, the read-only-guarantee regression guard, CLI parsing (`_parse_args`),
+  `default_window`/`parse_window_bound`, the `fetch_shadow_rows`/`fetch_production_rows` I/O seam against a
+  fake Supabase double, and an `EVAL_WINDOW_DAYS` configurability check through `main()`.
+- **NEW** `tests/test_run_shadow.py` (9 tests) — closes the gap the handoff flagged under "Known
+  limitations": no dedicated test file existed for `run_shadow.py`'s (US/CA) `_derive_shadow_positions`
+  before this pass. Mirrors `test_run_shadow_nse.py`'s wallet-walk coverage, retargeted to the US/CA track,
+  confirming the refactored `wallet_sim.walk`-backed implementation is correct on its own (not just
+  "unchanged since the old inline version worked").
+- **EXTENDED** `tests/test_config.py` (+2 tests) — `EVAL_WINDOW_DAYS` default (14) and env-override
+  propagation.
+
+### 10.2 Requirement-by-requirement verification
+
+| ID | What was checked | Result |
+|---|---|---|
+| **FR31 — core state machine** | `wallet_sim.walk` tested directly with no DB: Buy flat→holding, Sell holding→flat, Hold no-op (both flat and holding), Buy-while-holding no-op (entry price/date provably unchanged), Sell-while-flat no-op, empty input → flat/no round-trips/no open position, multiple round-trips in one sequence with correct per-trip `return_pct`, `_return_pct` formula verified against the literal `(exit/entry - 1) * 100` rounded-to-4dp spec, `_return_pct(None, x)`/`_return_pct(x, None)`/`_return_pct(0, x)` all return `None` without raising (zero-entry-price divide-by-zero guard explicitly tested), a `Sell` with no price yields `return_pct: None` not a crash, `mark_price` marks an open position with correct `unrealized_return_pct`, and marking is skipped (open=None) when flat. | PASS |
+| **FR31 — determinism (THE acceptance criterion, design §17.3)** | `test_build_report_is_deterministic_identical_input_identical_output`: two `build_report()` calls on identical shadow/production row lists assert `report1 == report2` (dict equality, not just "no error"). Also: order-independence (shuffled input row order produces the same output — tickers/timestamps are sorted internally), `render_report()` determinism, and `json.dumps(..., sort_keys=True)` byte-identical across two builds (the property `--output` relies on). | PASS |
+| **FR31 — read-only guarantee (HARD, design §17.3)** | Automated regression guard (not a one-off manual grep): `inspect.getsource` + regex for `\.insert\(`/`\.update\(`/`\.upsert\(`/`\.delete\(` against both `eval_shadow.py` and `wallet_sim.py` with the module docstring text stripped first (so the docstring's own prose mentioning these strings doesn't false-positive); a second test reads the raw file from disk (not just the loaded module object) and asserts every regex match is the docstring's own "No .insert(..." prose line, reproducing dev's manual grep as a committed, re-runnable test. | PASS |
+| **`build_report`/`render_report` correctness** | Synthetic shadow rows (AAPL: Buy→Hold→Sell round trip, winning; MSFT: Buy→Hold, still open) + production rows: verdict counts correct per-ticker and total, round-trip count/wins/win-rate/`realized_return_pct_sum` math correct (checked against the literal formula, not just "some number"), a losing round trip correctly counted as 0 wins, per-ticker breakdown keys/values correct, `open_position` correctly marked to the latest snapshot price with correct `unrealized_return_pct`. `render_report()` does not crash on `win_rate=None` (MSFT, zero round trips) or on a fully empty report (zero tickers) — renders `"n/a"` in both cases as designed. | PASS |
+| **CLI parsing (`_parse_args`)** | `--track` omitted → `SystemExit` (argparse required-arg error). `--track bogus` → `SystemExit` (choices violation). `--track us_ca`/`--track nse` both accepted. `--since`/`--until` optional, pass through verbatim when given, `None` when omitted (so `main()`'s defaulting logic is what applies `EVAL_WINDOW_DAYS`). `--output` optional. `default_window(now, days)` returns `[now-days, now]` and a different `days` value measurably shifts the window (configurability check). `parse_window_bound` accepts a bare date, a full ISO datetime, anchors a naive datetime to UTC (`tzinfo == timezone.utc`), and preserves an explicit non-UTC offset unchanged. | PASS |
+| **Refactor behavior-preservation** | `tests/test_run_shadow_nse.py`'s existing 6 wallet-walk tests re-run unmodified and still pass (confirmed as part of the full-suite run, §10.4) — the NSE track's refactored `_derive_shadow_positions` is provably unchanged in observable behavior. New `tests/test_run_shadow.py` independently exercises the same Buy/Sell/Hold/no-op/empty/multi-ticker matrix directly against the US/CA `_derive_shadow_positions` (previously untested in isolation — the handoff's own "Known limitations" flagged this gap), closing it rather than just trusting the handoff's manual-equivalence claim. | PASS |
+| **`EVAL_WINDOW_DAYS` config** | Default confirmed `14` when unset (`test_eval_window_days_defaults_to_14`); env-override confirmed to propagate (`EVAL_WINDOW_DAYS=7` → `config.EVAL_WINDOW_DAYS == 7`). A further end-to-end configurability test drives `eval_shadow.main(["--track", "us_ca"])` with `config.EVAL_WINDOW_DAYS` monkeypatched to `3` and a fake Supabase double, spying on the actual `since`/`until` window passed to `fetch_shadow_rows`, and asserts the queried window is exactly 3 days wide — proving the value is read live from config at call time, not hardcoded anywhere in `eval_shadow.py`. Confirmed by inspection: `grep -rn EVAL_WINDOW_DAYS scripts/` shows the only definition is in `config.py`; `eval_shadow.py` references it only via `config.EVAL_WINDOW_DAYS`. | PASS |
+
+### 10.3 Non-negotiables checked
+
+- **`wallet_sim.py` zero I/O:** `grep -n "^import\|^from" scripts/wallet_sim.py` returns **nothing** — the
+  file has no imports at all (not even stdlib), confirming it is a pure function over plain dicts. Also
+  asserted in `tests/test_wallet_sim.py` via `inspect.getsource` (no `import state`/`supabase`/`requests`/
+  `state.client` anywhere in the module).
+- **`eval_shadow.py` never writes to any table:** confirmed both by the automated regression guard (§10.2
+  above) and by re-running dev's exact manual grep command
+  (`grep -n "\.insert(\|\.update(\|\.upsert(\|\.delete(" scripts/eval_shadow.py scripts/wallet_sim.py`) —
+  the only match is the docstring's own prose line.
+- **`EVAL_WINDOW_DAYS` is config-driven, not hardcoded elsewhere:** confirmed by inspection (see table above)
+  and by the live configurability test.
+
+### 10.4 Shippability check — real entry point
+
+Ran `scripts/eval_shadow.py` directly as a CLI, not just via pytest function calls:
+1. `python3 eval_shadow.py` (no `--track`) → argparse usage error, **exit 2**. Correct required-arg behavior.
+2. `python3 eval_shadow.py --help` → renders full usage/help text, **exit 0**.
+3. `python3 eval_shadow.py --track bogus` → argparse choices error (`invalid choice: 'bogus'`), **exit 2**.
+4. Full end-to-end run through the real `main(argv)` entry point (real argv-style CLI args
+   `--track us_ca --since ... --until ... --output ...`) with `state.client` monkeypatched to a fake
+   Supabase double serving synthetic `call_log_shadow`/`call_log` rows: printed a correct, well-formed
+   report to stdout (verdict counts, round-trip P&L, per-ticker breakdown) and wrote a valid JSON file to
+   `--output` whose contents matched the printed report. This exercises argparse, config defaulting,
+   `build_report`, `render_report`, and the JSON-write path all through the actual entry point, not through
+   directly-called internals only.
+
+Also confirmed `run_shadow.py`, `run_shadow_nse.py`, `wallet_sim.py`, `eval_shadow.py`, and `config.py` all
+import cleanly (no import-time side effects, no circular-import issues introduced by the new `wallet_sim`
+import in both orchestrators).
+
+### 10.5 Full regression
+
+**Run:** `python3 -m pytest tests/ -q` (Python 3.11.15, `requirements.txt` + `pytest` + `pyyaml` installed
+in an isolated venv, same pattern as INC-1).
+
+**Before this pass (dev's INC-2 commit, unmodified — INC-1 baseline):** 209 passed / 0 failed / 209 total
+(per `docs/handoff.md`).
+
+**After this pass: 274 passed / 0 failed / 274 total.** 65 new tests added this increment: 20 in
+`tests/test_wallet_sim.py`, 34 in `tests/test_eval_shadow.py`, and 9 in `tests/test_run_shadow.py` (all
+three new files, combined new-file total 63), plus 2 new tests added to the pre-existing
+`tests/test_config.py`, for 65 net new. **Zero regressions** — every pre-existing test (FR1–FR39/NFR1–NFR6
+baseline coverage, incl. both shadow tracks' wallet-walk tests) still passes unchanged.
+
+### 10.6 Bugs filed
+
+**None.** No FR31 violation, no read-only violation, no determinism failure, and no refactor regression
+found. The implementation matches `docs/design.md` §17 and `docs/requirements.md` §10.2 as written.
+
+### 10.7 Verdict — INC-2 (FR31)
+
+**PASS.** FR31 (committed, reproducible, read-only shared evaluation harness covering both shadow tracks)
+verified against the requirement text: `wallet_sim.walk` is a correct, zero-I/O, unit-tested pure function;
+`build_report`/`render_report` are correct and — the explicit FR31 acceptance bar — deterministic across
+repeated calls on identical input; the harness never writes to any table (automated regression guard, not
+just a one-time grep); both live orchestrators' refactored `_derive_shadow_positions` are behavior-preserving
+and now each have dedicated direct test coverage; `EVAL_WINDOW_DAYS` is genuinely config-driven. Full suite:
+**274 passed / 0 failed**, zero regressions vs. the INC-1 baseline. Real-entry-point shippability check
+passed (argparse error paths + a full `main()` run producing a correct report and JSON file). No production
+code was modified by qa.
+
+**Ready for reviewer.**
+
+### 10.8 Addendum — REV-018 fix: stale test corrected 2026-07-15
+
+dev fixed REV-018: `scripts/run_shadow.py::main()` now catches `except (Exception, SystemExit)`, matching
+`run_shadow_nse.py`'s existing pattern (see §9.4 finding, now resolved). This made
+`test_run_shadow_main_us_ca_track_has_the_same_systemexit_gap` (in `tests/test_run_shadow_nse.py`) stale —
+it was a `pytest.raises(SystemExit)` assertion written specifically to confirm the bug existed, and with the
+bug fixed that assertion is now inverted (would fail against correct behavior).
+
+**Fix applied by qa (test-only, no production code touched):** renamed the test to
+`test_run_shadow_main_us_ca_track_now_swallows_systemexit_matching_nse` and repurposed it to assert the
+fixed behavior: `run_shadow.main()` is called with a mocked `_run_cycle` that raises `SystemExit`, and the
+test now asserts `main()` completes normally without raising — mirroring
+`test_run_shadow_nse_main_swallows_systemexit_and_returns`'s existing structure for the NSE track. Coverage
+of the SystemExit-swallowing guarantee is preserved (upgraded, not deleted) for both tracks.
+
+**Full regression after this fix:** `python3 -m pytest tests/ -q` → **274 passed / 0 failed**. Test count
+unchanged (assertion corrected, not added/removed), zero regressions.
+
+### 10.9 Addendum — REV-015 cleanup fix caused a regression: stale test assertion corrected 2026-07-15
+
+**Regression found:** the orchestrator's pre-closure full-suite run turned up a genuine failure —
+`tests/test_run_shadow_nse.py::test_both_shadow_steps_have_continue_on_error_and_timeout_minutes` (273
+passed / 1 failed). Root cause: as part of the REV-015 fix (making the shadow-step timeout configurable via
+a repo Variable rather than a hardcoded literal), dev changed both shadow steps in
+`.github/workflows/hourly-watchlist.yml` from a literal `timeout-minutes: 15` to the expression
+`timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. This is the correct, intended fix —
+it removes a hardcoded tunable per the project's non-negotiable config rule. But the test's assertion,
+written back in INC-1 against the literal form, did `isinstance(s.get("timeout-minutes"), int)`.
+`_workflow_steps()` parses the workflow YAML with `yaml.safe_load`, which does not evaluate GitHub Actions
+`${{ }}` expressions — it returns the raw string `"${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}"` —
+so the `isinstance(..., int)` check started failing the moment the literal was replaced.
+
+**Process gap (the actual lesson):** REV-015's own fix verification only confirmed "the YAML still parses
+as valid" (i.e., `test_workflow_parses_as_valid_yaml` and a manual/CI YAML-lint check), not "the full test
+suite still passes." A workflow-file edit was declared done without qa re-running `pytest tests/ -q`, so a
+test that encoded an assumption about the *old* literal form went undetected until this later full-suite
+check. Per this project's pipeline, no fix — including a cleanup fix to a non-code artifact like a workflow
+file — should be considered complete without a full-suite regression run; that step was skipped here.
+
+**Fix applied by qa (test-only, no production code touched):** rewrote the assertion in
+`test_both_shadow_steps_have_continue_on_error_and_timeout_minutes` to validate the *intent* ("a
+hang-isolation timeout bound is configured on both shadow steps, driven by `SHADOW_TIMEOUT_MINUTES` with a
+sane fallback") rather than the raw YAML type. The test now accepts either form: a literal positive int
+(in case a literal is ever reintroduced), or a string that both contains `fromJSON`/`vars.SHADOW_TIMEOUT_MINUTES`
+and contains a `||` fallback default — i.e., it now positively verifies the configurability property REV-015
+was introducing, rather than accidentally asserting against it.
+
+**Audit for the same stale assumption elsewhere:** grepped all of `tests/` for `timeout-minutes` and
+`SHADOW_TIMEOUT_MINUTES`. No other test file references either string — this was the only place the old
+literal-form assumption existed.
+
+**Full regression after this fix:** `python3 -m pytest tests/ -q` → **274 passed / 0 failed** (same total
+as before the regression was introduced — one assertion corrected, nothing added or removed). Zero other
+regressions.

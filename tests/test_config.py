@@ -47,17 +47,18 @@ def reload_config():
     importlib.reload(config)
 
 
-# --- defaults (also locks in the qa/test-plan-full-codebase.md correction: ---
-# --- the real default is gemini-3.5-flash, NOT gemini-3-flash) ----------------
+# --- defaults (2026-07-13 change request, Change 2 / design.md §16 note): ---
+# --- corrected from gemini-3.5-flash / gemini-3.1-flash-lite (unstable) to ---
+# --- the paid-tier gemini-2.5-flash family, standardized across every track --
 
-def test_default_model_is_gemini_3_5_flash(reload_config):
+def test_default_model_is_gemini_2_5_flash(reload_config):
     cfg = reload_config(GEMINI_MODEL=None)
-    assert cfg.GEMINI_MODEL == "gemini-3.5-flash"
+    assert cfg.GEMINI_MODEL == "gemini-2.5-flash"
 
 
 def test_default_backup_model(reload_config):
     cfg = reload_config(GEMINI_MODEL_BACKUP=None)
-    assert cfg.GEMINI_MODEL_BACKUP == "gemini-3.1-flash-lite"
+    assert cfg.GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"
 
 
 def test_default_discovery_models(reload_config):
@@ -146,6 +147,86 @@ def test_shadow_enabled_case_insensitive_false(reload_config):
     assert cfg.SHADOW_ENABLED is False
 
 
+# --- FR38/NFR6: NSE shadow kill switch, same fail-open-on-empty-only shape ----
+# --- as SHADOW_ENABLED (FR30), but a fully INDEPENDENT Variable (FR37) --------
+
+def test_shadow_nse_enabled_defaults_true_when_unset(reload_config):
+    cfg = reload_config(SHADOW_NSE_ENABLED=None)
+    assert cfg.SHADOW_NSE_ENABLED is True
+
+
+def test_shadow_nse_enabled_defaults_true_when_empty_string(reload_config):
+    """A deleted/mistyped GitHub Variable arrives as an empty string — the
+    accepted-risk fail-open case (FR38)."""
+    cfg = reload_config(SHADOW_NSE_ENABLED="")
+    assert cfg.SHADOW_NSE_ENABLED is True
+
+
+def test_shadow_nse_enabled_false_disables(reload_config):
+    cfg = reload_config(SHADOW_NSE_ENABLED="false")
+    assert cfg.SHADOW_NSE_ENABLED is False
+
+
+def test_shadow_nse_enabled_any_non_true_explicit_value_fails_closed_typo(reload_config):
+    """FR38: fail-open applies ONLY to a truly unset/empty Variable. Any
+    explicitly-set-but-wrong value -- including typos like 'flase'/'no'/'0' --
+    is not the empty string, so it skips the `or "true"` fallback, compares
+    unequal to "true", and fails CLOSED (disables the NSE pilot)."""
+    for typo in ("flase", "no", "0"):
+        cfg = reload_config(SHADOW_NSE_ENABLED=typo)
+        assert cfg.SHADOW_NSE_ENABLED is False, f"expected fail-closed for {typo!r}"
+
+
+def test_shadow_nse_enabled_case_insensitive_false(reload_config):
+    cfg = reload_config(SHADOW_NSE_ENABLED="FALSE")
+    assert cfg.SHADOW_NSE_ENABLED is False
+
+
+def test_shadow_nse_enabled_is_independent_of_shadow_enabled(reload_config):
+    """FR37 kill-switch independence: flipping SHADOW_NSE_ENABLED off must not
+    affect SHADOW_ENABLED, and vice versa -- the two tracks toggle separately."""
+    cfg = reload_config(SHADOW_NSE_ENABLED="false", SHADOW_ENABLED=None)
+    assert cfg.SHADOW_NSE_ENABLED is False
+    assert cfg.SHADOW_ENABLED is True
+
+    cfg = reload_config(SHADOW_ENABLED="false", SHADOW_NSE_ENABLED=None)
+    assert cfg.SHADOW_ENABLED is False
+    assert cfg.SHADOW_NSE_ENABLED is True
+
+
+def test_shadow_nse_prompt_variant_default(reload_config):
+    cfg = reload_config(SHADOW_NSE_PROMPT_VARIANT=None)
+    assert cfg.SHADOW_NSE_PROMPT_VARIANT == "position_aware_v1"
+
+
+def test_shadow_nse_prompt_variant_override_propagates(reload_config):
+    cfg = reload_config(SHADOW_NSE_PROMPT_VARIANT="custom_variant_v2")
+    assert cfg.SHADOW_NSE_PROMPT_VARIANT == "custom_variant_v2"
+
+
+def test_shadow_nse_snapshot_lookback_min_default_is_20(reload_config):
+    """FR34: the lookback MUST stay under the 30-min NSE dispatch cadence."""
+    cfg = reload_config(SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN=None)
+    assert cfg.SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN == 20
+    assert cfg.SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN < 30, \
+        "lookback must stay under the 30-min NSE dispatch cadence (FR34)"
+
+
+def test_shadow_nse_snapshot_lookback_min_override_propagates(reload_config):
+    cfg = reload_config(SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN="15")
+    assert cfg.SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN == 15
+
+
+def test_nse_models_helper_returns_nse_model_pair(reload_config):
+    cfg = reload_config(NSE_GEMINI_MODEL="nse-primary", NSE_GEMINI_MODEL_BACKUP="nse-backup")
+    assert cfg.nse_models() == ["nse-primary", "nse-backup"]
+
+
+def test_nse_models_helper_drops_empty_backup(reload_config):
+    cfg = reload_config(NSE_GEMINI_MODEL="nse-primary", NSE_GEMINI_MODEL_BACKUP="")
+    assert cfg.nse_models() == ["nse-primary"]
+
+
 # --- market-hours gate boundary + RUNTIME_CLOSE_GRACE_MIN configurability -----
 
 def _et(hour, minute, weekday_date=dt.date(2026, 7, 13)):
@@ -213,6 +294,18 @@ def test_nse_market_open_within_default_grace_after_close():
 
 def test_nse_market_closed_past_grace_after_close():
     assert config.is_nse_open(_ist(15, 41)) is False
+
+
+# --- EVAL_WINDOW_DAYS (design §17.4, INC-2, FR31) ------------------------------
+
+def test_eval_window_days_defaults_to_14(reload_config):
+    cfg = reload_config(EVAL_WINDOW_DAYS=None)
+    assert cfg.EVAL_WINDOW_DAYS == 14
+
+
+def test_eval_window_days_override_propagates(reload_config):
+    cfg = reload_config(EVAL_WINDOW_DAYS="7")
+    assert cfg.EVAL_WINDOW_DAYS == 7
 
 
 # --- require_secrets() fail-fast behavior ---------------------------------------
