@@ -534,3 +534,40 @@ of the SystemExit-swallowing guarantee is preserved (upgraded, not deleted) for 
 
 **Full regression after this fix:** `python3 -m pytest tests/ -q` → **274 passed / 0 failed**. Test count
 unchanged (assertion corrected, not added/removed), zero regressions.
+
+### 10.9 Addendum — REV-015 cleanup fix caused a regression: stale test assertion corrected 2026-07-15
+
+**Regression found:** the orchestrator's pre-closure full-suite run turned up a genuine failure —
+`tests/test_run_shadow_nse.py::test_both_shadow_steps_have_continue_on_error_and_timeout_minutes` (273
+passed / 1 failed). Root cause: as part of the REV-015 fix (making the shadow-step timeout configurable via
+a repo Variable rather than a hardcoded literal), dev changed both shadow steps in
+`.github/workflows/hourly-watchlist.yml` from a literal `timeout-minutes: 15` to the expression
+`timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. This is the correct, intended fix —
+it removes a hardcoded tunable per the project's non-negotiable config rule. But the test's assertion,
+written back in INC-1 against the literal form, did `isinstance(s.get("timeout-minutes"), int)`.
+`_workflow_steps()` parses the workflow YAML with `yaml.safe_load`, which does not evaluate GitHub Actions
+`${{ }}` expressions — it returns the raw string `"${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}"` —
+so the `isinstance(..., int)` check started failing the moment the literal was replaced.
+
+**Process gap (the actual lesson):** REV-015's own fix verification only confirmed "the YAML still parses
+as valid" (i.e., `test_workflow_parses_as_valid_yaml` and a manual/CI YAML-lint check), not "the full test
+suite still passes." A workflow-file edit was declared done without qa re-running `pytest tests/ -q`, so a
+test that encoded an assumption about the *old* literal form went undetected until this later full-suite
+check. Per this project's pipeline, no fix — including a cleanup fix to a non-code artifact like a workflow
+file — should be considered complete without a full-suite regression run; that step was skipped here.
+
+**Fix applied by qa (test-only, no production code touched):** rewrote the assertion in
+`test_both_shadow_steps_have_continue_on_error_and_timeout_minutes` to validate the *intent* ("a
+hang-isolation timeout bound is configured on both shadow steps, driven by `SHADOW_TIMEOUT_MINUTES` with a
+sane fallback") rather than the raw YAML type. The test now accepts either form: a literal positive int
+(in case a literal is ever reintroduced), or a string that both contains `fromJSON`/`vars.SHADOW_TIMEOUT_MINUTES`
+and contains a `||` fallback default — i.e., it now positively verifies the configurability property REV-015
+was introducing, rather than accidentally asserting against it.
+
+**Audit for the same stale assumption elsewhere:** grepped all of `tests/` for `timeout-minutes` and
+`SHADOW_TIMEOUT_MINUTES`. No other test file references either string — this was the only place the old
+literal-form assumption existed.
+
+**Full regression after this fix:** `python3 -m pytest tests/ -q` → **274 passed / 0 failed** (same total
+as before the regression was introduced — one assertion corrected, nothing added or removed). Zero other
+regressions.

@@ -382,13 +382,32 @@ def test_workflow_parses_as_valid_yaml():
 
 
 def test_both_shadow_steps_have_continue_on_error_and_timeout_minutes():
+    """REV-015: dev replaced the literal `timeout-minutes: 15` on both shadow
+    steps with a GitHub Actions expression driven by the SHADOW_TIMEOUT_MINUTES
+    repo Variable (with a `|| '15'` fallback), so the value is configurable
+    without editing the workflow file. `yaml.safe_load` does not evaluate
+    `${{ }}` expressions -- it returns the raw string -- so this assertion
+    validates either form: a literal positive int (if someone reverts to a
+    hardcoded value) or a `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || ...)`
+    expression string (the current, configurable form). Either way, the intent
+    being tested is that a hang-isolation timeout bound IS configured on both
+    shadow steps -- not the raw YAML type."""
     steps = _workflow_steps()
     shadow_steps = [s for s in steps if "shadow" in s.get("name", "").lower()]
     assert len(shadow_steps) == 2, "expected exactly the US/CA and NSE shadow steps"
     for s in shadow_steps:
         assert s.get("continue-on-error") is True, f"{s['name']} missing continue-on-error"
-        assert isinstance(s.get("timeout-minutes"), int) and s["timeout-minutes"] > 0, \
-            f"{s['name']} missing a positive timeout-minutes"
+        tm = s.get("timeout-minutes")
+        if isinstance(tm, int):
+            assert tm > 0, f"{s['name']} timeout-minutes must be positive"
+        elif isinstance(tm, str):
+            assert "fromJSON" in tm and "vars.SHADOW_TIMEOUT_MINUTES" in tm, \
+                f"{s['name']} timeout-minutes expression must be driven by " \
+                f"the SHADOW_TIMEOUT_MINUTES Variable, got: {tm!r}"
+            assert "||" in tm, \
+                f"{s['name']} timeout-minutes expression missing a fallback default, got: {tm!r}"
+        else:
+            pytest.fail(f"{s['name']} missing a timeout-minutes int or GH Actions expression, got: {tm!r}")
 
 
 def test_nse_shadow_step_runs_after_production_and_us_ca_shadow_steps():
