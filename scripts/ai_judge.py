@@ -211,11 +211,10 @@ def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, d
     """One Gemini request with retry-on-transient-error. Returns
     (text, is_api_error, error_detail, usage, retries_used).
 
-    THE shared call path: production watchlist/discovery (judge_batch) and the
-    shadow pilot (shadow.judge_batch_shadow) funnel every API request through
-    here, so retry behavior is identical across tracks by construction (locked
-    pilot constraint — model/behavior parity). Only _is_retryable errors are
-    retried, up to config.GEMINI_MAX_RETRIES times, sleeping an exponential
+    THE shared call path: production watchlist/discovery (judge_batch) funnels
+    every API request through here, so retry behavior is identical by
+    construction. Only _is_retryable errors are retried, up to
+    config.GEMINI_MAX_RETRIES times, sleeping an exponential
     FULLY-jittered delay (uniform 0..base*2^n) between attempts; every attempt
     carries the client's GEMINI_TIMEOUT_MS (http_options is per-request), and
     every retry is logged with attempt number, error, and delay — no silent

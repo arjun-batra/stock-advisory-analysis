@@ -51,55 +51,6 @@ ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
 # testing or backfill via workflow_dispatch. Leave unset on the scheduled run.
 FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
 
-# --- Shadow verdict pilot kill switch (US/CA, non-production) ------------------
-# Gates the entire shadow verdict track (scripts/run_shadow.py). DEFAULT TRUE for
-# the pilot: turning it off is a zero-code-change GitHub Variable flip
-# (SHADOW_ENABLED=false), checked every cycle before the shadow call fires.
-#
-# The default lives HERE, not as a `|| 'true'` in the workflow: the workflow
-# passes `SHADOW_ENABLED: ${{ vars.SHADOW_ENABLED }}`, so an unset Variable
-# arrives as an EMPTY string, which `(... or "true")` below resolves to on. This
-# avoids the GitHub-expression truthiness trap the ALERTS_ENABLED comment warns
-# about (a `||` default that can't be toggled off). Only the literal string
-# "false" disables it; unset/empty stays on for the pilot.
-SHADOW_ENABLED = (os.environ.get("SHADOW_ENABLED", "").strip().lower() or "true") == "true"
-
-# Prompt variant tag written to call_log_shadow.prompt_variant. A config constant
-# (not hardcoded at the call site) so a future variant is a one-line change and
-# older rows stay queryable by their own tag.
-SHADOW_PROMPT_VARIANT = os.environ.get("SHADOW_PROMPT_VARIANT", "position_aware_v1")
-
-# How far back run_shadow.py looks in call_log for "this cycle's" production
-# market-data snapshot to reuse (so the shadow call judges the SAME data as
-# production, isolating the position-awareness variable). The production batch
-# dispatch cadence is */30 min, so a window under 30 min captures only the run
-# that just finished and never the prior cycle. Generous vs. a fast production
-# run (~1 min) but safely under one cadence step.
-SHADOW_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_SNAPSHOT_LOOKBACK_MIN", "20"))
-
-# --- NSE shadow verdict pilot kill switch (NSE, non-production, §16) ----------
-# Independent of SHADOW_ENABLED above (FR38/NFR6, load-bearing #11): flipping
-# either one leaves the other track untouched. Same fail-open-on-empty-only
-# shape as SHADOW_ENABLED — see that comment for the GitHub-expression-truthiness
-# rationale; only the literal string "false" disables it, unset/empty stays on.
-SHADOW_NSE_ENABLED = (os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"
-
-# Prompt variant tag written to call_log_shadow_nse.prompt_variant. Same variant
-# as the US/CA pilot (position_aware_v1) — no new prompt, §16.2.
-SHADOW_NSE_PROMPT_VARIANT = os.environ.get("SHADOW_NSE_PROMPT_VARIANT", "position_aware_v1")
-
-# How far back run_shadow_nse.py looks in call_log for "this cycle's" production
-# NSE snapshot to reuse (FR34). Must stay under the NSE */30 dispatch cadence so
-# it can never pick up a prior cycle's snapshot — same rationale as
-# SHADOW_SNAPSHOT_LOOKBACK_MIN above, scoped to the NSE track.
-SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN = int(os.environ.get("SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN", "20"))
-
-# --- Shared wallet-sim evaluation harness (design §17, INC-2, FR31) ----------
-# Default lookback window (days) eval_shadow.py reports over when --since/
-# --until aren't passed explicitly on the CLI. Covers both shadow tracks; not
-# a per-track value since the harness takes `track` as a separate CLI input.
-EVAL_WINDOW_DAYS = int(os.environ.get("EVAL_WINDOW_DAYS", "14"))
-
 # --- Tunables (solution design 6.3) ------------------------------------------
 # REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule
 # model has no reminder and no cooldown, so neither constant has a consumer.
@@ -110,16 +61,16 @@ MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 # ~4.5h high-demand window, with successes interleaved throughout — so retries
 # recover most of them; the old single fixed-20s retry did not). The retry loop
 # lives in ai_judge._generate, the ONE call function every track funnels through
-# (production watchlist, discovery, and the shadow pilot), so all tracks inherit
-# identical behavior — a locked pilot constraint.
+# (production watchlist, discovery), so all tracks inherit identical behavior.
 #   GEMINI_MAX_RETRIES: retries AFTER the initial attempt (3 -> up to 4 attempts).
 #   GEMINI_RETRY_BASE_MS: exponential base delay (10s -> 20s -> 40s), slept with
 #   FULL jitter (uniform 0..computed delay) so the 503-retrying calls of nearby
 #   dispatch cycles don't hammer the API in lockstep.
 # Both arrive from workflow `${{ vars.X }}` with NO literal fallback, so an unset
-# Variable is an EMPTY string: `or` (not a get() default) resolves it — the same
-# GitHub-expression trap the SHADOW_ENABLED comment documents. The effective
-# values are logged at call setup (ai_judge._client).
+# Variable is an EMPTY string, not absent — a plain `os.environ.get(name,
+# default)` default would never apply, so `or` is used instead to resolve the
+# empty string to the intended default. The effective values are logged at
+# call setup (ai_judge._client).
 GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES") or "3")
 GEMINI_RETRY_BASE_MS = int(os.environ.get("GEMINI_RETRY_BASE_MS") or "10000")
 # Per-request timeout for the Gemini call, in MILLISECONDS, honored on EVERY
