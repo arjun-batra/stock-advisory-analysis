@@ -43,10 +43,6 @@ covers only stocks/ETFs, is single-user, and is not licensed/registered financia
   any error.
 - **Yahoo Finance** (unofficial API) supplies price/volume/fundamentals for all three markets.
 
-An experimental, non-production "shadow wallet" pilot runs alongside production for US/CA tickers to A/B
-test a position-aware prompt variant. It is fully isolated (its own table, no alerts, cannot affect
-production) and is documented in `docs/requirements.md` §10, not part of core scope.
-
 ## How to run
 
 > **Note:** This section is a best-effort reconstruction from the solution design
@@ -57,7 +53,7 @@ production) and is documented in `docs/requirements.md` §10, not part of core s
 The system is not a locally-run app; it runs on a schedule in the cloud.
 
 1. **Control plane — Supabase.** A Supabase (Postgres) project holds the schema (watchlist, holdings,
-   `call_log`, views, plus the shadow table) and drives scheduling and health monitoring via pg_cron.
+   `call_log`, views) and drives scheduling and health monitoring via pg_cron.
    Apply the SQL in `sql/` to provision the schema and objects. *(inferred: exact apply order and which
    migrations were applied live via the Supabase MCP vs. committed SQL — confirm against a handoff.)*
 2. **Compute — GitHub Actions.** The workflows in `.github/workflows/` (e.g.
@@ -71,7 +67,7 @@ The system is not a locally-run app; it runs on a schedule in the cloud.
    secrets: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the code fails fast if any are
    missing), plus `NTFY_TOPIC` / `NSE_NTFY_TOPIC` and `DETAIL_PAGE_BASE` for delivery. Behavior toggles
    include `ALERTS_ENABLED` (flip to `true` to send real pushes). The full tunable surface (models,
-   timeouts, retries, discovery thresholds, market hours, shadow-pilot vars) is documented in
+   timeouts, retries, discovery thresholds, market hours) is documented in
    `docs/requirements.md` §11 and defined in `scripts/config.py`.
 5. **Dashboard.** The read-only dashboard is served from GitHub Pages (the `pages/` output, with the
    price snapshot published to `pages/prices.json` on the market cadence) behind a client-side password
@@ -80,7 +76,6 @@ The system is not a locally-run app; it runs on a schedule in the cloud.
 ## Documentation
 
 - `docs/idea-brief.md` — the as-built product brief (problem, users, scope, risks).
-- `docs/requirements.md` — the current FR/NFR requirements, Decisions Log, Configuration, and the
-  experimental shadow-pilot requirements.
+- `docs/requirements.md` — the current FR/NFR requirements, Decisions Log, and Configuration.
 - `requirements_docs/` — the original, detailed source-of-truth docs (requirements v5, solution design
   v20, UI handoff v4, history, and prior reviews), retained as the historical record.
