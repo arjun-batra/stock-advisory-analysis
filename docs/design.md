@@ -1,23 +1,25 @@
 # Stock Advisory Agent — Solution Design (as-built)
 
-**Owner:** tech-lead. **Status:** the whole document is now DESCRIPTIVE / as-built. §§0–13, 15 document
-Phases 0–7 (live in production); **§14 (increment plan), §16 (NSE shadow pilot) and §17 (FR31 evaluation
-harness) were FORWARD design as of 2026-07-13, and became as-built once the 2026-07-13 change request
-shipped**: the user approved GATE 3, and **both INC-1 (NSE shadow pilot, FR32–FR39/NFR6) and INC-2 (shared
-wallet-sim harness, FR31) have been implemented, passed qa, and been reviewer-cleared with 0 blockers /
-0 majors each** (`docs/review-log.md` Pass 3 — INC-1, 2026-07-14; Pass 4 — INC-2, 2026-07-15). Read §16
-and §17 as descriptions of shipped code, the same way §§1–13 already read. The 2026-07-13 change request
-also carried a system-wide paid-tier / model-default correction, now applied.
+**Owner:** tech-lead. **Status:** the whole document is DESCRIPTIVE / as-built for the live production
+system (§§0–12, 15 cover Phases 0–7). **§13 (US/CA shadow pilot), §14 (increment plan), §16 (NSE shadow
+pilot) and §17 (shared evaluation harness) are RETIRED as of 2026-07-16** by user change request ("End
+both US/TSX and NSE experiment (shadow) and remove the codebase for it") — see `docs/requirements.md`
+§10 top-level retirement note and changelog entries dated 2026-07-16. Full historical FR text lives in
+`docs/requirements.md` §10.1–§10.3 (kept there verbatim for traceability); this doc keeps only short
+retirement notices at §13/§16/§17 plus a new **§18 removal plan** for dev to execute mechanically. The
+2026-07-13 change request's unrelated system-wide paid-tier / `gemini-2.5-flash` model-default correction
+remains applied and is NOT retired (§4.4, §9) — it was bundled into the now-retired INC-1 but is a
+production-facing fix, independent of the shadow tracks.
 **Provenance:** This document was produced during the 2026-07-12 multi-agent-template adoption pass by
 condensing the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into
-this template's format, and by adding the previously-undocumented shadow wallet pilot section (§13) from
-the actual code. It is **reverse documentation of a shipped system**, not forward design work. `SD.md`
-and `requirements_docs/SD-history.md` remain in the repo as the historical/rationale record; where this
-doc and `SD.md` disagree, the code wins and this doc is the one to fix.
+this template's format. It is **reverse documentation of a shipped system**, not forward design work.
+`SD.md` and `requirements_docs/SD-history.md` remain in the repo as the historical/rationale record; where
+this doc and `SD.md` disagree, the code wins and this doc is the one to fix.
 
-**Requirement IDs** referenced throughout map to `docs/requirements.md` (FR1–FR23 / NFR1–NFR4 core;
-FR24–FR31 / NFR5 the US/CA experimental shadow pilot + shared evaluation method; FR32–FR39 / NFR6 the
-NSE experimental shadow pilot). Numbering is unchanged from the v5 source, so `SD.md`'s
+**Requirement IDs** referenced throughout map to `docs/requirements.md` (FR1–FR23 / NFR1–NFR4 core, live).
+**FR24–FR31 / NFR5 (US/CA shadow pilot + shared evaluation method) and FR32–FR39 / NFR6 (NSE shadow
+pilot) are RETIRED (2026-07-16)** — kept in `docs/requirements.md` for historical traceability only, no
+longer implemented or design-active. Numbering is otherwise unchanged from the v5 source, so `SD.md`'s
 existing FR references still line up (spot-checked: FR7/FR8 single-rule alerting, FR15 logging, FR21
 dashboard freshness, FR23 timestamps, FR4 discovery all match).
 
@@ -49,11 +51,12 @@ intent from `SD.md §0`:
    triggers*, not only one that runs and fails. Known limit: it lives in the same pg_cron it watches
    (single point of failure, §2 item 6); an out-of-band ping is the unbuilt mitigation.
 6. **One batched AI call per run, not per ticker (§4.4).** Gemini runs on **Google's paid tier**
-   system-wide (production watchlist, NSE watchlist, discovery, and both shadow tracks); there is no
-   free-tier daily request cap. Batching is still load-bearing for cost: one batched call per run per
-   track is what keeps paid-tier spend inside NFR1's unchanged $0–15/mo cap (cost is held by low call
-   volume, not a free quota). `data_snapshot.tokens` is a **per-batch total replicated on every row** —
-   dedup per run, never sum per row.
+   system-wide (production watchlist, NSE watchlist, discovery); there is no free-tier daily request cap.
+   Batching is still load-bearing for cost: one batched call per run per market group is what keeps
+   paid-tier spend inside NFR1's unchanged $0–15/mo cap (cost is held by low call volume, not a free
+   quota). `data_snapshot.tokens` is a **per-batch total replicated on every row** — dedup per run, never
+   sum per row. (Prior to the 2026-07-16 retirement, this also covered the shadow tracks' calls — §13/§16;
+   now retired, §18.)
 7. **Discovery uses Yahoo's live screener, not a maintained universe (§4.3).** The `candidate_universe`
    table was vestigial and has been dropped; there is no seed/quarterly-refresh ownership burden. Don't
    reintroduce one.
@@ -67,31 +70,15 @@ intent from `SD.md §0`:
    checkout + pip install). Both bugs were confirmed and fixed. **Don't tighten either bound to the exact
    close, and don't "simplify" the two numbers into one** — they protect against different failure modes.
    Neither admits the following post-close `*/30` slot.
-10. **US/CA shadow pilot is triple-isolated and fail-open by policy (§13, FR27–FR30, NFR5).** (The NSE
-    shadow track added 2026-07-13 follows the same shape — see §16 — and #11 below covers the mutual
-    cross-track isolation.) The shadow track
-    can never alert, can never be read by the dashboard/anon key, and can never fail production (three
-    independent belts, §13.4). Its kill switch **defaults ON (fail-open) only on a truly unset/empty
-    Variable** — an accepted, recorded risk (FR30): a missing or blank `SHADOW_ENABLED` Variable *keeps the
-    pilot running*. Because `config.py` resolves it as `(env.strip().lower() or "true") == "true"`, the
-    `"true"` fallback fires **only for the empty string**; any explicitly-set-but-wrong value — `"false"`,
-    or a typo/other token like `"flase"`, `"no"`, `"0"` — is compared directly to `"true"`, does not match,
-    and therefore **fails CLOSED (disables the pilot)**. So a typo cannot silently keep it running; only an
-    unset/empty Variable does. Don't "fix" this to fail-closed *universally* (including the unset/empty case)
-    without re-reading FR30/NFR5 — the fail-open-on-unset default is a deliberate opt-out design, valid only
-    while the three isolation guarantees hold.
-11. **Two mutually-isolated shadow tracks (§13, §16, FR37, NFR6).** As of the 2026-07-13 change request
-    there are **two** independent shadow tracks — US/CA (§13, `call_log_shadow`, `SHADOW_ENABLED`) and NSE
-    (§16, `call_log_shadow_nse`, `SHADOW_NSE_ENABLED`) — and the design principle is that **all three
-    tracks (production, US/CA shadow, NSE shadow) are mutually isolated**: a fault, hang, timeout, or
-    kill-switch flip in any one can never take down another. Isolation is structural, not incidental:
-    separate tables (no shared write surface; each track's wallet-walk reads only its own table), separate
-    independent kill switches, separate processes/entry points each swallowing their own exceptions and
-    exiting 0, separate `continue-on-error` workflow steps with `timeout-minutes` bounds, and
-    non-overlapping ET/IST sessions so no two tracks ever do real Gemini work in the same run. **Don't
-    collapse the two shadow tables, share a kill switch, or merge the two shadow steps into one process —
-    that would break FR37/NFR6.** The prompt/model machinery is shared (reuse over duplication, §8); the
-    *runtime state and execution* are what must stay separate.
+10. **RETIRED (2026-07-16).** Formerly: "US/CA shadow pilot is triple-isolated and fail-open by policy."
+    The entire US/CA shadow track (§13) is removed; this decision no longer applies. Kept as a numbered
+    placeholder so cross-references elsewhere in this doc and in `docs/review-log.md` don't dangle. Full
+    text is preserved in git history and in `docs/requirements.md` §10.1 for traceability. See §18 for the
+    removal plan.
+11. **RETIRED (2026-07-16).** Formerly: "Two mutually-isolated shadow tracks." Both shadow tracks (§13,
+    §16) are removed; the mutual-isolation principle no longer has anything to isolate. Kept as a numbered
+    placeholder for the same reason as #10. Full text is preserved in git history and in
+    `docs/requirements.md` §10.1/§10.3. See §18 for the removal plan.
 
 ---
 
@@ -138,8 +125,8 @@ Carried from `SD.md §2` plus the pilot additions. These are recorded so they ar
    informational, RLS-scoped data (FR19, Decision #11).
 8. **Yahoo price API is browser-CORS-blocked** — dashboard reads a server-published `prices.json`
    snapshot same-origin (FR21, Decision #18, §11).
-9. **Shadow pilot kill switch defaults fail-open (FR30, NFR5)** — accepted only while isolation
-   guarantees FR27–FR29 hold; if any is weakened, revisit the default.
+9. **RETIRED (2026-07-16).** Formerly: "Shadow pilot kill switch defaults fail-open." Both shadow tracks
+   and their kill switches are removed (§13, §16, §18); the risk no longer exists.
 
 ---
 
@@ -165,8 +152,8 @@ Key shape: the trigger arrow originates in **Supabase pg_cron**, calls GitHub's 
 `publish-prices.yml` writes `pages/prices.json`, which the dashboard reads same-origin (Yahoo is
 browser-CORS-blocked, §11).
 
-Entry points are thin orchestrators (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`,
-`run_shadow.py`) — no business logic; all logic lives in importable, testable modules (§8). External
+Entry points are thin orchestrators (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`) — no
+business logic; all logic lives in importable, testable modules (§8). External
 dependencies (Supabase client, Gemini client, yfinance, clock) are reached through module functions so
 they can be substituted in tests.
 
@@ -255,11 +242,12 @@ load-bearing #7) and applies quality gates + signals locally:
 - **Model:** Gemini Flash on Google's **paid tier**. Real operation runs the **`gemini-2.5-flash` family
   across the board** (`gemini-3.5-flash`/`gemini-3.1-flash-lite` showed stability issues). **Model names
   are configurable repo Variables, never hardcoded:** `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` (watchlist),
-  `NSE_GEMINI_MODEL` / `_BACKUP` (NSE watchlist — its own Variable pair, reused by the NSE shadow track,
-  §16), `DISCOVERY_GEMINI_MODEL` / `_BACKUP` (discovery). Wired through `judge_batch(models=...)`. **Config
-  correction scoped to INC-1 (§14):** the literal defaults in `scripts/config.py:26-27` (and the
-  `|| 'gemini-3.5-flash'` fallbacks in `hourly-watchlist.yml`) are to be updated from the 3.x strings to
-  `gemini-2.5-flash` / `gemini-2.5-flash-lite` to match real operation.
+  `NSE_GEMINI_MODEL` / `_BACKUP` (NSE watchlist), `DISCOVERY_GEMINI_MODEL` / `_BACKUP` (discovery). Wired
+  through `judge_batch(models=...)`. **Model-default correction (already applied):** the literal defaults
+  in `scripts/config.py` (and the workflow fallbacks in `hourly-watchlist.yml`) were updated from the 3.x
+  strings to `gemini-2.5-flash` / `gemini-2.5-flash-lite` to match real operation. This fix was originally
+  bundled into the now-retired INC-1 (§14, §18) but is independent, production-facing, and remains in
+  effect after the shadow-track removal.
 - **Dual-model fallback:** each call attempts primary, falls back to backup; the two draw from separate
   per-model buckets (a resilience/isolation belt; no longer a free-tier-quota necessity on paid tier).
 - **One batched call per run, not per ticker (load-bearing #6):** the whole open-market group is judged
@@ -288,9 +276,9 @@ Load-bearing content:
   {high,medium,low}, rationale}`. Rationale stored ≤280 chars; push body clipped to `NOTIF_BODY_MAX`
   (150) on a word boundary.
 
-> **The prompt is inline Python** in `ai_judge.py` (`BATCH_SYSTEM_PROMPT`) and, for the shadow variant,
-> in `shadow.py` (`SHADOW_SYSTEM_PROMPT`). There is **no** separate prompt file. (Correcting a stale QA
-> reference to a nonexistent `shadow_pilot_prompt.md` — see the note to QA in the handoff summary.)
+> **The prompt is inline Python** in `ai_judge.py` (`BATCH_SYSTEM_PROMPT`). There is **no** separate
+> prompt file. (The former shadow-variant prompt, `shadow.py`'s `SHADOW_SYSTEM_PROMPT`, was removed with
+> the shadow-track retirement — §18.)
 
 **Timeout & fallback (load-bearing #3):** `GEMINI_TIMEOUT_MS` default 180,000 ms. On any fallback the
 **real** exception (timeout / 503 / parse / genuine 429) is captured to `data_snapshot.fallback_from` +
@@ -376,10 +364,12 @@ a total Supabase/pg_cron outage. An out-of-band uptime ping is the documented, u
 | `holdings` | ticker, shares, cost_basis, currency | Position data (FR2, FR11); `currency`∈{USD,CAD,INR}; `shares>0`/`cost_basis>0` CHECK guards |
 | `verdict_state` | ticker, current_verdict, last_checked_at | Change-detection for the single rule (FR7/FR8); shrunk to 3 cols when cooldown/reminder retired |
 | `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp (UTC), label (watchlist/new-candidate), alert_type (change/null), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source (FR14) |
-| `call_log_shadow` | (mirror of `call_log`) + `prompt_variant`, `shadow_position_state` (jsonb) | US/CA shadow pilot (FR24–FR30); **RLS on, NO anon policy/grant** — internal-only (§13.5) |
-| `call_log_shadow_nse` | (mirror of `call_log_shadow`) + `prompt_variant`, `shadow_position_state` (jsonb) | **NSE shadow pilot (FR32–FR39, NFR6)** — dedicated table, **RLS on, NO anon policy/grant** — internal-only (§16.5); INC-1, shipped |
 | `monitor_alerts` | check_name (PK), last_state, last_alerted_at, updated_at | Dead-man monitor dedup (NFR2) |
 | `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat (NFR2). Keys: `hourly-watchlist` (shared across sessions), `daily-discovery` (NA), `daily-discovery-in` (NSE), `publish-prices` |
+
+> **RETIRED (2026-07-16):** `call_log_shadow` (former US/CA shadow pilot table, §13) and
+> `call_log_shadow_nse` (former NSE shadow pilot table, §16) are removed from this data model and are to
+> be **`DROP TABLE`d** from the live Supabase project, not just left unwritten — see §18 for the migration.
 
 **View `latest_call_per_ticker`** (`sql/dashboard_latest_call_view.sql`): most recent `call_log` row per
 ticker (`DISTINCT ON (ticker) … ORDER BY ticker, timestamp DESC`), slim columns only (`id, ticker,
@@ -423,9 +413,8 @@ never fixed UTC offsets.
 `dispatch_watchlist_nse_if_open`, `send_ntfy`, `_raise_monitor`, `_clear_monitor`,
 `check_pipeline_health`. View: `latest_call_per_ticker`. Extensions: `pg_cron`, `pg_net`. Vault secrets:
 `github_workflow_pat`, `ntfy_topic`. RLS is on for every table; publishable key has SELECT policies on
-`call_log` and `watchlist` only. **Both shadow tables — `call_log_shadow` (§13) and `call_log_shadow_nse`
-(§16, INC-1) — have RLS on with NO anon/authenticated policy or grant** (readable/writable only by the
-server secret key that bypasses RLS; no dashboard/Pages/ntfy read path).
+`call_log` and `watchlist` only. (The former shadow tables' RLS/no-anon-grant posture no longer applies —
+both tables are dropped, §18.)
 
 ---
 
@@ -475,9 +464,10 @@ Ingest skips are logged the same way (FR15).
 
 - **7.1 Cost (NFR1):** public repo → unlimited free Actions minutes; secrets in Actions secrets +
   Supabase Vault; Supabase free tier; ntfy / GitHub Pages $0. **Gemini runs on Google's paid tier**
-  (system-wide); one batched AI call per run per track keeps call volume — and therefore paid-tier spend —
-  low, holding NFR1's unchanged **$0–15/month** cap (spend is bounded by low call volume, not a free
-  quota). The other data/push APIs (Yahoo, ntfy) remain free.
+  (system-wide); one batched AI call per run per market group keeps call volume — and therefore paid-tier
+  spend — low, holding NFR1's unchanged **$0–15/month** cap (spend is bounded by low call volume, not a
+  free quota). The other data/push APIs (Yahoo, ntfy) remain free. (Prior to 2026-07-16 this also covered
+  the now-retired shadow tracks' calls; production-only cost is strictly lower.)
 - **7.2 Security (NFR3):** no trade execution, no brokerage credentials anywhere. Secrets never in code.
   `dispatch_github_workflow` is `SECURITY DEFINER`, reads the PAT from Vault only, never echoes it. Detail
   page uses the read-only publishable key under RLS; `call_log.id` is a UUID. Every table has RLS.
@@ -494,12 +484,13 @@ Ingest skips are logged the same way (FR15).
 
 ```
 .github/workflows/
-  hourly-watchlist.yml   # workflow_dispatch only; concurrency group; + US/CA shadow step (§13)
-                         #   + NSE shadow step (§16, INC-1); each continue-on-error + timeout-minutes
+  hourly-watchlist.yml   # workflow_dispatch only; concurrency group
+                         #   (former US/CA + NSE shadow steps removed 2026-07-16, §18)
   daily-discovery.yml    # workflow_dispatch only; concurrency group
   publish-prices.yml     # writes pages/prices.json (CORS fallback, §11)
 scripts/
-  config.py              # market hours/gates, model Variables, discovery gates, shadow vars — all tunables
+  config.py              # market hours/gates, model Variables, discovery gates — all tunables
+                         #   (shadow vars removed 2026-07-16, §18)
   ingest.py              # yfinance wrapper; market-agnostic; headline filter; session-aware price/vol
   prefilter.py           # Yahoo live screener + quality gates + signals + funnel; region-aware
   ai_judge.py            # Gemini batched judge_batch(models=...); BATCH_SYSTEM_PROMPT; schema + confidence
@@ -509,19 +500,16 @@ scripts/
   run_hourly.py          # hourly watchlist orchestrator (per-market gate) — thin entry point
   run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point
   publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point
-  shadow.py              # SHADOW pilots: position-aware prompt variant + judge_batch_shadow(models=…);
-                         #   shared by US/CA (§13) and NSE (§16) tracks — reuse, not duplication
-  run_shadow.py          # US/CA SHADOW orchestrator — thin entry point (§13)
-  run_shadow_nse.py      # NSE SHADOW orchestrator — thin entry point (§16, INC-1) — NEW
-  wallet_sim.py          # pure wallet-walk state machine + P&L, no I/O (§17, INC-2) — NEW
-  eval_shadow.py         # shared wallet-sim evaluation harness entry point (§17, INC-2, FR31) — NEW
 sql/
-  scheduler_pgcron.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql,
-  shadow_call_log_migration.sql (§13),
-  shadow_nse_call_log_migration.sql (§16, INC-1) — NEW
+  scheduler_pgcron.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
 pages/
   detail.html, dashboard.html, prices.json
 ```
+
+> **Removed 2026-07-16 (§18):** `scripts/shadow.py`, `scripts/run_shadow.py`, `scripts/run_shadow_nse.py`,
+> `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, `sql/shadow_call_log_migration.sql`,
+> `sql/shadow_nse_call_log_migration.sql`, and the two shadow steps in `hourly-watchlist.yml`. See §18 for
+> the full mechanical checklist (also covers `config.py` shadow vars, tests, and the DROP TABLE migration).
 
 Contracts a dev/QA team builds against: the `data_snapshot` jsonb shape (§5), the `judge_batch()` JSON
 array contract (§4.4), the single-rule state machine (§6), the config surface (§10). Entry points contain
@@ -546,15 +534,15 @@ headline cap, `ingest._headlines`), `MARKET_OPEN`/`CLOSE` (09:30/16:00 ET), `NSE
 `RATIONALE_MAX` (280 — stored rationale clip, `ai_judge.py`). Discovery: the `DISCOVERY_*`
 gate/signal/shortlist/cooldown keys (§4.3), incl. `DISCOVERY_EARNINGS_RECENT_DAYS` (2 — the "just reported"
 look-back side of the earnings signal in `prefilter._signals`).
-Dashboard auto-refresh interval is build-time config (FR22). US/CA shadow: see §13.6. **NSE shadow
-(INC-1, §16.6):** `SHADOW_NSE_ENABLED` (fail-open-on-empty only, FR38), `SHADOW_NSE_PROMPT_VARIANT`
-(`position_aware_v1`), `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (20). The NSE shadow call reuses the existing
-`NSE_GEMINI_MODEL`/`_BACKUP` pair (no new model Variable). **Wallet-sim harness (INC-2, §17.4):**
-`EVAL_WINDOW_DAYS` (14). **Model-default correction (INC-1, Change 2):** the `GEMINI_MODEL` /
-`GEMINI_MODEL_BACKUP` literal defaults in `scripts/config.py` are to be changed to `gemini-2.5-flash` /
-`gemini-2.5-flash-lite` (with the matching `hourly-watchlist.yml` `|| 'gemini-3.5-flash'` fallbacks) to
-match real paid-tier operation. **The dashboard auto-refresh interval and all discovery thresholds are
-tunables, not requirements — no tunable may live only in code.**
+Dashboard auto-refresh interval is build-time config (FR22). **The dashboard auto-refresh interval and all
+discovery thresholds are tunables, not requirements — no tunable may live only in code.**
+
+> **RETIRED (2026-07-16):** the former "US/CA shadow" (§13.6) and "NSE shadow (§16.6)" tunable groups
+> (`SHADOW_ENABLED`, `SHADOW_PROMPT_VARIANT`, `SHADOW_SNAPSHOT_LOOKBACK_MIN`, `SHADOW_NSE_ENABLED`,
+> `SHADOW_NSE_PROMPT_VARIANT`, `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`) and the "wallet-sim harness" tunable
+> (`EVAL_WINDOW_DAYS`) are removed along with the shadow tracks — see §18 for the removal checklist. The
+> **model-default correction** (`GEMINI_MODEL`/`GEMINI_MODEL_BACKUP` → `gemini-2.5-flash`/
+> `gemini-2.5-flash-lite`) is unrelated and remains in effect (§4.4).
 
 **Workflow-level (YAML) tunables — a distinct surface from `config.py`.** A few operational knobs are
 evaluated by GitHub's workflow engine *before* the Python process starts, so they cannot be `config.py`
@@ -562,27 +550,14 @@ env-var tunables (config.py only sees them after the runner is already provision
 home for **application/business** tunables; the workflow-engine settings are their own surface. This repo's
 established convention for workflow knobs an operator may need to change **without a commit** is a repo
 **Variable with a literal fallback** — `${{ vars.X || '<default>' }}` — used throughout
-`hourly-watchlist.yml` (`GEMINI_MODEL`, `GEMINI_MAX_RETRIES`, `SHADOW_ENABLED`, `SHADOW_NSE_ENABLED`, …).
+`hourly-watchlist.yml` (`GEMINI_MODEL`, `GEMINI_MAX_RETRIES`, …).
 Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action `@vN` pins, the
 `concurrency` group) stay as bare literals and are **not** tunables.
 
-- **REV-015 disposition — `timeout-minutes` on the two shadow steps → repo Variable (IMPLEMENTED).**
-  The shadow steps' `timeout-minutes` (hang-isolation bound, §16.4 / load-bearing #11) previously sat
-  as a bare literal `15` on both the US/CA and NSE shadow steps. Unlike `runs-on`/`python-version` (fixed facts),
-  15 is an **operational judgment** about batch-size / API-latency headroom that dev's own INC-1 handoff
-  flagged may need raising as NSE batches grow — i.e. exactly the "change without a commit" profile every
-  other `vars.X` knob in this file already has. Disposition (**now live in
-  `.github/workflows/hourly-watchlist.yml`**): a single repo Variable
-  `SHADOW_TIMEOUT_MINUTES` (default `15`) drives both shadow steps via
-  `timeout-minutes: ${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}` (the `fromJSON` is required
-  because `timeout-minutes` takes a number, not a string). One shared Variable for both shadow steps (the
-  bound is a generic runner-hang guard, not a per-track behavior knob; both belts — `continue-on-error` and
-  non-overlapping sessions — protect the run regardless of its value). Not a `config.py` entry — it is a
-  workflow-engine setting. Rationale for choosing a Variable over documenting it as an accepted-fixed
-  constant: it is more consistent with this file's dominant convention (operator-facing knobs are Variables)
-  and with dev's stated need to be able to raise it, whereas the accepted-fixed pattern is reserved for
-  physically-justified constants with an explicit "don't change" instruction (the SQL close-boundary
-  numbers, §0 item 9) — which 15 is not.
+> **RETIRED (2026-07-16):** the REV-015 `SHADOW_TIMEOUT_MINUTES` repo Variable and its
+> `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15')` `timeout-minutes` binding on the two shadow workflow
+> steps are removed along with those steps (§18). No replacement is needed — there is no shadow work left
+> to bound.
 
 ---
 
@@ -623,146 +598,44 @@ Carried from `SD.md §11` — active watch items, not defects:
 - **Supabase single point of failure (§2 item 6, NFR2)** — scheduler + monitor both in pg_cron; an
   out-of-band uptime ping is the unbuilt mitigation.
 - **Paid-tier spend sustainability** — a standing ops note (not the fallback story, which was
-  timeout/503). Manageable by design (one batched call per run per track, configurable per-market models,
-  tracked tokens); watch monthly spend against NFR1's $0–15 cap.
+  timeout/503). Manageable by design (one batched call per run per market group, configurable per-market
+  models, tracked tokens); watch monthly spend against NFR1's $0–15 cap.
 - **First live NSE close-slot run with the runtime grace, and ca/in volume screens, not yet observed.**
-- **Shadow-pilot evaluation method (FR31)** — no longer an open gap: pulled in-scope by the 2026-07-13
-  change request, designed forward in §17, delivered by INC-2 (§14), covering both shadow tracks.
+- **RETIRED (2026-07-16):** the former "shadow-pilot evaluation method (FR31)" limitation entry is removed
+  — both shadow tracks and the evaluation harness that assessed them are retired (§13, §16, §17, §18); the
+  question of whether they should "graduate" is moot.
 
 ---
 
-## 13. Shadow wallet pilot — as-built (FR24–FR31, NFR5) — EXPERIMENTAL / non-production
+## 13. Shadow wallet pilot — RETIRED (2026-07-16)
 
-> **Status: shipped but non-production.** This section documents undocumented code that pm formalized
-> into requirements FR24–FR31 / NFR5 during the adoption pass. It is **outside core v1 scope** and, by
-> design, invisible to production. Files: `scripts/shadow.py`, `scripts/run_shadow.py`,
-> `sql/shadow_call_log_migration.sql`, shadow vars in `scripts/config.py`, and the shadow step in
-> `.github/workflows/hourly-watchlist.yml`.
-
-### 13.1 Purpose & scope (FR24)
-A parallel AI verdict track producing an independent Buy/Sell/Hold verdict per **US/CA (TSX) watchlist
-ticker only** (NSE excluded, `US_CA_MARKETS = {"US", "TSX"}`), using a **position-aware** prompt variant.
-Sole purpose: A/B test whether position-awareness changes verdict quality/behavior vs production's
-current watch-only-style prompt. It reuses production's model-call machinery so the position-awareness
-variable is isolated.
-
-### 13.2 Prompt variant (FR24, FR25 — inline Python, no separate file)
-`shadow.SHADOW_SYSTEM_PROMPT` = production's `ai_judge.BATCH_SYSTEM_PROMPT` **verbatim** + an appended
-position-awareness addendum. The addendum tells the model each stock carries a `Current shadow position:
-HOLDING at <price> since <date>` or `FLAT` line, to treat HOLDING as HELD and FLAT as WATCH-ONLY for the
-verdict rubric, and — the load-bearing constraint — **a Sell on a HOLDING name must cite the specific
-reversal-since-entry** (a concrete thesis change, not a fresh independent read). It deliberately does
-**not** suppress Buy-while-holding or Sell-while-flat at the prompt level (the wallet-walk ignores those;
-suppressing them would pollute the verdict-count comparison). Everything else — headlines, fundamentals,
-confidence rubric, JSON contract, `temperature=0.2`, `response_schema` — is byte-identical to production.
-`shadow._shadow_ticker_block` reproduces `ai_judge._ticker_block`'s market-data lines exactly (reusing the
-same `ai_judge` helpers), differing only in the two position lines. **The prompt is inline Python; there
-is no `shadow_pilot_prompt.md` file.**
-
-`judge_batch_shadow()` mirrors `ai_judge.judge_batch()`'s orchestration — single batched call, one retry
-on a bad reply, fail-safe-to-Hold on hard failure, the **same model try-order** (`GEMINI_MODEL`/`_BACKUP`
-via `ai_judge._models_to_try(None)`), the **same** `ai_judge._generate` transport with the same
-timeout/backoff/jitter, and the same `_parse_batch` — shared config and shared functions, never copies.
-
-### 13.3 Orchestration & wallet-walk (`run_shadow.py`) (FR25, FR26)
-Each cycle (all-or-nothing):
-1. **Kill switch** (`config.SHADOW_ENABLED`) + the **same US/TSX market-open gate production uses**
-   (`config.is_market_open` or `FORCE_RUN`). Closed and not forced → no-op.
-2. **Same-data reuse (FR26):** `_latest_production_snapshots()` reads THIS cycle's already-written
-   production `call_log` `label='watchlist'` rows for the US/CA tickers, latest-per-ticker within a
-   `SHADOW_SNAPSHOT_LOOKBACK_MIN` (default 20 min) window, and rebuilds each ticker's market data from the
-   persisted `data_snapshot` (`_usable_market_data`). It **reuses** production's snapshot, never
-   re-fetches Yahoo. The 20-min lookback **must stay under the 30-min dispatch cadence** so it can never
-   pick up a prior cycle's snapshot.
-3. **Wallet-walk (FR25):** `_derive_shadow_positions()` derives each ticker's simulated position **purely
-   from `call_log_shadow`'s own history** (ordered oldest→newest): a `Buy` flips flat→holding (recording
-   entry price from the snapshot and entry date from the row timestamp), a `Sell` flips holding→flat, a
-   `Hold` (including every fail-safe Hold) is a no-op. Empty history → flat. Never reads real `call_log`
-   for position. The going-in position (state + entry price + entry date) is recorded per row for
-   auditability.
-4. **One batched position-aware call** (`shadow.judge_batch_shadow`).
-5. **One atomic INSERT** of all rows (judged + skip-trace rows) into `call_log_shadow` — fully recorded
-   or not at all, so a mid-write death can't corrupt derived position state. Unusable/absent production
-   rows are written as queryable `parse_status='no_data'` skip rows (a Hold → no-op in the walk), never
-   silent; a cycle with no usable production data at all is logged as a gap and skipped (self-heals next
-   cycle — missed cycles are never backfilled).
-
-### 13.4 Isolation — three independent belts (FR27, FR28, FR29, NFR5)
-- **Never alerts (FR28):** `run_shadow.py` / `shadow.py` do not import or invoke `notify` at all; every
-  row is `alert_type=None`, `alerted=False`. The workflow step passes **no** `NTFY_*` env vars.
-- **Isolated storage, no anon/dashboard read path (FR27):** writes only to `call_log_shadow`, never
-  `call_log`. That table has **RLS enabled with NO policy and NO grant** to anon/authenticated — only the
-  server **secret key** (which bypasses RLS) can read/write it. The publishable/anon key sees nothing.
-  There is no read path from the shadow table into the dashboard, GitHub Pages output, or any
-  notification channel.
-- **Cannot fail production (FR29):** three belts — (1) the shadow step runs strictly **after**
-  production's step in the same workflow, as a separate process; production has already finished and
-  written its rows before shadow starts, so there is no code path back to it; (2) the workflow step is
-  **`continue-on-error: true`**; (3) `run_shadow.main()` wraps everything in a top-level try/except and
-  always exits 0. Real holdings/cost-basis never leak into shadow rows — position is derived solely from
-  `call_log_shadow`.
-- **INC-1 hardening (FR37, §16.4):** when the NSE shadow track lands, INC-1 also adds a `timeout-minutes`
-  bound to **this** US/CA shadow step so a hang here self-bounds and can never indefinitely hold the runner
-  ahead of the NSE shadow step — see the mutual-isolation argument in §16.4 and load-bearing #11.
-
-### 13.5 Storage schema (`sql/shadow_call_log_migration.sql`)
-`call_log_shadow` is a **structural mirror of `call_log`** (same columns/types/checks/defaults) plus two
-shadow-only columns: `prompt_variant` (text, default `'position_aware_v1'` — lets future variants coexist
-with no migration) and `shadow_position_state` (jsonb: `{state: holding|flat, entry_price, entry_date}`,
-the position going into the call, derived only from this table). Same indexes as `call_log`
-(ticker/timestamp, label/timestamp). **RLS enabled, no permissive policy, no anon/authenticated grant.**
-
-### 13.6 Configuration & accepted risk (FR30, NFR5)
-| Key | Default | Purpose |
-|---|---|---|
-| `SHADOW_ENABLED` | **`true` — fail-OPEN on unset/empty only (accepted risk, FR30/NFR5)** | Kill switch, checked both at the workflow step (`if: vars.SHADOW_ENABLED != 'false'`) and again in `config.py`/`run_shadow.py`. `config.py` resolves it as `(os.environ.get("SHADOW_ENABLED", "").strip().lower() or "true") == "true"`: the `"true"` fallback fires **only for an unset/empty Variable**, which *keeps the pilot running*. `"false"` disables it, and so does **any other non-empty value including a typo** (`"flase"`, `"no"`, `"0"`) — those compare directly to `"true"`, don't match, and **fail CLOSED**. |
-| `SHADOW_PROMPT_VARIANT` | `position_aware_v1` | Tag written to `call_log_shadow.prompt_variant`. |
-| `SHADOW_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback to reuse the same-cycle production snapshot; **must stay under the 30-min cadence** (FR26). |
-
-**Accepted risk, recorded (FR30, NFR5, load-bearing #10):** the fail-open default is deliberate (toggling
-off is a one-Variable opt-out) but means a **deleted/unset/blank** Variable *silently keeps the pilot
-running*. Note the fail-open is narrow: it triggers **only** when the Variable is unset or empty. A
-**mistyped** value does not silently keep the pilot running — because the `or "true"` fallback only
-substitutes for the empty string, any non-empty-but-wrong value (a typo, `"no"`, `"0"`, etc.) is compared
-directly to `"true"`, fails the match, and **disables** the pilot (fails closed). Acceptable only while the
-three isolation guarantees (FR27–FR29) hold; if any is weakened, the fail-open default must be revisited.
-
-### 13.7 Evaluation method — now IN SCOPE (FR31 → §17, INC-2)
-The former open gap — no committed, reproducible evaluation method; the migration comments' "wallet-sim
-recursive-CTE walk" / "wallet-sim harness" living only in the ad hoc Supabase SQL editor — is **resolved
-by the 2026-07-13 change request: FR31 is now in-scope deliverable work**, designed forward in **§17** and
-delivered by **INC-2** (§14, shipped and reviewer-cleared Pass 4). The harness is a committed, versioned,
-re-runnable artifact covering **both** this track (`call_log_shadow`) and the NSE track
-(`call_log_shadow_nse`, §16). Built by dev; reproducibility verified by qa. Both shadow pilots can now be
-assessed via the §17 harness; graduation/retirement remains a user decision (see requirements changelog).
+> **RETIRED (2026-07-16)** by user change request ("End both US/TSX and NSE experiment (shadow) and
+> remove the codebase for it"). Formerly covered FR24–FR31 / NFR5 (US/CA shadow pilot + shared evaluation
+> method). No longer in scope; no future revival planned (clean-deletion scope, confirmed by the user).
+> Full historical design content (prompt variant, orchestration, wallet-walk, isolation belts, storage
+> schema, config) has been removed from this doc; it is preserved in git history (this file, pre-2026-07-16)
+> and the requirement text itself is preserved verbatim in `docs/requirements.md` §10.1 for traceability.
+> **See §18 for the mechanical removal plan** (files, config, SQL, workflow steps, tests).
 
 ---
 
-## 14. Increment plan (2026-07-13 change request — DELIVERED, GATE 3 approved)
+## 14. Increment plan — RETIRED (2026-07-16)
 
-Phases 0–7 (FR1–FR30 / NFR1–NFR5) are delivered as-built (§§4–13). The 2026-07-13 change request added two
-vertical-slice increments: FR32–FR39/NFR6 (new NSE shadow track) and FR31 (shared evaluation harness).
-**Both are now DELIVERED**: GATE 3 was approved by the user, and INC-1 and INC-2 each passed dev → qa →
-reviewer (0 blockers / 0 majors, `docs/review-log.md` Pass 3 and Pass 4) before the next started (CLAUDE.md).
-
-**Sequencing rationale:** NSE first, harness second. The harness (INC-2) evaluates *real* shadow history;
-NSE has none until its track exists and starts accruing rows, so building NSE first then the shared harness
-once both tracks have history is the correct order. (The harness still evaluates the US/CA track from day
-one — it already has history — so INC-2 is not blocked on NSE data, only sequenced after it.)
-
-The prior FR31 stub in this section is **SUPERSEDED** by INC-2.
-
-| INC | Slice (shippable, end-to-end) | FR / NFR | Key deliverables |
-|---|---|---|---|
-| ~~old FR31 stub~~ | **SUPERSEDED by INC-2** | — | The deferred, unscheduled FR31 harness stub is replaced by the scheduled INC-2 below. |
-| **INC-1** ✓ SHIPPED (reviewer-cleared, Pass 3) | **NSE shadow wallet pilot** — a working, isolated NSE shadow track that writes position-aware verdicts to `call_log_shadow_nse` end-to-end on each open NSE cycle, invisible to production and to the US/CA shadow track | FR32–FR39, NFR6 | `sql/shadow_nse_call_log_migration.sql`; `SHADOW_NSE_ENABLED` / `_PROMPT_VARIANT` / `_SNAPSHOT_LOOKBACK_MIN` in `config.py`; parametrize `shadow.judge_batch_shadow(items, models=…)`; `scripts/run_shadow_nse.py` (reusing the shared cycle logic + shared wallet-walk); new NSE shadow workflow step in `hourly-watchlist.yml` (`if: vars.SHADOW_NSE_ENABLED != 'false'`, `continue-on-error`, `timeout-minutes`, NSE model vars, no `NTFY_*`), plus a `timeout-minutes` bound on the existing US/CA shadow step; cross-track isolation per §16.4 / load-bearing #11. **Bundled quick fix (Change 2):** correct the `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` literal defaults in `config.py` (and the `|| 'gemini-3.5-flash'` fallbacks in the workflow) to `gemini-2.5-flash` / `gemini-2.5-flash-lite`. Design: §16. |
-| **INC-2** ✓ SHIPPED (reviewer-cleared, Pass 4) | **Shared wallet-sim evaluation harness** — a committed, re-runnable command that reports simulated shadow-vs-production performance for either shadow track over a window | FR31 | `scripts/wallet_sim.py` (pure wallet-walk state machine + P&L, no I/O, unit-testable); `scripts/eval_shadow.py` (thin, read-only entry point); refactor `run_shadow.py` and `run_shadow_nse.py` to call the **single shared** `wallet_sim.walk` (so live position derivation and the harness never diverge); `EVAL_WINDOW_DAYS` config; deterministic report covering `call_log_shadow` + `call_log_shadow_nse`. qa verifies reproducibility (two runs over the same data → identical output). Design: §17. |
-
-No other increments are open.
+Phases 0–7 (FR1–FR23 / NFR1–NFR4) remain delivered as-built (§§4–12) and are **not** affected by this
+retirement. The two increments this section used to describe — **INC-1 (NSE shadow pilot, FR32–FR39/NFR6)**
+and **INC-2 (shared evaluation harness, FR31)** — shipped on 2026-07-13/14/15 and are now **retired**
+(2026-07-16 change request): their code is being removed per §18, not merely marked done. No increments are
+currently open; the next increment plan revision starts fresh from any future in-scope change request.
 
 ---
 
 ## 15. Requirement coverage map
+
+> **Retirement note (2026-07-16):** rows for FR24–FR31/NFR5 and FR32–FR39/NFR6 below reflect the
+> **retired** status of the shadow tracks and evaluation harness (§13, §16, §17, §18) — "satisfied" no
+> longer means "shipped code exists," only "requirement text is preserved in `docs/requirements.md` for
+> traceability."
+
 
 | Requirement | Where satisfied |
 |---|---|
@@ -782,185 +655,109 @@ No other increments are open.
 | NFR2 | §4.1 gate authority, §4.8 dead-man monitor |
 | NFR3 | §4.6, §4.7, §7.2 |
 | NFR4 | §4.1 cadence, §11 freshness posture |
-| FR24–FR30, NFR5 | §13.1–§13.6 US/CA shadow pilot (as-built) |
-| **FR31** | **§17 shared wallet-sim harness (INC-2) — shipped, reviewer-cleared (supersedes the §13.7 gap)** |
-| **FR32–FR39, NFR6** | **§16 NSE shadow pilot (INC-1) — shipped, reviewer-cleared** |
+| FR24–FR30, NFR5 | **RETIRED 2026-07-16** — formerly §13 US/CA shadow pilot; see `docs/requirements.md` §10.1 |
+| FR31 | **RETIRED 2026-07-16** — formerly §17 shared wallet-sim harness; see `docs/requirements.md` §10.2 |
+| FR32–FR39, NFR6 | **RETIRED 2026-07-16** — formerly §16 NSE shadow pilot; see `docs/requirements.md` §10.3 |
 
-**Coverage:** FR1–FR30 and NFR1–NFR5 are covered as-built. **FR31 (§17, INC-2) and FR32–FR39 / NFR6 (§16,
-INC-1) are now delivered as-built** — GATE 3 approved, both increments implemented, qa-passed, and
-reviewer-cleared (0 blockers / 0 majors, `docs/review-log.md` Pass 3 and Pass 4). Every FR/NFR is covered
-by shipped code; there are no un-designed and no un-implemented requirements.
-
----
-
-## 16. NSE Shadow Wallet Pilot — as-built (FR32–FR39, NFR6) — EXPERIMENTAL / non-production
-
-> **Status: SHIPPED (INC-1, reviewer-cleared Pass 3, 2026-07-14).** This section was FORWARD design for
-> INC-1 as of 2026-07-13; it is now descriptive of shipped code, like §13. A second, fully independent
-> shadow track mirroring §13 but on NSE tickers: its own table, its own kill switch, NSE market-hours
-> gating, and mutual isolation from both production and the US/CA shadow track (load-bearing #11).
-> Artifacts: `scripts/run_shadow_nse.py` (entry point), `scripts/shadow.py` (parametrized
-> `judge_batch_shadow(items, models=…)`), `sql/shadow_nse_call_log_migration.sql`, the NSE shadow step in
-> `.github/workflows/hourly-watchlist.yml`, and NSE-shadow vars in `scripts/config.py`. Reuse over
-> duplication (§8) throughout. **Operational note (REV-016):** the migration has been applied to the live
-> Supabase project; `call_log_shadow_nse` exists (RLS enabled) and is ready to receive writes on the
-> next NSE shadow cycle.
-
-### 16.1 Purpose & scope (FR32)
-An independent position-aware verdict track for **NSE watchlist tickers only**
-(`NSE_SHADOW_MARKETS = {"NSE"}`; US and TSX excluded — those belong to §13). Same hypothesis as §13: A/B
-whether position-awareness changes verdict behavior vs production's watch-only-style prompt. It reuses
-production's already-written NSE snapshot for the cycle and the shared model-call machinery; the only
-things that differ from §13 are the ticker market, the table, the kill switch, the market gate, and the
-model bucket.
-
-### 16.2 Prompt variant (FR32/FR33 — reuse §13.2, no new prompt)
-Reuse `shadow.SHADOW_SYSTEM_PROMPT` and `shadow._shadow_ticker_block` **verbatim** — both are already
-market-agnostic (the block renders `data['market']`, which is `NSE`, and the `₹` currency comes from the
-snapshot's `fundamentals.currency`). **No second prompt, no `shadow_nse.py`.** `judge_batch_shadow` gains a
-`models` parameter (default `None` = today's US/CA behavior, i.e. `GEMINI_MODEL`/`_BACKUP` via
-`ai_judge._models_to_try(None)`); the NSE orchestrator passes `config.nse_models()`. **Model decision,
-recorded (per requirements §11 tech-lead note):** the NSE shadow call reuses the existing
-`NSE_GEMINI_MODEL` / `NSE_GEMINI_MODEL_BACKUP` pair that NSE production already uses — it judges NSE
-tickers, so it belongs in NSE production's bucket — standardized on the paid-tier `gemini-2.5-flash`
-family. **No third model-Variable pair is introduced**; there is no free-tier quota pressure to justify one
-(paid tier, Change 2), and reusing the NSE pair keeps the position-awareness variable the only difference
-from NSE production.
-
-### 16.3 Orchestration & wallet-walk (`scripts/run_shadow_nse.py`) (FR33, FR34, FR39)
-A thin entry point mirroring `run_shadow.py` (§13.3) with NSE parameters. **Avoid duplicating the cycle
-body:** factor the shared cycle (snapshot reuse → wallet-walk → one batched call → one atomic insert) so
-both orchestrators drive one parametrized implementation. Dev's choice of mechanism — (a) a small
-`ShadowTrack` spec (table name, market set, gate fn, kill switch, lookback, variant, models) passed to a
-shared `run_shadow_cycle(track)` helper, or (b) parametrizing `run_shadow.py`'s existing helpers — but the
-**wallet-walk state machine MUST be the single shared function** (§17.2), never a copy. NSE parameters:
-1. **Kill switch** `config.SHADOW_NSE_ENABLED` + the **same NSE market-open gate production uses**
-   (`config.is_nse_open` or `config.FORCE_RUN`) (FR39). Closed and not forced → clean no-op. NSE holidays
-   surface as no usable data → skip-with-log, same posture as production NSE (FR17/FR39).
-2. **Same-data reuse (FR34):** read THIS cycle's production `call_log` `label='watchlist'` rows for the NSE
-   tickers, latest-per-ticker within `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (default 20 min), and rebuild each
-   ticker's market data from the persisted `data_snapshot`; **never re-fetch Yahoo**. The lookback must
-   exceed the production-write→shadow-read latency (this step runs after production and after the US/CA
-   shadow step) yet stay **under the 30-min NSE dispatch cadence** so it can never pick up a prior cycle.
-3. **Wallet-walk (FR33):** derive each NSE ticker's simulated position **purely from `call_log_shadow_nse`'s
-   own history** — never `call_log`, never `call_log_shadow`. Same Buy→holding / Sell→flat / Hold→no-op
-   machine; going-in state + entry price + entry date recorded per row for auditability.
-4. **One batched position-aware call** `shadow.judge_batch_shadow(items, models=config.nse_models())`.
-5. **One atomic INSERT** of all rows (judged + `parse_status='no_data'` skip traces) into
-   `call_log_shadow_nse` — fully recorded or not at all, so a mid-write death can't corrupt derived state.
-   A cycle with no usable NSE production data is logged as a gap and skipped (self-heals next cycle; missed
-   cycles are never backfilled).
-
-### 16.4 Isolation — three mutually-isolated tracks (FR35, FR36, FR37, NFR6)
-Mirror §13.4's three belts (never alerts; isolated no-anon table; can't fail production) **plus** the new
-cross-shadow-track isolation the user required (FR37/NFR6, load-bearing #11):
-- **Never alerts (FR36):** `run_shadow_nse.py` / `shadow.py` import no `notify`; every row is
-  `alert_type=None, alerted=False`; the workflow step passes **no** `NTFY_*` (including no `NSE_NTFY_TOPIC`).
-- **Isolated storage (FR35):** writes only `call_log_shadow_nse` — never `call_log`, never
-  `call_log_shadow`. RLS on, no policy, no anon/authenticated grant; only the server secret key reads/
-  writes it; no dashboard/Pages/ntfy read path.
-- **Cannot fail production OR the US/CA shadow track (FR37) — why a fault in one can't touch the others:**
-  - *Separate process / entry point:* `run_shadow_nse.main()` wraps everything in a top-level try/except
-    and always exits 0 — an exception is swallowed inside its own process, with no code path back to
-    production (which finished first) or to the US/CA shadow step.
-  - *Separate workflow step, `continue-on-error: true`:* the NSE shadow step runs strictly AFTER production
-    and AFTER the US/CA shadow step; its failure fails neither the run nor any sibling step.
-  - *Separate table:* no shared write surface — a failed or corrupt NSE write cannot corrupt US/CA-shadow
-    or production state, and each track's wallet-walk reads only its own table.
-  - *Separate, independent kill switch* `SHADOW_NSE_ENABLED`: flipping or misconfiguring it (or
-    `SHADOW_ENABLED`) leaves the other track running untouched — neither can disable the other.
-  - *Hang isolation:* each shadow step carries a `timeout-minutes` bound (INC-1 adds one to the existing
-    US/CA step too, §13.4), so a hang self-bounds instead of holding the shared runner and delaying the
-    sibling step. Per the REV-015 disposition (§9), both shadow steps are driven by a single
-    `SHADOW_TIMEOUT_MINUTES` repo Variable (default `15`, `fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15')`),
-    now live in `.github/workflows/hourly-watchlist.yml`, so ops can raise it without a commit. Additionally the two shadow steps
-    self-gate by **non-overlapping ET/IST sessions**:
-    whenever one track is doing real Gemini work the other no-ops in milliseconds, so a hang in the active
-    track cannot collide with real work in the other. (These two mechanisms are why a separate step, rather
-    than a separate parallel job, is sufficient here — see the note below.)
-  - *No back-references:* every track only reads snapshots/history produced upstream; nothing reads a
-    downstream track.
-  - Real holdings / cost-basis never enter NSE shadow rows — position is derived solely from
-    `call_log_shadow_nse`.
-
-> **Design note — step vs. parallel job.** A separate `timeout`-bounded workflow step (after production and
-> the US/CA shadow step) is the chosen mechanism: combined with separate tables, separate kill switches,
-> separate exit-0 processes, `continue-on-error`, and non-overlapping sessions, it satisfies FR37's mutual
-> isolation without churning the shipped US/CA path. If a future change makes the two shadow tracks run in
-> overlapping sessions or share a runner-blocking dependency, revisit and promote them to separate parallel
-> jobs (`needs: watchlist`) for runner-level isolation.
-
-### 16.5 Storage schema (`sql/shadow_nse_call_log_migration.sql`)
-`call_log_shadow_nse` is a **structural mirror of `call_log_shadow`** (§13.5): every `call_log`
-column/type/check/default, plus the two shadow-only columns `prompt_variant` (text, default
-`'position_aware_v1'`) and `shadow_position_state` (jsonb `{state: holding|flat, entry_price, entry_date}`,
-derived only from this table). Same two indexes (ticker/timestamp desc; label/timestamp desc). **RLS
-enabled, no permissive policy, no anon/authenticated grant.** Mirror the migration file and its comments
-from `sql/shadow_call_log_migration.sql`, retargeted to the `_nse` table (retarget the "US/Canada" wording
-to "NSE"). Applied via Supabase `apply_migration`; committed to `sql/` for reproducibility.
-
-### 16.6 Configuration & accepted risk (FR38, NFR6)
-| Key | Default | Purpose |
-|---|---|---|
-| `SHADOW_NSE_ENABLED` | **`true` on unset/empty only (fail-OPEN-on-empty accepted risk, FR38/NFR6)** | Independent NSE kill switch, resolved `(os.environ.get("SHADOW_NSE_ENABLED", "").strip().lower() or "true") == "true"` — **identical shape to `SHADOW_ENABLED`**. Checked at the workflow step (`if: vars.SHADOW_NSE_ENABLED != 'false'`) and again in `config.py`. Fail-open fires **only** for unset/empty; `"false"` or any other non-empty value including a typo (`"flase"`, `"no"`, `"0"`) fails **CLOSED**. Separate from `SHADOW_ENABLED`. |
-| `SHADOW_NSE_PROMPT_VARIANT` | `position_aware_v1` | Tag written to `call_log_shadow_nse.prompt_variant` (same variant as §13). |
-| `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` | `20` | Lookback to reuse the same-cycle NSE production snapshot; **must stay under the 30-min NSE cadence** (FR34). |
-| `SHADOW_TIMEOUT_MINUTES` *(workflow Variable, implemented)* | `15` | Hang-isolation bound on **both** shadow workflow steps (§16.4). A workflow-engine setting, not a `config.py` env-var tunable (evaluated before Python starts, §9); driven by `${{ fromJSON(vars.SHADOW_TIMEOUT_MINUTES || '15') }}`. Live in `.github/workflows/hourly-watchlist.yml` (both shadow steps). |
-
-**Accepted risk, recorded (FR38, NFR6, load-bearing #11):** identical in shape to §13.6/FR30 — the
-fail-open default is a deliberate one-Variable opt-out, but a deleted/unset/blank `SHADOW_NSE_ENABLED`
-*silently keeps the NSE pilot running*; a mistyped value fails **closed**. Acceptable only while the
-FR35–FR37 isolation guarantees hold; if any is weakened, the fail-open-on-empty default must be revisited.
+**Coverage:** FR1–FR23 and NFR1–NFR4 (core, live) are covered as-built (§§4–12). **FR24–FR31/NFR5 and
+FR32–FR39/NFR6 are retired (2026-07-16)** — the code that satisfied them is being removed per §18; the
+requirement IDs remain in `docs/requirements.md` for historical traceability only. Every currently-active
+FR/NFR is covered by shipped code; there are no un-designed and no un-implemented active requirements, and
+no open increments.
 
 ---
 
-## 17. Shared wallet-sim evaluation harness — as-built (FR31)
+## 16. NSE Shadow Wallet Pilot — RETIRED (2026-07-16)
 
-> **Status: SHIPPED (INC-2, reviewer-cleared Pass 4, 2026-07-15).** This section was FORWARD design for
-> INC-2 as of 2026-07-13; it is now descriptive of shipped code. Supersedes the former §13.7 open gap.
-> Delivers the committed, versioned, reproducible evaluation method FR31 requires, covering **both**
-> `call_log_shadow` (§13) and `call_log_shadow_nse` (§16). Built by dev; reproducibility verified by qa.
+> **RETIRED (2026-07-16)**, same change request and disposition as §13. Formerly covered FR32–FR39 / NFR6
+> (NSE shadow pilot, INC-1). No longer in scope; no future revival planned. Full historical design content
+> is preserved in git history (this file, pre-2026-07-16) and in `docs/requirements.md` §10.3 (FR text
+> verbatim). **See §18 for the mechanical removal plan.**
 
-### 17.1 What it is
-A committed, re-runnable evaluation artifact — **not** ad-hoc SQL-editor logic — that, for a given track
-and date window, replays each ticker's shadow wallet-walk, computes simulated P&L, and compares it against
-production's actual verdict outcomes over the same window. New files: `scripts/wallet_sim.py` (pure state
-machine + P&L, **no I/O** — unit-testable) and `scripts/eval_shadow.py` (thin entry point: reads tables
-**read-only** via `state.client()`, runs the sim per track, prints a deterministic report). Preferred over
-a pure SQL recursive-CTE (the migration comment's original intent) because a Python artifact is
-unit-testable, parametrizable per track, and reproducible without a live SQL editor — satisfying
-design-for-testability. A versioned SQL view MAY additionally be committed for convenience, but the Python
-harness is the source of truth.
+---
 
-### 17.2 Single shared wallet-walk (no divergence)
-`wallet_sim.walk(rows)` is the **one** implementation of the Buy→holding / Sell→flat / Hold→no-op state
-machine (a pure function over ordered rows). Both live orchestrators refactor their inline walk
-(`run_shadow.py._derive_shadow_positions` and the NSE equivalent) to call it, so the position context that
-drove each prompt and the position the harness reconstructs are provably the **same code**. For evaluation,
-the walk additionally emits closed round-trips (entry price/date → exit price/date → return %) and marks
-open positions to the latest snapshot price. This single-source-of-truth is the key correctness property:
-the harness cannot silently disagree with what actually ran.
+## 17. Shared wallet-sim evaluation harness — RETIRED (2026-07-16)
 
-### 17.3 Inputs, outputs, reproducibility
-- **Inputs (all injected — no hardcoding):** `track ∈ {us_ca, nse}` → `{call_log_shadow,
-  call_log_shadow_nse}`; window `[since, until]` (default last `EVAL_WINDOW_DAYS`, ~14, for the two-week
-  comparison; CLI `--since/--until` override); a read-only DB handle (`state.client()`, secret key).
-- **Computation:** per ticker, run `wallet_sim.walk` over the track's history → simulated realized + open
-  P&L, round-trip count, win rate; production baseline over the same window from `call_log` (verdict
-  distribution and, for the comparison, the analogous production wallet-walk / verdict-change record) for a
-  side-by-side.
-- **Output:** a **deterministic** report to stdout (optionally a committed CSV/JSON artifact) — shadow vs
-  production verdict counts, simulated P&L, trades, per-ticker breakdown. The harness **NEVER writes** to
-  any table (read-only; can't affect production or either shadow track — consistent with load-bearing #11).
-- **Reproducibility (FR31, qa-verified):** deterministic given the same table contents; versioned in the
-  repo; re-runnable from the CLI with no manual SQL. qa's acceptance: two runs over the same data produce
-  identical output, and every number is traceable to the committed `wallet_sim.walk`.
+> **RETIRED (2026-07-16)**, same change request and disposition as §13/§16. Formerly covered FR31 (INC-2)
+> — the harness existed solely to evaluate the two shadow tracks above; with both retired, the harness has
+> no purpose and is retired alongside them (user-confirmed, no future revival). Full historical design
+> content is preserved in git history (this file, pre-2026-07-16) and in `docs/requirements.md` §10.2 (FR
+> text verbatim). **See §18 for the mechanical removal plan.**
 
-### 17.4 Configuration
-| Key | Default | Purpose |
-|---|---|---|
-| `EVAL_WINDOW_DAYS` | `14` | Default evaluation window (the "two-week" comparison); CLI `--since/--until` override it. |
+---
 
-No other new tunables; `track` and window are the only knobs, both CLI/config — never hardcoded.
-</content>
-</invoke>
+## 18. Shadow tracks retirement — removal plan (2026-07-16)
+
+Covers FR24–FR31/NFR5 and FR32–FR39/NFR6, retired per `docs/requirements.md` §10 (2026-07-16 changelog
+entries) and design §§13/14/16/17 above. **Scope: clean deletion — nothing preserved for revival.** This
+is a mechanical checklist for dev to execute; no design judgment calls remain (all three open questions
+from the change request were resolved by the user before this pass — see requirements.md §10 changelog).
+
+### 18.1 Delete outright (files)
+
+| Path | Action |
+|---|---|
+| `scripts/shadow.py` | Delete — shared shadow prompt variant + `judge_batch_shadow`, no other consumer. |
+| `scripts/run_shadow.py` | Delete — US/CA shadow orchestrator entry point. |
+| `scripts/run_shadow_nse.py` | Delete — NSE shadow orchestrator entry point. |
+| `scripts/wallet_sim.py` | Delete — pure wallet-walk state machine, built solely for the shadow tracks + harness (`walk()` has no production caller — confirm via grep before deleting; production's own change-detection logic in `state.py` is separate and untouched). |
+| `scripts/eval_shadow.py` | Delete — shared evaluation harness entry point (FR31). |
+| `sql/shadow_call_log_migration.sql` | Delete — US/CA shadow table migration (superseded by the new DROP migration, §18.3). |
+| `sql/shadow_nse_call_log_migration.sql` | Delete — NSE shadow table migration (superseded by the new DROP migration, §18.3). |
+
+### 18.2 Edit in place (partial removal)
+
+| Path | Action |
+|---|---|
+| `scripts/config.py` | Remove the two kill-switch/config blocks: `SHADOW_ENABLED`, `SHADOW_PROMPT_VARIANT`, `SHADOW_SNAPSHOT_LOOKBACK_MIN` (currently ~lines 54–78, "Shadow verdict pilot kill switch (US/CA...)") and `SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`, `SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN` (currently ~lines 80–95, "NSE shadow verdict pilot kill switch..."), plus `EVAL_WINDOW_DAYS` and its "Shared wallet-sim evaluation harness" comment block (currently ~lines 97–101). Keep everything else (`MIN_HISTORY_ROWS`, retry/backoff tunables, etc.) untouched — the retry-loop comment at ~line 113 mentions "the shadow pilot" in passing; reword to drop that clause (e.g. "...the ONE call function every track funnels through (production watchlist, discovery), so all tracks inherit identical behavior") but the retry logic itself is unchanged. |
+| `.github/workflows/hourly-watchlist.yml` | Delete the two step blocks in full: `- name: Run shadow verdict track (US/CA pilot)` through its `run: python scripts/run_shadow.py` (currently ~lines 97–141, including the preceding explanatory comment block), and `- name: Run NSE shadow verdict track (NSE pilot)` through its `run: python scripts/run_shadow_nse.py` (currently ~lines 143–182, including its preceding comment block). Also drop the trailing clause "...shared by the production and shadow tracks" in the `GEMINI_MAX_RETRIES` comment on the production step (~line 76) — reword to "...shared by the production track." Leave the production step and the NSE-production model-variable comments (~lines 62–69, these are NSE **production**, not NSE shadow) untouched. |
+| `scripts/ai_judge.py` | Cosmetic only: the `_generate` docstring (~line 215) says "production watchlist/discovery (judge_batch) and the shadow pilot (shadow.judge_batch_shadow) funnel every API request through here" — reword to drop the shadow clause once `shadow.py` no longer exists. No behavior change. |
+| `docs/handoff.md` | Owned by dev. This file is currently almost entirely about the retired INC-1/INC-2 shadow work (wallet-walk refactor, `eval_shadow.py` usage, REV-015/REV-018 fixes). Dev's call whether to blank it to a short "no open increment" note or leave as historical record of the (now-removed) work — either is acceptable design-doc hygiene; just don't leave it describing files that no longer exist as if they're current. |
+
+### 18.3 Database — DROP the shadow tables (new migration)
+
+Add a new file, `sql/drop_shadow_tables_migration.sql`, containing:
+```sql
+DROP TABLE IF EXISTS call_log_shadow;
+DROP TABLE IF EXISTS call_log_shadow_nse;
+```
+Apply it to the live Supabase project (e.g. via the Supabase MCP `apply_migration`, or the Supabase CLI/SQL
+editor — whichever this repo's established migration-application path is, matching how
+`shadow_nse_call_log_migration.sql` was originally applied per the REV-016 operational note in the
+now-retired §16). Commit the migration file to `sql/` for reproducibility even though it is a one-time
+teardown — this repo's convention (§8) is that all schema changes are versioned files, not ad hoc SQL.
+**Confirm both tables are gone** (`list_tables` or equivalent) before closing this checklist item.
+
+### 18.4 Tests — flag for qa (dev does not own tests/, per CLAUDE.md)
+
+| Path | Action |
+|---|---|
+| `tests/test_shadow.py` | Delete — tests `scripts/shadow.py`, which is deleted. |
+| `tests/test_run_shadow.py` | Delete — tests `scripts/run_shadow.py`, which is deleted. |
+| `tests/test_run_shadow_nse.py` | Delete — tests `scripts/run_shadow_nse.py`, which is deleted. |
+| `tests/test_wallet_sim.py` | Delete — tests `scripts/wallet_sim.py`, which is deleted. |
+| `tests/test_eval_shadow.py` | Delete — tests `scripts/eval_shadow.py`, which is deleted. |
+| `tests/test_config.py` | Edit — remove shadow-specific cases (`test_shadow_enabled_*`, NSE-shadow equivalents, `EVAL_WINDOW_DAYS` case if present); keep all non-shadow config tests. |
+| `tests/test_import_smoke.py` | Edit — remove `run_shadow.py`/`run_shadow_nse.py`/`shadow.py`/`eval_shadow.py`/`wallet_sim.py` from the "every module imports cleanly" / "entry points expose `main()`" checks; keep the check for the four remaining entry points (`run_hourly.py`, `run_discovery.py`, `publish_prices.py` — note the current comment claims four entry points including `run_shadow.py`; that count drops to three). |
+| `tests/conftest.py` | Edit — remove any shadow-specific fixtures/fakes (e.g. `FakeShadowSupabase`, `FakeShadowNseSupabase`) that only the deleted test files used; keep shared fixtures still used by remaining tests. |
+| `qa/test-plan-full-codebase.md` | Flag to qa — "Phase 6 — Shadow Pipeline" (currently covers P6-1..P6-5) and the shadow-referencing rows in Phase 3 (P3-1, P3-7) describe retired functionality; qa owns rewriting/removing them. |
+| `docs/test-report.md` | Flag to qa — historical run entries reference shadow test files/counts; qa owns whether to note the retirement in a fresh run or leave historical entries as-is per their own archival convention. |
+
+### 18.5 Reviewer note
+
+`docs/review-log.md` contains historical entries (REV-001, REV-005, REV-015, REV-018, Pass 3, Pass 4)
+about the now-retired shadow tracks. Per CLAUDE.md, reviewer owns this file; tech-lead does not edit it.
+Flagging here only so the retirement's traceability trail (requirements → design → code → tests → review)
+is visible to whoever picks up reviewer's next pass — no action required from tech-lead.
+
+### 18.6 Verification (dev self-check before handoff)
+
+- `grep -ri shadow scripts/ sql/ .github/workflows/` returns nothing (after §18.1/§18.2).
+- Full test suite (post-qa-cleanup per §18.4) passes with zero shadow-related test files remaining.
+- `hourly-watchlist.yml` runs production watchlist only; no shadow steps in the job.
+- Supabase `list_tables` (or `\dt` via SQL editor) confirms `call_log_shadow` and `call_log_shadow_nse` no
+  longer exist.
+- `config.py` exposes no `SHADOW_*` or `EVAL_WINDOW_DAYS` names.
+
+---
+
