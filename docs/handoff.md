@@ -33,10 +33,10 @@ and production is untouched."
 ## New file
 - `sql/drop_shadow_tables_migration.sql` — `DROP TABLE IF EXISTS call_log_shadow;` /
   `DROP TABLE IF EXISTS call_log_shadow_nse;`. Committed for reproducibility per repo convention (design
-  §8: schema changes are versioned files, not ad hoc SQL). **Not yet applied to the live Supabase
-  project** — that is a separate, explicitly-authorized step for the orchestrator to run (e.g. via the
-  Supabase MCP `apply_migration` or the SQL editor), not something dev executed as part of this
-  increment.
+  §8: schema changes are versioned files, not ad hoc SQL). **Applied to the live Supabase project** by the
+  orchestrator; confirmed via `list_tables` that `call_log_shadow`/`call_log_shadow_nse` are gone and the
+  remaining tables (`watchlist`, `holdings`, `verdict_state`, `call_log`, `run_heartbeat`,
+  `monitor_alerts`) are untouched.
 
 ## Repo-wide grep sweep
 Ran `grep -rni shadow` across the repo (excluding `docs/archive/`, `.git/`) after the edits above.
@@ -88,8 +88,6 @@ signatures changed. The production step in `hourly-watchlist.yml` (`Run hourly w
 byte-identical except for the one comment reword.
 
 ## Known limitations / follow-ups for other agents
-- `sql/drop_shadow_tables_migration.sql` is not yet applied to Supabase — orchestrator to authorize and
-  run separately, then confirm via `list_tables` that `call_log_shadow`/`call_log_shadow_nse` are gone.
 - qa: delete/edit the test files per design §18.4 (`test_shadow.py`, `test_run_shadow.py`,
   `test_run_shadow_nse.py`, `test_wallet_sim.py`, `test_eval_shadow.py` deleted outright;
   `test_config.py`/`test_import_smoke.py`/`conftest.py` edited to drop shadow-specific cases/fixtures) and
