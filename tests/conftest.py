@@ -25,13 +25,12 @@ os.environ.setdefault("SUPABASE_URL", "https://example.invalid.supabase.co")
 os.environ.setdefault("SUPABASE_SECRET_KEY", "test-fake-secret-key")
 
 
-# --- shared Gemini-call fakes (used by test_ai_judge.py and test_shadow.py) ---
+# --- shared Gemini-call fakes (used by test_ai_judge.py) ---
 #
-# `shadow.judge_batch_shadow` explicitly reuses `ai_judge._client` /
-# `ai_judge._generate` / `ai_judge._parse_batch` / `ai_judge._models_to_try`
-# verbatim (see shadow.py's module docstring), so both test files patch the
-# SAME single seam (`ai_judge._client`) and share this fake client machinery,
-# mirroring how the production code actually shares it.
+# ai_judge._generate / ai_judge._parse_batch / ai_judge._models_to_try all
+# funnel through the single `ai_judge._client` seam, so tests patch that one
+# seam and share this fake client machinery, mirroring how the production
+# code actually calls it.
 
 class FakeAPIError(Exception):
     """Stands in for google.genai's APIError: carries .code (HTTP int) and
@@ -82,9 +81,9 @@ class FakeGeminiClient:
 
 @pytest.fixture
 def mock_gemini(monkeypatch):
-    """Patches the single shared seam (`ai_judge._client`) both ai_judge.judge_batch
-    and shadow.judge_batch_shadow call through. Also stubs out time.sleep so a
-    scripted retry/backoff path never actually sleeps in the test suite.
+    """Patches the single shared seam (`ai_judge._client`) that ai_judge.judge_batch
+    calls through. Also stubs out time.sleep so a scripted retry/backoff path
+    never actually sleeps in the test suite.
 
     Usage: `mock_gemini(responses)` where `responses` is a list of
     FakeGeminiResponse / Exception instances, consumed in call order across

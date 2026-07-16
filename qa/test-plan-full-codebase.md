@@ -79,13 +79,13 @@ Project `ikghqdtlbwifwnooytmm`. One logical query per `execute_sql` call. Quote 
 
 | ID | Test | Method | Pass criteria |
 |---|---|---|---|
-| P3-1 | Schema matches SD v15 | List tables/columns, diff against SD §schema | Exact match; `candidate_universe` absent; `call_log_shadow` present |
+| P3-1 | Schema matches SD v15 | List tables/columns, diff against SD §schema | Exact match; `candidate_universe` absent. (2026-07-16 correction: the shadow tracks were retired — see `docs/design.md` §18 — so `call_log_shadow`/`call_log_shadow_nse` are no longer expected. `sql/drop_shadow_tables_migration.sql` drops both tables; as of this test-plan update it had not yet been applied to the live project, so confirm current state rather than assuming either presence or absence.) |
 | P3-2 | RLS coverage | Join `pg_policies` × `pg_tables` on schemaname+tablename | Every public table has expected policy per SD v15 |
 | P3-3 | Cron inventory | `select jobid, jobname, schedule, command, active from cron.job order by jobid` | Jobs match SD v15 schedule table; no orphaned/disabled-but-expected jobs |
 | P3-4 | Live function source vs SD | `pg_get_functiondef` for each dispatch function | Source matches SD v15 description; ET-gate uses buffered boundary |
 | P3-5 | `data_snapshot.market` in live rows | `select data_snapshot->>'market', count(*) from call_log group by 1` (recent window) | Post-fix rows populated; pre-fix nulls expected and dated. BLOCKED if #31 fix not deployed |
 | P3-6 | Dispatch health, last 5 trading days | Response-count-per-time-slot pattern (not `net._http_response` joins — queue doesn't retain) | Expected dispatch count per slot; gaps logged with timestamps |
-| P3-7 | Shadow isolation | Confirm `run_shadow.py`/`shadow.py` write only to `call_log_shadow`, never `call_log` | Code inspection + row provenance check. Cross-contamination = FAIL |
+| P3-7 | ~~Shadow isolation~~ — RETIRED (2026-07-16) | N/A | The shadow tracks (`scripts/shadow.py`, `scripts/run_shadow.py`, `scripts/run_shadow_nse.py`) were deleted per `docs/design.md` §18; there is no shadow write path left to isolate. Do not re-run. |
 | P3-8 | **ET-gate / monitor-window live verification** (pending since June 25) | Query gate-decision audit trail across one full recent trading session per market | Gates opened/closed at correct buffered ET times; no missed windows |
 
 ---
@@ -117,20 +117,16 @@ Live GitHub Pages + live Supabase where applicable. UI-handoff v3 wins over SD o
 
 ---
 
-## Phase 6 — Shadow Pipeline
+## Phase 6 — Shadow Pipeline — RETIRED (2026-07-16)
 
-> **2026-07-12 staleness correction:** This phase now maps to `docs/requirements.md` §10
-> (FR24–FR31, NFR5 — the Experimental Tracks / shadow wallet pilot section), superseding the ad hoc
-> shadow assumptions this phase was originally written against. See `docs/design.md` §13 for the
-> as-built shadow pilot design.
-
-| ID | Test | Method | Pass criteria |
-|---|---|---|---|
-| P6-1 | `SHADOW_ENABLED` kill switch (FR30, NFR5) | Run shadow entry point with flag false, then true (mocked Gemini) | False → zero shadow activity, zero `call_log_shadow` writes; true → normal path. Note the documented accepted risk: the switch defaults **fail-OPEN** (unset/empty stays enabled; only the literal string `false` disables it, per FR30) |
-| P6-2 | Single-variable isolation (FR24, FR25) | Confirm the shadow prompt is built by appending the position-awareness addendum to `ai_judge.BATCH_SYSTEM_PROMPT` — i.e. `SHADOW_SYSTEM_PROMPT` in `scripts/shadow.py` (inline Python; there is **no** `shadow_pilot_prompt.md` file — that file does not exist in the repo) — and that the shadow call uses the **same** model try-order as production (`GEMINI_MODEL`/`GEMINI_MODEL_BACKUP`, default `gemini-3.5-flash`/`gemini-3.1-flash-lite`, via `ai_judge._models_to_try`) | Prompt = production's `BATCH_SYSTEM_PROMPT` verbatim + position-awareness addendum (differs only in the appended section); model identical to production's watchlist model pair. Model divergence = FAIL |
-| P6-3 | Scope (FR24) | Shadow runs only against US/Canada batch | No NSE tickers in shadow path |
-| P6-4 | Concurrency safety (FR29) | Verify shadow and production runs share no mutable state (tables, files, rate limits that would starve production) | True concurrent execution safe per SD v15 |
-| P6-5 | Evaluation query readiness (FR31 — OPEN GAP) | Run the verdict-balance comparison query (counts per verdict per track) against `call_log` vs `call_log_shadow` | **BLOCKED on FR31, not a pass.** No committed, reproducible evaluation harness exists anywhere in the repo — the SQL migration's own comments reference a "wallet-sim recursive-CTE walk / harness" that lives only in the ad hoc Supabase SQL editor, not as versioned SQL/scripts (verified across `sql/`). Do not mark this test PASS by hand-running an ad hoc query; per `docs/requirements.md` FR31 the pilot cannot be assessed and must not graduate until dev commits a versioned, reproducible harness. Re-run this test once FR31 lands |
+The US/TSX and NSE shadow wallet pilots (FR24–FR31/NFR5, FR32–FR39/NFR6) were retired and their code
+(`scripts/shadow.py`, `scripts/run_shadow.py`, `scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`,
+`scripts/eval_shadow.py`, both shadow SQL migrations, both workflow steps) deleted — see
+`docs/design.md` §18 for the removal plan and `docs/requirements.md` §10 for the retirement changelog
+entries. This phase (formerly P6-1..P6-5, covering the `SHADOW_ENABLED`/`SHADOW_NSE_ENABLED` kill
+switches, prompt/model isolation, scope, concurrency safety, and the FR31 evaluation-harness gap) no
+longer applies to any live code path and must not be re-run. Kept here, struck from the active plan,
+for traceability only.
 
 ---
 
