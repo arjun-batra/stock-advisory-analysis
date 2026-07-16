@@ -106,22 +106,3 @@ have been caught by manual checking. This is only auditable because every check 
    informational, RLS-scoped data.
 8. Yahoo price API is browser-CORS-blocked; dashboard uses a server-published snapshot (accepted
    freshness tradeoff).
-
-## Experimental addition (NOT core v1 scope): shadow wallet pilot
-A parallel, **non-production** AI verdict track for US/CA (TSX) watchlist tickers only (no NSE). It
-reuses production's already-fetched market-data snapshot and model-call machinery but swaps in a
-position-aware prompt variant that tracks its own simulated buy/sell position per ticker (a
-"wallet-walk" derived purely from its own history) and requires the model to cite a reversal-since-entry
-when selling a simulated holding. Purpose: A/B test whether position-awareness changes verdict
-quality/behavior versus production's watch-only-style prompt. It writes only to its own isolated table,
-never alerts, and cannot affect production if it fails. It is gated by a kill switch that defaults ON
-(fail-open — an accepted risk). It is documented as an experimental track in `docs/requirements.md`
-(FR24–FR30 / NFR5), explicitly outside core v1 scope.
-
-A **second, independent shadow track for NSE tickers** was added by change request (2026-07-13),
-mirroring the US/CA pilot's design (same position-aware hypothesis) but fully separate: its own isolated
-table, its own kill switch, NSE market-hours gating, and hard isolation from both production and the
-US/CA shadow track. Both shadow tracks now share one committed, reproducible evaluation method (the
-wallet-sim harness), pulled into scope by the same change request — this closes the previously-flagged
-evaluation gap as deliverable work that must exist before either pilot can graduate. See
-`docs/requirements.md` §10.3 (FR32–FR39 / NFR6) and FR31.
