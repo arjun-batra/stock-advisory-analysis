@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-17T10:01:31.334022+00:00",
+  "generated_at": "2026-07-17T10:31:31.325361+00:00",
   "prices": {
     "AAPL": {
       "chg": 1.76,
@@ -50,10 +50,10 @@
       "price": 353.81
     },
     "HDFCBANK.NS": {
-      "chg": 1.55,
+      "chg": 1.4,
       "currency": "INR",
       "market": "NSE",
-      "price": 820.8
+      "price": 819.6
     },
     "HINDUNILVR.NS": {
       "chg": 2.16,
@@ -104,10 +104,10 @@
       "price": 207.4
     },
     "RELIANCE.NS": {
-      "chg": 2.48,
+      "chg": 2.36,
       "currency": "INR",
       "market": "NSE",
-      "price": 1328.8
+      "price": 1327.2
     },
     "RY.TO": {
       "chg": -0.84,
@@ -134,10 +134,10 @@
       "price": 131.11
     },
     "TCS.NS": {
-      "chg": 2.95,
+      "chg": 3.09,
       "currency": "INR",
       "market": "NSE",
-      "price": 2266.0
+      "price": 2269.0
     },
     "TD.TO": {
       "chg": -0.69,
