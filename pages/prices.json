@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-17T20:01:40.688704+00:00",
+  "generated_at": "2026-07-17T20:31:37.622689+00:00",
   "prices": {
     "AAPL": {
       "chg": 0.14,
@@ -8,16 +8,16 @@
       "price": 333.74
     },
     "AMZN": {
-      "chg": -1.07,
+      "chg": -1.06,
       "currency": "USD",
       "market": "US",
-      "price": 247.22
+      "price": 247.23
     },
     "BB": {
-      "chg": -1.91,
+      "chg": -1.86,
       "currency": "USD",
       "market": "US",
-      "price": 8.985
+      "price": 8.99
     },
     "BHARTIARTL.NS": {
       "chg": 0.18,
