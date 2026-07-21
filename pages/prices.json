@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-07-21T13:01:50.081376+00:00",
+  "generated_at": "2026-07-21T13:31:48.031509+00:00",
   "prices": {
     "AAPL": {
-      "chg": -2.14,
+      "chg": -0.47,
       "currency": "USD",
       "market": "US",
-      "price": 326.59
+      "price": 325.065
     },
     "AMZN": {
-      "chg": 1.12,
+      "chg": -0.83,
       "currency": "USD",
       "market": "US",
-      "price": 249.99
+      "price": 247.91
     },
     "BB": {
-      "chg": -1.78,
+      "chg": 2.15,
       "currency": "USD",
       "market": "US",
-      "price": 8.83
+      "price": 9.02
     },
     "BHARTIARTL.NS": {
       "chg": 0.43,
@@ -26,28 +26,28 @@
       "price": 1948.4
     },
     "BNS.TO": {
-      "chg": -2.29,
+      "chg": 0.45,
       "currency": "CAD",
       "market": "TSX",
-      "price": 122.41
+      "price": 122.96
     },
     "COST": {
-      "chg": -0.54,
+      "chg": -0.6,
       "currency": "USD",
       "market": "US",
-      "price": 935.8
+      "price": 930.225
     },
     "DOL.TO": {
-      "chg": -0.46,
+      "chg": -0.36,
       "currency": "CAD",
       "market": "TSX",
-      "price": 190.0
+      "price": 189.32
     },
     "GOOG": {
-      "chg": 1.52,
+      "chg": -0.75,
       "currency": "USD",
       "market": "US",
-      "price": 351.37
+      "price": 348.74
     },
     "HDFCBANK.NS": {
       "chg": -2.08,
@@ -80,10 +80,10 @@
       "price": 281.0
     },
     "L.TO": {
-      "chg": -0.02,
+      "chg": -0.63,
       "currency": "CAD",
       "market": "TSX",
-      "price": 65.48
+      "price": 65.07
     },
     "LT.NS": {
       "chg": 0.2,
@@ -92,16 +92,16 @@
       "price": 3846.6001
     },
     "NFLX": {
-      "chg": -1.96,
+      "chg": -0.5,
       "currency": "USD",
       "market": "US",
-      "price": 67.6
+      "price": 67.265
     },
     "NVDA": {
-      "chg": 0.23,
+      "chg": 2.4,
       "currency": "USD",
       "market": "US",
-      "price": 203.28
+      "price": 208.16
     },
     "RELIANCE.NS": {
       "chg": -1.47,
@@ -110,10 +110,10 @@
       "price": 1303.7
     },
     "RY.TO": {
-      "chg": -2.11,
+      "chg": 0.39,
       "currency": "CAD",
       "market": "TSX",
-      "price": 295.77
+      "price": 296.92
     },
     "SBIN.NS": {
       "chg": -1.47,
@@ -122,16 +122,16 @@
       "price": 1044.4
     },
     "SHOP.TO": {
-      "chg": 1.12,
+      "chg": -2.38,
       "currency": "CAD",
       "market": "TSX",
-      "price": 175.17
+      "price": 171.0
     },
     "SPCX": {
-      "chg": -3.34,
+      "chg": 2.11,
       "currency": "USD",
       "market": "US",
-      "price": 119.85
+      "price": 122.375
     },
     "TCS.NS": {
       "chg": -1.33,
@@ -140,16 +140,16 @@
       "price": 2221.1001
     },
     "TD.TO": {
-      "chg": -2.3,
+      "chg": 0.35,
       "currency": "CAD",
       "market": "TSX",
-      "price": 169.32
+      "price": 169.91
     },
     "TSLA": {
-      "chg": -2.96,
+      "chg": 1.06,
       "currency": "USD",
       "market": "US",
-      "price": 369.57
+      "price": 373.495
     }
   }
 }
