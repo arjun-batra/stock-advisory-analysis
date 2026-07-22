@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-22T06:01:31.635385+00:00",
+  "generated_at": "2026-07-22T06:31:29.327902+00:00",
   "prices": {
     "AAPL": {
       "chg": 0.35,
@@ -20,10 +20,10 @@
       "price": 8.99
     },
     "BHARTIARTL.NS": {
-      "chg": -0.06,
+      "chg": -0.32,
       "currency": "INR",
       "market": "NSE",
-      "price": 1947.2
+      "price": 1942.2
     },
     "BNS.TO": {
       "chg": 0.79,
@@ -50,34 +50,34 @@
       "price": 346.19
     },
     "HDFCBANK.NS": {
-      "chg": -1.0,
+      "chg": -0.93,
       "currency": "INR",
       "market": "NSE",
-      "price": 753.85
+      "price": 754.4
     },
     "HINDUNILVR.NS": {
-      "chg": 0.38,
+      "chg": 0.31,
       "currency": "INR",
       "market": "NSE",
-      "price": 2150.6001
+      "price": 2149.2
     },
     "ICICIBANK.NS": {
-      "chg": -0.87,
+      "chg": -1.18,
       "currency": "INR",
       "market": "NSE",
-      "price": 1450.3
+      "price": 1445.9
     },
     "INFY.NS": {
-      "chg": -1.14,
+      "chg": -1.51,
       "currency": "INR",
       "market": "NSE",
-      "price": 1061.3
+      "price": 1057.3
     },
     "ITC.NS": {
-      "chg": -0.55,
+      "chg": -0.34,
       "currency": "INR",
       "market": "NSE",
-      "price": 279.45
+      "price": 280.05
     },
     "L.TO": {
       "chg": -0.76,
@@ -86,10 +86,10 @@
       "price": 64.98
     },
     "LT.NS": {
-      "chg": -0.41,
+      "chg": -0.53,
       "currency": "INR",
       "market": "NSE",
-      "price": 3831.0
+      "price": 3826.1001
     },
     "NFLX": {
       "chg": 1.58,
@@ -104,10 +104,10 @@
       "price": 207.29
     },
     "RELIANCE.NS": {
-      "chg": -1.13,
+      "chg": -1.1,
       "currency": "INR",
       "market": "NSE",
-      "price": 1289.0
+      "price": 1289.3
     },
     "RY.TO": {
       "chg": 0.67,
@@ -116,10 +116,10 @@
       "price": 297.74
     },
     "SBIN.NS": {
-      "chg": -1.8,
+      "chg": -1.95,
       "currency": "INR",
       "market": "NSE",
-      "price": 1025.6
+      "price": 1024.0
     },
     "SHOP.TO": {
       "chg": -0.82,
