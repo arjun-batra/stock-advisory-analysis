@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-23T08:31:31.942602+00:00",
+  "generated_at": "2026-07-23T09:01:48.876012+00:00",
   "prices": {
     "AAPL": {
       "chg": -0.56,
@@ -20,10 +20,10 @@
       "price": 8.95
     },
     "BHARTIARTL.NS": {
-      "chg": -0.98,
+      "chg": -1.04,
       "currency": "INR",
       "market": "NSE",
-      "price": 1929.9
+      "price": 1928.8
     },
     "BNS.TO": {
       "chg": -0.02,
@@ -50,34 +50,34 @@
       "price": 341.91
     },
     "HDFCBANK.NS": {
-      "chg": -1.03,
+      "chg": -1.02,
       "currency": "INR",
       "market": "NSE",
-      "price": 745.4
+      "price": 745.45
     },
     "HINDUNILVR.NS": {
+      "chg": 0.15,
+      "currency": "INR",
+      "market": "NSE",
+      "price": 2157.8999
+    },
+    "ICICIBANK.NS": {
+      "chg": -0.58,
+      "currency": "INR",
+      "market": "NSE",
+      "price": 1432.4
+    },
+    "INFY.NS": {
+      "chg": -0.27,
+      "currency": "INR",
+      "market": "NSE",
+      "price": 1049.3
+    },
+    "ITC.NS": {
       "chg": 0.12,
       "currency": "INR",
       "market": "NSE",
-      "price": 2157.2
-    },
-    "ICICIBANK.NS": {
-      "chg": -0.64,
-      "currency": "INR",
-      "market": "NSE",
-      "price": 1431.5
-    },
-    "INFY.NS": {
-      "chg": -0.61,
-      "currency": "INR",
-      "market": "NSE",
-      "price": 1045.7
-    },
-    "ITC.NS": {
-      "chg": 0.36,
-      "currency": "INR",
-      "market": "NSE",
-      "price": 281.8
+      "price": 281.15
     },
     "L.TO": {
       "chg": -0.66,
@@ -86,10 +86,10 @@
       "price": 64.55
     },
     "LT.NS": {
-      "chg": -0.58,
+      "chg": -0.75,
       "currency": "INR",
       "market": "NSE",
-      "price": 3795.3
+      "price": 3788.8999
     },
     "NFLX": {
       "chg": -0.2,
@@ -104,10 +104,10 @@
       "price": 212.06
     },
     "RELIANCE.NS": {
-      "chg": -1.2,
+      "chg": -1.23,
       "currency": "INR",
       "market": "NSE",
-      "price": 1273.2
+      "price": 1272.7
     },
     "RY.TO": {
       "chg": 0.07,
@@ -116,10 +116,10 @@
       "price": 297.95
     },
     "SBIN.NS": {
-      "chg": -1.03,
+      "chg": -1.14,
       "currency": "INR",
       "market": "NSE",
-      "price": 1014.4
+      "price": 1013.3
     },
     "SHOP.TO": {
       "chg": -3.95,
@@ -134,10 +134,10 @@
       "price": 115.26
     },
     "TCS.NS": {
-      "chg": 1.39,
+      "chg": 1.51,
       "currency": "INR",
       "market": "NSE",
-      "price": 2239.0
+      "price": 2241.6001
     },
     "TD.TO": {
       "chg": 0.39,
