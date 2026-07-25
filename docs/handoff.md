@@ -1,7 +1,8 @@
 # Handoff — Shadow tracks retirement (code removal)
 
-Source: `docs/design.md` §18 (removal plan). Covers the code-side cleanup for the change request that
-retired FR24-FR31/NFR5 and FR32-FR39/NFR6 in `docs/requirements.md` and design §§13/14/16/17. This is a
+Source: `docs/design.md` "Retired: shadow-pilot tracks" note. Covers the code-side cleanup for the change request that
+retired FR24-FR31/NFR5 and FR32-FR39/NFR6 in `docs/requirements.md` and design.md's "Retired: shadow-pilot
+tracks" note. This is a
 deletion/edit increment, not a new feature — no new acceptance criteria beyond "the shadow tracks are gone
 and production is untouched."
 
