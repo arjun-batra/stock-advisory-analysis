@@ -3,9 +3,10 @@
 **Owner:** tech-lead. **Status:** the whole document is DESCRIPTIVE / as-built for the live production
 system (§§0–12, 15 cover Phases 0–7). **§13 (US/CA shadow pilot), §14 (increment plan), §16 (NSE shadow
 pilot) and §17 (shared evaluation harness) are RETIRED as of 2026-07-16** by user change request ("End
-both US/TSX and NSE experiment (shadow) and remove the codebase for it") — see `docs/requirements.md`
-§10 top-level retirement note and changelog entries dated 2026-07-16. Full historical FR text lives in
-`docs/requirements.md` §10.1–§10.3 (kept there verbatim for traceability); this doc keeps only short
+both US/TSX and NSE experiment (shadow) and remove the codebase for it") — see `docs/requirements.md`'s
+2026-07-16 changelog entries (the former Experimental Tracks section was deleted outright, not renumbered
+— per `docs/requirements.md`'s own front-matter note, the full historical FR text is preserved only in
+git history, not in any live numbered section); this doc keeps only short
 retirement notices at §13/§16/§17 plus a new **§18 removal plan** for dev to execute mechanically. The
 2026-07-13 change request's unrelated system-wide paid-tier / `gemini-2.5-flash` model-default correction
 remains applied and is NOT retired (§4.4, §9) — it was bundled into the now-retired INC-1 but is a
@@ -73,12 +74,12 @@ intent from `SD.md §0`:
 10. **RETIRED (2026-07-16).** Formerly: "US/CA shadow pilot is triple-isolated and fail-open by policy."
     The entire US/CA shadow track (§13) is removed; this decision no longer applies. Kept as a numbered
     placeholder so cross-references elsewhere in this doc and in `docs/review-log.md` don't dangle. Full
-    text is preserved in git history and in `docs/requirements.md` §10.1 for traceability. See §18 for the
-    removal plan.
+    text is preserved in git history only — it was deleted outright from `docs/requirements.md`, not kept
+    in a live section. See §18 for the removal plan.
 11. **RETIRED (2026-07-16).** Formerly: "Two mutually-isolated shadow tracks." Both shadow tracks (§13,
     §16) are removed; the mutual-isolation principle no longer has anything to isolate. Kept as a numbered
-    placeholder for the same reason as #10. Full text is preserved in git history and in
-    `docs/requirements.md` §10.1/§10.3. See §18 for the removal plan.
+    placeholder for the same reason as #10. Full text is preserved in git history only — it was deleted
+    outright from `docs/requirements.md`, not kept in a live section. See §18 for the removal plan.
 
 ---
 
@@ -614,7 +615,8 @@ Carried from `SD.md §11` — active watch items, not defects:
 > method). No longer in scope; no future revival planned (clean-deletion scope, confirmed by the user).
 > Full historical design content (prompt variant, orchestration, wallet-walk, isolation belts, storage
 > schema, config) has been removed from this doc; it is preserved in git history (this file, pre-2026-07-16)
-> and the requirement text itself is preserved verbatim in `docs/requirements.md` §10.1 for traceability.
+> and the requirement text itself is preserved only in git history (`docs/requirements.md`'s own history)
+> — the former Experimental Tracks section was deleted outright, not kept live.
 > **See §18 for the mechanical removal plan** (files, config, SQL, workflow steps, tests).
 
 ---
@@ -655,9 +657,9 @@ currently open; the next increment plan revision starts fresh from any future in
 | NFR2 | §4.1 gate authority, §4.8 dead-man monitor |
 | NFR3 | §4.6, §4.7, §7.2 |
 | NFR4 | §4.1 cadence, §11 freshness posture |
-| FR24–FR30, NFR5 | **RETIRED 2026-07-16** — formerly §13 US/CA shadow pilot; see `docs/requirements.md` §10.1 |
-| FR31 | **RETIRED 2026-07-16** — formerly §17 shared wallet-sim harness; see `docs/requirements.md` §10.2 |
-| FR32–FR39, NFR6 | **RETIRED 2026-07-16** — formerly §16 NSE shadow pilot; see `docs/requirements.md` §10.3 |
+| FR24–FR30, NFR5 | **RETIRED 2026-07-16** — formerly §13 US/CA shadow pilot; FR text preserved only in git history (deleted outright from `docs/requirements.md`) |
+| FR31 | **RETIRED 2026-07-16** — formerly §17 shared wallet-sim harness; FR text preserved only in git history (deleted outright from `docs/requirements.md`) |
+| FR32–FR39, NFR6 | **RETIRED 2026-07-16** — formerly §16 NSE shadow pilot; FR text preserved only in git history (deleted outright from `docs/requirements.md`) |
 
 **Coverage:** FR1–FR23 and NFR1–NFR4 (core, live) are covered as-built (§§4–12). **FR24–FR31/NFR5 and
 FR32–FR39/NFR6 are retired (2026-07-16)** — the code that satisfied them is being removed per §18; the
@@ -671,8 +673,9 @@ no open increments.
 
 > **RETIRED (2026-07-16)**, same change request and disposition as §13. Formerly covered FR32–FR39 / NFR6
 > (NSE shadow pilot, INC-1). No longer in scope; no future revival planned. Full historical design content
-> is preserved in git history (this file, pre-2026-07-16) and in `docs/requirements.md` §10.3 (FR text
-> verbatim). **See §18 for the mechanical removal plan.**
+> is preserved in git history only (this file, pre-2026-07-16, and `docs/requirements.md`'s own history) —
+> the FR text was deleted outright from the live requirements doc, not kept in a numbered section.
+> **See §18 for the mechanical removal plan.**
 
 ---
 
@@ -681,17 +684,18 @@ no open increments.
 > **RETIRED (2026-07-16)**, same change request and disposition as §13/§16. Formerly covered FR31 (INC-2)
 > — the harness existed solely to evaluate the two shadow tracks above; with both retired, the harness has
 > no purpose and is retired alongside them (user-confirmed, no future revival). Full historical design
-> content is preserved in git history (this file, pre-2026-07-16) and in `docs/requirements.md` §10.2 (FR
-> text verbatim). **See §18 for the mechanical removal plan.**
+> content is preserved in git history only (this file, pre-2026-07-16, and `docs/requirements.md`'s own
+> history) — the FR text was deleted outright from the live requirements doc, not kept in a numbered
+> section. **See §18 for the mechanical removal plan.**
 
 ---
 
 ## 18. Shadow tracks retirement — removal plan (2026-07-16)
 
-Covers FR24–FR31/NFR5 and FR32–FR39/NFR6, retired per `docs/requirements.md` §10 (2026-07-16 changelog
-entries) and design §§13/14/16/17 above. **Scope: clean deletion — nothing preserved for revival.** This
+Covers FR24–FR31/NFR5 and FR32–FR39/NFR6, retired per `docs/requirements.md`'s 2026-07-16 changelog
+entries and design §§13/14/16/17 above. **Scope: clean deletion — nothing preserved for revival.** This
 is a mechanical checklist for dev to execute; no design judgment calls remain (all three open questions
-from the change request were resolved by the user before this pass — see requirements.md §10 changelog).
+from the change request were resolved by the user before this pass — see requirements.md's changelog).
 
 ### 18.1 Delete outright (files)
 
