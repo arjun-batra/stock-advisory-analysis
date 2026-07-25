@@ -75,10 +75,10 @@ print('ok')
 "
 ```
 All three passed in a clean venv (`pip install -r requirements.txt`) before this handoff. Full pytest
-suite was NOT run by dev — qa owns `tests/` cleanup (design §18.4) and the full regression pass next; the
-existing shadow-only test files (`test_shadow.py`, `test_run_shadow*.py`, `test_wallet_sim.py`,
-`test_eval_shadow.py`) will currently fail to collect since their target modules are deleted, which is
-expected until qa deletes/edits them per §18.4.
+suite was NOT run by dev — qa owns `tests/` cleanup (per `docs/design.md`'s "Retired: shadow-pilot
+tracks" note) and the full regression pass next; the existing shadow-only test files (`test_shadow.py`,
+`test_run_shadow*.py`, `test_wallet_sim.py`, `test_eval_shadow.py`) will currently fail to collect since
+their target modules are deleted, which is expected until qa deletes/edits them per that note.
 
 ## Confirmation: production untouched
 FR1-FR23 code paths (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`, `ingest.py`, `ai_judge.py`'s
@@ -89,11 +89,12 @@ signatures changed. The production step in `hourly-watchlist.yml` (`Run hourly w
 byte-identical except for the one comment reword.
 
 ## Known limitations / follow-ups for other agents
-- qa: delete/edit the test files per design §18.4 (`test_shadow.py`, `test_run_shadow.py`,
+- qa: delete/edit the test files per `docs/design.md`'s "Retired: shadow-pilot tracks" note (`test_shadow.py`, `test_run_shadow.py`,
   `test_run_shadow_nse.py`, `test_wallet_sim.py`, `test_eval_shadow.py` deleted outright;
   `test_config.py`/`test_import_smoke.py`/`conftest.py` edited to drop shadow-specific cases/fixtures) and
   rewrite the shadow-referencing rows in `qa/test-plan-full-codebase.md`.
 - pm: `README.md` still describes the shadow wallet pilot as a live feature — needs an update to reflect
   the retirement (flagged above).
 - reviewer: `docs/review-log.md` retains historical shadow-track entries (REV-001, REV-005, REV-015,
-  REV-018, Pass 3, Pass 4) per design §18.5 — no action needed from dev, noted for traceability.
+  REV-018, Pass 3, Pass 4) per `docs/design.md`'s "Retired: shadow-pilot tracks" note — no action needed
+  from dev, noted for traceability.

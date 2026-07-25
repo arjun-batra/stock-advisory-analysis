@@ -32,7 +32,8 @@ clean, and confirm FR1–FR23 production paths are unaffected.
   `test_shadow.py`/`shadow.judge_batch_shadow` (no dedicated shadow fixtures existed to remove; the fake
   Gemini client machinery is still used by `test_ai_judge.py` and was kept as-is).
 - **Edited** `qa/test-plan-full-codebase.md` — marked "Phase 6 — Shadow Pipeline" (P6-1..P6-5) RETIRED with
-  a pointer to `docs/design.md` §18, replaced P3-7 ("Shadow isolation") with a retired stub, and updated
+  a pointer to the "Retired: shadow-pilot tracks" note in `docs/design.md`, replaced P3-7 ("Shadow
+  isolation") with a retired stub, and updated
   P3-1's pass criteria to no longer expect `call_log_shadow` (noting the drop migration
   `sql/drop_shadow_tables_migration.sql` had not yet been applied to the live project as of this update).
 
