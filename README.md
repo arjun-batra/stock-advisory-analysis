@@ -47,24 +47,28 @@ covers only stocks/ETFs, is single-user, and is not licensed/registered financia
 ## How to run
 
 > **Note:** This section is a best-effort reconstruction from the solution design
-> (`requirements_docs/SD.md`) and the config surface (`scripts/config.py`). `docs/handoff.md` exists but
-> covers only the shadow-tracks-removal increment, not general deploy procedure, so steps marked
-> *(inferred)* below are not yet confirmed against a dedicated deploy handoff/runbook and should be
-> verified before being relied on.
+> (`requirements_docs/SD.md`), the config surface (`scripts/config.py`), and `docs/runbook.md` (the
+> dedicated deploy runbook, owned by release, covering general deploy procedure — not to be confused
+> with `docs/handoff.md`, which covers only the shadow-tracks-removal increment). Steps confirmed
+> against `docs/runbook.md` are stated directly below; any remaining *(inferred)* marker is not covered
+> by the runbook and should still be verified before being relied on.
 
 The system is not a locally-run app; it runs on a schedule in the cloud.
 
 1. **Control plane — Supabase.** A Supabase (Postgres) project holds the schema (watchlist, holdings,
    `call_log`, views) and drives scheduling and health monitoring via pg_cron.
-   Apply the SQL in `sql/` to provision the schema and objects. *(inferred: exact apply order and which
-   migrations were applied live via the Supabase MCP vs. committed SQL — confirm against a handoff.)*
+   Apply the SQL migrations in `sql/` in the exact order documented in `docs/runbook.md` §2.3 —
+   `scheduler_pgcron.sql` → `phase5_monitoring.sql` → `dashboard_latest_call_view.sql` →
+   `drop_shadow_tables_migration.sql` — to provision the schema and objects.
 2. **Compute — GitHub Actions.** The workflows in `.github/workflows/` (e.g.
    `hourly-watchlist.yml`) do the actual fetch/AI/alert work. They are dispatched by Supabase pg_cron
    and can also be triggered manually via **workflow_dispatch** (use `FORCE_RUN=true` to run outside
    market hours for testing/backfill).
 3. **Dependencies.** Python dependencies are pinned in `requirements.txt`; the workflow installs them on
-   each run (`pip install -r requirements.txt`). *(inferred: Python version — confirm against a
-   handoff/CI setup.)*
+   each run (`pip install -r requirements.txt`) using Python 3.12, per `python-version: "3.12"` in the
+   three cron-triggered workflows (`hourly-watchlist.yml`, `daily-discovery.yml`,
+   `publish-prices.yml`; the `audit.yml` CI workflow uses `3.x`). This is confirmed directly from the
+   workflow files, not from `docs/runbook.md`, which does not state a Python version.
 4. **Secrets & configuration.** Set as GitHub Actions encrypted **secrets** and **Variables**. Required
    secrets: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the code fails fast if any are
    missing), plus `NTFY_TOPIC` / `NSE_NTFY_TOPIC` and `DETAIL_PAGE_BASE` for delivery. Behavior toggles

@@ -51,8 +51,9 @@ material, not live code:
 - `docs/review-log.md`, `docs/test-report.md` — reviewer/qa-owned historical entries.
 - `qa/test-plan-full-codebase.md`, `tests/test_shadow.py`, `tests/test_run_shadow.py`,
   `tests/test_run_shadow_nse.py`, `tests/test_eval_shadow.py`, `tests/test_config.py`,
-  `tests/test_import_smoke.py`, `tests/conftest.py` — already flagged by tech-lead in design §18.4 for qa
-  to delete/edit next; not touched here per CLAUDE.md (dev never touches tests/).
+  `tests/test_import_smoke.py`, `tests/conftest.py` — already flagged by tech-lead in `docs/design.md`'s
+  "Retired: shadow-pilot tracks" note for qa to delete/edit next; not touched here per CLAUDE.md (dev never
+  touches tests/).
 - `.gitignore` — one entry, `.shadow-pilot-session-state.md` (a Claude Code build-session scratch file
   name, not a shadow-*feature* reference; unrelated to call_log_shadow/etc.). Left as-is — ambiguous
   ownership and zero functional impact; flagging in case someone wants to rename it for hygiene.
