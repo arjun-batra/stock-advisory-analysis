@@ -39,16 +39,18 @@ covers only stocks/ETFs, is single-user, and is not licensed/registered financia
   and runs the health monitor.
 - **GitHub Actions** runs the fetch → AI → alert work; the runtime market gate (not the schedule)
   decides whether work actually happens.
-- **Gemini Flash** (free tier) generates verdicts in one batched call per run, failing safe to Hold on
-  any error.
+- **Gemini Flash** (Google's paid tier; cost is held by keeping call volume low — one batched call per
+  run per track — rather than a free-tier daily cap) generates verdicts, failing safe to Hold on any
+  error.
 - **Yahoo Finance** (unofficial API) supplies price/volume/fundamentals for all three markets.
 
 ## How to run
 
 > **Note:** This section is a best-effort reconstruction from the solution design
-> (`requirements_docs/SD.md`) and the config surface (`scripts/config.py`). A dev/release handoff doc
-> has not yet been produced in this pipeline run, so steps marked *(inferred)* should be confirmed
-> against a handoff before being relied on.
+> (`requirements_docs/SD.md`) and the config surface (`scripts/config.py`). `docs/handoff.md` exists but
+> covers only the shadow-tracks-removal increment, not general deploy procedure, so steps marked
+> *(inferred)* below are not yet confirmed against a dedicated deploy handoff/runbook and should be
+> verified before being relied on.
 
 The system is not a locally-run app; it runs on a schedule in the cloud.
 
@@ -67,8 +69,8 @@ The system is not a locally-run app; it runs on a schedule in the cloud.
    secrets: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the code fails fast if any are
    missing), plus `NTFY_TOPIC` / `NSE_NTFY_TOPIC` and `DETAIL_PAGE_BASE` for delivery. Behavior toggles
    include `ALERTS_ENABLED` (flip to `true` to send real pushes). The full tunable surface (models,
-   timeouts, retries, discovery thresholds, market hours) is documented in
-   `docs/requirements.md` §11 and defined in `scripts/config.py`.
+   timeouts, retries, discovery thresholds, market hours) is documented in the Configuration section of
+   `docs/requirements.md` and defined in `scripts/config.py`.
 5. **Dashboard.** The read-only dashboard is served from GitHub Pages (the `pages/` output, with the
    price snapshot published to `pages/prices.json` on the market cadence) behind a client-side password
    gate.
