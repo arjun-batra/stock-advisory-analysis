@@ -8,11 +8,11 @@
 
 The system deploys across three layers:
 
-- **Compute (GitHub Actions):** Four workflows orchestrate the work — hourly intraday watchlist checks (`hourly-watchlist.yml`), daily candidate discovery (`daily-discovery.yml`), dashboard price snapshot publishing (`publish-prices.yml`), and repository CI checks (`audit.yml`). Workflows are triggered via Supabase pg_cron (not GitHub's native schedule) to avoid the reliability issues documented in `docs/design.md` §4.1.
+- **Compute (GitHub Actions):** Four workflows orchestrate the work — hourly intraday watchlist checks (`hourly-watchlist.yml`), daily candidate discovery (`daily-discovery.yml`), dashboard price snapshot publishing (`publish-prices.yml`), and repository CI checks (`audit.yml`). Workflows are triggered via Supabase pg_cron (not GitHub's native schedule) to avoid the reliability issues documented in `docs/design/components.md` §4.1.
 
-- **Control plane (Supabase Postgres):** Centralizes state persistence (watchlist, holdings, verdicts, call logs), the scheduler (pg_cron dispatch to GitHub Actions via `workflow_dispatch` API), and the active health monitor (dead-man watch on workflow staleness — `docs/design.md` §4.8, `docs/requirements.md` NFR2). The concentration is deliberate and accepted as a single point of failure; see §2 item 6 of `docs/idea-brief.md` (Open risks).
+- **Control plane (Supabase Postgres):** Centralizes state persistence (watchlist, holdings, verdicts, call logs), the scheduler (pg_cron dispatch to GitHub Actions via `workflow_dispatch` API), and the active health monitor (dead-man watch on workflow staleness — `docs/design/components.md` §4.8, `docs/requirements.md` NFR2). The concentration is deliberate and accepted as a single point of failure; see §2 item 6 of `docs/idea-brief.md` (Open risks).
 
-- **Frontend (GitHub Pages + ntfy):** Dashboard served at a GitHub Pages URL (password-gated client-side per `docs/design.md` §10), with push notifications to ntfy.sh (US/TSX on one topic, NSE on a separate topic for independent filtering). Dashboard prices are published to `pages/prices.json` on the market cadence to work around browser CORS restrictions on Yahoo Finance APIs; see `docs/requirements.md` Decision #18.
+- **Frontend (GitHub Pages + ntfy):** Dashboard served at a GitHub Pages URL (password-gated client-side per `docs/design/frontend.md` §10), with push notifications to ntfy.sh (US/TSX on one topic, NSE on a separate topic for independent filtering). Dashboard prices are published to `pages/prices.json` on the market cadence to work around browser CORS restrictions on Yahoo Finance APIs; see `docs/requirements.md` Decision #18.
 
 Full architecture and design rationale: `docs/design.md`.
 
@@ -30,7 +30,7 @@ In the repository's **Settings > Secrets and variables > Actions > Secrets tab**
 
 | Secret name | Purpose | Example / notes |
 |---|---|---|
-| `GEMINI_API_KEY` | Google Gemini API key (paid-tier) | Obtained from console.cloud.google.com; production uses `gemini-2.5-flash` family on Google's paid tier, not free tier (§4.4, `docs/design.md`) |
+| `GEMINI_API_KEY` | Google Gemini API key (paid-tier) | Obtained from console.cloud.google.com; production uses `gemini-2.5-flash` family on Google's paid tier, not free tier (§4.4, `docs/design/components.md`) |
 | `SUPABASE_URL` | Supabase project URL | Format: `https://<project-id>.supabase.co` |
 | `SUPABASE_SECRET_KEY` | Supabase service-role key (new-style `sb_secret_...`) | Bypasses RLS; server-only secret, never exposed client-side or in public keys |
 | `NTFY_TOPIC` | ntfy.sh push topic for US/TSX alerts | URI of the ntfy topic, e.g., `https://ntfy.sh/my-stock-topic` |
@@ -49,9 +49,9 @@ In **Settings > Secrets and variables > Actions > Variables tab**, create these 
 | `NSE_GEMINI_MODEL_BACKUP` | (inherits `GEMINI_MODEL_BACKUP`) | NSE watchlist fallback model; empty or unset → no NSE fallback |
 | `DISCOVERY_GEMINI_MODEL` | `gemini-2.5-flash` | Discovery prefilter model (separate quota from watchlist) |
 | `DISCOVERY_GEMINI_MODEL_BACKUP` | `gemini-2.5-flash-lite` | Discovery fallback model |
-| `GEMINI_MAX_RETRIES` | `3` | Retries after initial Gemini attempt (§4.4, `docs/design.md`) |
+| `GEMINI_MAX_RETRIES` | `3` | Retries after initial Gemini attempt (§4.4, `docs/design/components.md`) |
 | `GEMINI_RETRY_BASE_MS` | `10000` | Exponential backoff base (ms) with full jitter; empty → uses default |
-| `GEMINI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); unset → defaults to 180s (corrected from prior 20s timeout; see §4.4) |
+| `GEMINI_TIMEOUT_MS` | `180000` | Per-request timeout (ms); unset → defaults to 180s (corrected from prior 20s timeout; see `docs/design/components.md` §4.4) |
 
 All other tunables (discovery thresholds, market hours, pacing, etc.) are documented in `scripts/config.py` and read from environment variables set by the workflows. Change them in `scripts/config.py` or as workflow env vars — not hardcoded anywhere else.
 
@@ -83,10 +83,10 @@ After SQL migrations are applied, the four workflows are triggered as follows:
 |---|---|---|---|
 | `hourly-watchlist.yml` | Every 30 min, 13:00–21:59 UTC weekdays | `cron.schedule('watchlist-dispatch', '*/30 13-21 * * 1-5', ...)` in `scheduler_pgcron.sql` → `dispatch_watchlist_if_open()` gate in `phase5_monitoring.sql` → `dispatch_github_workflow('hourly-watchlist.yml')` | Intraday watchlist checks, run every ~30 min during market hours (gate trims to 09:30–16:05 ET / 09:15–15:35 IST, i.e., real session + buffer for jitter) |
 | `daily-discovery.yml` | Once daily, 22:00 UTC Mon–Fri | `cron.schedule('discovery-dispatch', '0 22 * * 1-5', ...)` in `scheduler_pgcron.sql` → direct dispatch | Post-US-close candidate discovery scan; also fires NSE discovery at 10:00 UTC (separate cron: `discovery-dispatch-nse`) with `region=in` input |
-| `publish-prices.yml` | Every 30 min, 03:00–10:59 and 13:00–21:59 UTC weekdays (market cadence) | `cron.schedule('publish-prices', '*/30 3-10,13-21 * * 1-5', ...)` in `scheduler_pgcron.sql` → direct dispatch | Fetches live prices via yfinance and commits `pages/prices.json` if prices changed (issue #18 CORS workaround; see `docs/design.md` §4.7 and `docs/requirements.md` Decision #18) |
+| `publish-prices.yml` | Every 30 min, 03:00–10:59 and 13:00–21:59 UTC weekdays (market cadence) | `cron.schedule('publish-prices', '*/30 3-10,13-21 * * 1-5', ...)` in `scheduler_pgcron.sql` → direct dispatch | Fetches live prices via yfinance and commits `pages/prices.json` if prices changed (issue #18 CORS workaround; see `docs/design/components.md` §4.7 and `docs/requirements.md` Decision #18) |
 | `audit.yml` | On every push and pull request (GitHub native) | GitHub's own trigger | Runs gitleaks, linting (ruff/eslint), and tests; defined in `.github/workflows/audit.yml`, not pg_cron-triggered |
 
-No GitHub-native `schedule:` triggers are used in any workflow because GitHub's shared cron scheduler was silently dropping ticks (issue #4, `docs/design.md` §4.1). The runtime market gate (Python `is_market_open()` in `scripts/config.py` for the watchlist, SQL gates in Supabase) is the authority on whether work happens — the schedule fires loosely, and the gate trims it.
+No GitHub-native `schedule:` triggers are used in any workflow because GitHub's shared cron scheduler was silently dropping ticks (issue #4, `docs/design/components.md` §4.1). The runtime market gate (Python `is_market_open()` in `scripts/config.py` for the watchlist, SQL gates in Supabase) is the authority on whether work happens — the schedule fires loosely, and the gate trims it.
 
 ---
 
