@@ -6,249 +6,181 @@ review cycle; previously logged items are re-checked and marked RESOLVED with da
 
 ---
 
-## Passes 1–5 (2026-07-12 through 2026-07-15) — archived
+## Passes 1–6 (2026-07-12 through 2026-07-16) — archived
 
-Passes 1–5 (baseline adoption audit, post-debt-cleanup re-audit, INC-1 NSE-shadow-pilot pre-merge audit,
-INC-2 shared-eval-harness pre-merge audit, and the post-Pass-4 cleanup independent re-verification) are
-archived in full to `docs/archive/review-log-archive.md` per `CLAUDE.md`'s doc-hygiene rule ("reviewer: on
-clearing an increment, move RESOLVED entries to `docs/archive/review-log-archive.md`"), archived
-2026-07-16 when Pass 6 (below) cleared with zero blockers. All REV-001 through REV-021 items from that
-span are now either RESOLVED, `ACCEPTED-DEBT`, or **MOOT** (REV-015, REV-018, REV-020, REV-021 — the four
-still open at the end of Pass 5 — were superseded 2026-07-16 when the shadow-pilot removal change request
-deleted the files/sections they concerned; see Pass 6's "Re-check of prior open items" below). Nothing
-from that span remains open. Agents never read `docs/archive/` per `CLAUDE.md`.
+Passes 1–6 (baseline adoption audit, post-debt-cleanup re-audit, INC-1 NSE-shadow-pilot pre-merge audit,
+INC-2 shared-eval-harness pre-merge audit, the post-Pass-4 cleanup independent re-verification, and the
+shadow-pilot removal change request's diff-scoped pre-merge audit) are archived in full to
+`docs/archive/review-log-archive.md` per `CLAUDE.md`'s doc-hygiene rule ("reviewer: on clearing an
+increment, move RESOLVED entries to `docs/archive/review-log-archive.md`"), archived 2026-07-25 when
+REV-022 — Pass 6's one remaining open item — was independently confirmed RESOLVED (pm removed the stale
+shadow-pilot section from `docs/idea-brief.md` in commit `ee32d2d`, the same day). All REV-001 through
+REV-022 items from that span are now RESOLVED, ACCEPTED-DEBT, or MOOT. Nothing from that span remains
+open. Agents never read `docs/archive/` per `CLAUDE.md`.
 
 ---
 
-## Pass 6 — 2026-07-16 (shadow-pilot removal change request — diff-scoped pre-merge audit)
+## Pass 7 — 2026-07-25 (REV-022 closure verification + audit of 3 same-day follow-up commits)
 
-Scope: diff-scoped audit per `CLAUDE.md` Phase 3d of everything changed since the last reviewer
-clearance (commit `228e8dd`), for the change request retiring FR24–FR31/NFR5 (US/TSX shadow pilot +
-shared eval harness) and FR32–FR39/NFR6 (NSE shadow pilot). Branch
-`claude/remove-us-tsx-nse-experiment-jb94x1` (6 commits: `42d7858`, `07c48e5`, `6233973`, `148b081`,
-`4a61d29`, `4779e90`). **Method note:** no shell/execute tool available this session (Read/Grep/Glob/
-Write/Edit only, consistent with every prior pass) — I could not run `git diff --name-only 228e8dd..HEAD`
-or `pytest` myself. Substituted `Glob`/`Grep` over the current working tree to independently confirm file
-presence/absence (deleted files verified genuinely absent via directory listing, not just taken on the
-task brief's word) and to case-insensitively grep the entire repo for `shadow` (excluding `.git/`) rather
-than trusting dev's/qa's own sweep claims. Read every file the task brief named in full or in relevant
-part: `docs/requirements.md` (full), `docs/design.md` (header + §§13–18 in full, plus targeted greps of
-§9/§16.6/§17.4's tunable tables), `scripts/config.py` (full), `.github/workflows/hourly-watchlist.yml`
-(full), `sql/drop_shadow_tables_migration.sql` (full), `docs/handoff.md` (full), `docs/test-report.md`
-(full), `qa/test-plan-full-codebase.md` (Phase 3/6 sections), `README.md` (full), `tests/test_import_smoke.py`
-(full), `tests/conftest.py` (fixture-class grep), `scripts/run_hourly.py` (targeted grep),
-`scripts/ai_judge.py` (`_generate` docstring), `requirements.txt` (full).
+Scope: this session closes out Pass 6's one open item and audits the three follow-up commits that landed
+the same day (2026-07-16) but after Pass 6 was written, so were never themselves reviewer-audited:
+- `ee32d2d` — "Remove shadow wallet pilot section from idea-brief.md (REV-022)" — pm-owned fix for REV-022.
+- `8b86f81` — "docs: confirm shadow tables dropped from live Supabase project" — dev-owned `docs/handoff.md`
+  edit confirming `sql/drop_shadow_tables_migration.sql` was applied to the live DB.
+- `83b27de` — "Delete shadow experiment content from requirements.md outright" — pm-owned `docs/requirements.md`
+  edit per a further user follow-up ("remove all traces of shadow experiment from requirements document as
+  well"), deleting §10 (Experimental Tracks, all FR24–FR31/FR32–FR39 text), the three retired config
+  tables, and the NFR5/NFR6 verbatim block (254 lines removed), leaving one-line changelog pointers.
 
-### Pass 1 — Traceability, requirements → code
+**Method note (unchanged from every prior pass):** no shell/execute tool available this session
+(Read/Grep/Glob/Write/Edit only) — I could not run `git show`/`git diff` on the three commits directly.
+Verified their claimed effect instead by reading the current working-tree file contents directly (all
+three commits are already applied to the tree) and by a fresh, independent case-insensitive repo-wide
+grep for `shadow` (excluding `.git/` and `docs/archive/`), rather than taking the commit messages or
+`docs/handoff.md`'s own sweep claims on trust.
 
-Independently verified every retired FR/NFR ID is consistently marked retired across all three docs, not
-taken on the changelog's word:
-- `docs/requirements.md` §10 top-level note + §10.1/§10.2/§10.3 section headers + the NFR5/NFR6 block at
-  the bottom + both "Experimental" §11 tunable-table headers all read **RETIRED (2026-07-16)**, with FR
-  text kept verbatim below each notice for removal-traceability only, exactly as the 2026-07-16 changelog
-  entries describe. No dangling "active"/"MAY run" framing found outside the verbatim-preserved historical
-  FR clause text itself (which is correctly labeled as historical, not current).
-- `docs/design.md` header (lines 3–12), §13/§14/§16/§17 (all four independently read in full) and the §15
-  coverage map (line 658–660) all consistently say RETIRED, point back to `docs/requirements.md` §10.1–
-  §10.3 for the verbatim FR text, and correctly distinguish the *unrelated* paid-tier/`gemini-2.5-flash`
-  model-default correction (still active, §4.4/§9) from the retired shadow-specific content — this
-  distinction is real and correctly drawn, not a hand-wave (confirmed `scripts/config.py:26-27`'s
-  `GEMINI_MODEL`/`GEMINI_MODEL_BACKUP` defaults are untouched by the removal and still `gemini-2.5-flash`/
-  `gemini-2.5-flash-lite`).
-- `docs/design.md` §18 (the removal plan) maps every retired FR/NFR ID to a concrete file/config/SQL/test
-  action, and I independently confirmed every one of those actions actually happened (see Pass 3 below) —
-  the plan was executed, not just written.
-- No traceability gap: every retired ID has a design disposition (§13/§16/§17/§18) and a code-removal
-  action, and qa's regression pass (`docs/test-report.md`) confirms the resulting test suite has zero
-  shadow-related collection errors. Nothing FR24–FR39/NFR5–6-shaped was left half-designed or
-  half-removed.
+### REV-022 verification
 
-### Pass 2 — Completeness (orphaned "shadow" references)
+Read `docs/idea-brief.md` in full (109 lines, current). The "Experimental addition (NOT core v1 scope):
+shadow wallet pilot" section Pass 6 flagged is gone outright — no `shadow` token anywhere in the file
+(confirmed by direct grep, zero hits). The document now describes only the live v1 system (watchlist,
+discovery, alerting, dashboard, dead-man monitor) with no mention of either retired pilot. Matches
+commit `ee32d2d`'s stated effect exactly (19 lines removed, no other section altered).
 
-Grepped the entire repository, case-insensitive, for `shadow` (excluding `.git/`) myself rather than
-trusting dev's/qa's own sweep claims in `docs/handoff.md`/`docs/test-report.md`. 11 files matched:
+**REV-022 — RESOLVED 2026-07-25.** Fixed by pm in commit `ee32d2d`, same day as Pass 6 was written.
+Independently confirmed by direct read of the current file — not taken on the commit message's word.
 
-| File | Disposition |
-|---|---|
-| `docs/test-report.md`, `docs/archive/test-report-archive.md` | qa-owned, correctly historical/retirement-framed |
-| `qa/test-plan-full-codebase.md` | correctly retired (Phase 6 struck, P3-1/P3-7 corrected) — read in full, confirmed |
-| `docs/handoff.md` | dev-owned, entirely about this removal increment — correct |
-| `sql/drop_shadow_tables_migration.sql` | the new migration itself — correct, see Pass 5 below |
-| `docs/design.md`, `docs/requirements.md`, `docs/review-log.md` | all correctly retired/historical framing, verified above and by this log's own history |
-| `docs/idea-brief.md` | **see REV-022 below — stale, flagged as a new finding** |
-| `requirements_docs/stock-advisor-ui-handoff-v3-spec.md` | "no shadows" is a CSS box-shadow styling rule — unrelated, not a finding (confirmed by direct read) |
-| `.gitignore` | `.shadow-pilot-session-state.md` — a Claude-Code build-session scratch-file naming convention, unrelated to the `call_log_shadow` feature — confirmed by direct read, not a finding |
+### 8b86f81 verification — `docs/handoff.md` live-migration confirmation
 
-`scripts/`, `sql/` (apart from the new drop migration), `.github/workflows/`, and `tests/` all returned
-**zero** matches for `shadow` (case-insensitive) — independently confirmed by my own grep, not dev's or
-qa's. `Glob` confirmed all six named-for-deletion files (`scripts/shadow.py`, `scripts/run_shadow.py`,
-`scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, and the two shadow SQL
-migrations) and all five named-for-deletion test files (`tests/test_shadow.py`, `tests/test_run_shadow.py`,
-`tests/test_run_shadow_nse.py`, `tests/test_wallet_sim.py`, `tests/test_eval_shadow.py`) are genuinely
-absent from the working tree, not merely emptied or renamed.
+Read `docs/handoff.md`'s "New file" section (the `sql/drop_shadow_tables_migration.sql` entry). It now
+reads: "**Applied to the live Supabase project** by the orchestrator; confirmed via `list_tables` that
+`call_log_shadow`/`call_log_shadow_nse` are gone and the remaining tables (`watchlist`, `holdings`,
+`verdict_state`, `call_log`, `run_heartbeat`, `monitor_alerts`) are untouched." This supersedes Pass 6's
+"documented as not-yet-applied in three independent places" finding — the migration's status has moved
+from pending to applied, and the doc now says so plainly rather than leaving a stale "not yet applied"
+claim in place. No Supabase MCP tool was available in this reviewer session to independently re-confirm
+the live database state directly (same limitation Pass 4/5 disclosed for REV-016) — this rests on the
+documented orchestrator-performed verification, not an independent reviewer re-check. Flagged as a method
+caveat, not silently treated as reviewer-verified.
 
-**REV-022 — [BLOAT] minor (doc staleness) — `docs/idea-brief.md:110-127`.** The "Experimental addition
-(NOT core v1 scope): shadow wallet pilot" section still describes both shadow tracks in present-tense,
-active-feature language ("A parallel, **non-production** AI verdict track... It writes only to its own
-isolated table, never alerts... gated by a kill switch that defaults ON," "A **second, independent shadow
-track for NSE tickers** was added...") with no retirement notice at all — it reads as if FR24–FR30/NFR5
-and FR32–FR39/NFR6 are still live requirements. `docs/handoff.md`'s own repo-wide grep sweep (line 47)
-already flagged this exact file to pm ("`docs/idea-brief.md`, `README.md` — pm-owned; `README.md` still
-describes the shadow pilot as a current feature... flagging to pm") — `README.md` was subsequently fixed
-(confirmed no `shadow` hits remain in it, see Pass 2 table above), but `idea-brief.md` was not. This file
-was not itself touched by this increment's diff, but per this pass's audit criterion #2 ("no dangling
-'active' references left... anywhere in docs or code") and `CLAUDE.md`'s non-negotiable ("Docs stay in
-sync with reality — a stale doc is a bug"), a live pm-owned artifact describing retired FR/NFR IDs as
-current scope is a genuine finding, not pedantry — a future reader of `idea-brief.md` alone (without
-cross-referencing `requirements.md`'s retirement notices) would believe both shadow pilots are still
-running. **Not a blocker** — `idea-brief.md` is not the source of truth for FR/NFR status (`requirements.md`
-is, and it is correctly retired there); this is a secondary-doc staleness issue, the same class and
-severity as the historical REV-017/REV-021 design.md staleness findings. **Owner: pm** (`docs/idea-brief.md`
-is pm-owned) — add a short retirement note (mirroring `requirements.md` §10's top-level notice) or trim the
-section to a one-line historical pointer.
+Noted, not a finding: `docs/handoff.md` lines 47–48 (dev's original repo-wide sweep note, unedited by
+`8b86f81`) still lists `docs/idea-brief.md` alongside `README.md` as needing a pm fix. This is pre-existing
+text from dev's original handoff (predates all three commits in this pass's scope, and `8b86f81` only
+added the "Applied to the live Supabase project" confirmation, not a rewrite of the sweep section) — now
+mildly stale since `idea-brief.md` was fixed by `ee32d2d`, but it is a working note recording what was true
+at write-time, not a live status claim, and the actual action item (fix `idea-brief.md`) was correctly
+acted on. Not rising to a new finding; too minor to log given the explicit "don't expect problems, this is
+bookkeeping" framing of this pass.
 
-### Pass 3 — Correctness (production code paths FR1–FR23 untouched)
+### 83b27de verification — `docs/requirements.md` shadow-content deletion
 
-Read `scripts/config.py` in full: confirmed zero `SHADOW_*`/`EVAL_WINDOW_DAYS` names remain, and every
-production tunable (`GEMINI_MODEL`/`_BACKUP`, `NSE_GEMINI_MODEL`/`_BACKUP`, `GEMINI_MAX_RETRIES`/
-`_RETRY_BASE_MS`/`_TIMEOUT_MS`, `YF_*`, `HEADLINES_LIMIT`, `NOTIF_BODY_MAX`, `RATIONALE_MAX`, all
-`DISCOVERY_*` gates, `MARKET_*`/`NSE_MARKET_*`, `RUNTIME_CLOSE_GRACE_MIN`) and every function
-(`discovery_models`, `nse_models`, `is_market_open`, `is_nse_open`, `require_secrets`) is present,
-unchanged in signature/default, and — specifically for `nse_models()` — confirmed by direct grep of
-`scripts/run_hourly.py:39,48` that it is genuinely called by **production** NSE dispatch (not a shadow-only
-leftover; the name-overlap concern the task brief flagged is a non-issue). Read
-`.github/workflows/hourly-watchlist.yml` in full: exactly one job, one step (`Run hourly watchlist check`),
-byte-for-byte the production step with only the one documented comment reword (`GEMINI_MAX_RETRIES`
-comment: "shared by the production and shadow tracks" → "shared by the production track") — no shadow
-step, no `SHADOW_TIMEOUT_MINUTES`/`SHADOW_ENABLED`/`SHADOW_NSE_*` env reference anywhere. Read
-`scripts/ai_judge.py`'s `_generate` docstring: the shadow clause is genuinely gone ("THE shared call path:
-production watchlist/discovery (judge_batch) funnels every API request through here" — no
-`shadow.judge_batch_shadow` mention), confirmed no behavior change (grepped the full file for `shadow`,
-zero hits, and the retry/backoff logic itself — `_is_retryable`, the exponential-jitter sleep — reads
-identically to Pass 3/4's prior independently-verified description). Grepped `scripts/` for any
-`import shadow`/`from shadow`/`judge_batch_shadow`/`wallet_sim`/`eval_shadow` reference: zero hits — no
-orphaned import anywhere. `tests/test_import_smoke.py`'s module-discovery is glob-based
-(`SCRIPTS_DIR.glob("*.py")`) and its entry-point list is now a plain 3-item list
-(`run_hourly`/`run_discovery`/`publish_prices`), matching design §18.4's instruction exactly — no stale
-hardcoded 4-entry-point list left behind. `tests/conftest.py` confirmed to contain no
-`FakeShadowSupabase`/`FakeShadowNseSupabase` class (grepped for `class Fake`; only the pre-existing Gemini
-fakes remain, which `test_ai_judge.py` still legitimately uses). **No accidental deletion of shared/
-production code found; FR1–FR23 code paths are intact.**
+Grepped `docs/requirements.md` case-insensitive for `shadow`: 6 hits remain, all in the Changelog table
+(lines 9, 279, 281, 283–287), each a one-line historical pointer ("Retired and removed outright
+2026-07-16 — see below and git history.") — no live FR/NFR section text. Grepped specifically for
+`FR2[4-9]|FR3[0-9]|NFR5|NFR6`: same result, matches only inside the changelog rows, zero matches in any
+requirement section body. Read the document's section headers top to bottom (`## 1.` through
+`## 18.`... actually through the Changelog): §10 is now **"Configuration (tunables audit baseline)"**
+(the former §11, renumbered down by one, exactly as the changelog entry describes) — the former §10
+"Experimental Tracks" section is gone outright, not merely marked retired. Read the front-matter
+provenance note (line 9) and NFR1 (§6, line 158–162): both are fixed exactly as the changelog claims — the
+provenance note now reads "including an experimental shadow-wallet track that was added and later retired
+and removed outright," and NFR1 now reads "one batched Gemini call per run per track (production
+watchlist, NSE watchlist, and daily discovery)" with the former "and each shadow track" clause gone.
 
-### Pass 4 — Hardcoding audit / docs-in-sync non-negotiable
+**Matches commit `83b27de`'s claimed effect exactly** — §10 (Experimental Tracks) deleted, three retired
+config tables deleted, NFR5/NFR6 verbatim block deleted, dangling references in the front-matter and NFR1
+fixed, changelog rows trimmed to one-line pointers (not deleted, correctly preserved as the audit trail
+per the commit's own stated rationale). Core FR1–FR23/NFR1–NFR4 and the Decisions Log (§8) confirmed
+untouched by spot-read.
 
-No new tunables or literals introduced by this removal (it is a pure deletion/edit, adds no new business
-logic). `sql/drop_shadow_tables_migration.sql` introduces no config surface (correctly — a one-time DROP
-has nothing to tune). Cross-checked `docs/requirements.md` §11's now-retired "Experimental" tunable tables
-against `docs/design.md` §9/§16.6/§17.4's matching retirement notices for `SHADOW_ENABLED`,
-`SHADOW_PROMPT_VARIANT`, `SHADOW_SNAPSHOT_LOOKBACK_MIN`, `SHADOW_NSE_ENABLED`, `SHADOW_NSE_PROMPT_VARIANT`,
-`SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`, `EVAL_WINDOW_DAYS`, and the REV-015 `SHADOW_TIMEOUT_MINUTES` workflow
-Variable — all seven are consistently marked retired in both docs, and I confirmed by direct read of
-`scripts/config.py` and `.github/workflows/hourly-watchlist.yml` (Pass 3 above) that none of the seven
-exist in code anymore. No sync gap.
+### Full-repo regression grep
 
-**Independently re-verified the "144 passed / 0 failed" claim in `docs/test-report.md` by hand-counting
-test items myself** (no shell access this session, same limitation as every prior pass) rather than taking
-qa's number on faith: `grep -c '^def test_'` per file gives `test_prefilter.py` 30, `test_config.py` 26,
-`test_notify.py` 18, `test_ingest.py` 11, `test_ai_judge.py` 8, `test_state.py` 16 raw defs, `test_textutil.py`
-12 raw defs, `test_import_smoke.py` 2 raw defs. Reading every `@pytest.mark.parametrize` decorator directly
-(`test_state.py` has three: a 6-case `before,after` matrix, a 3-case and a 2-case `verdict` list;
-`test_textutil.py` has one 3-case `limit` list; `test_import_smoke.py` has a 10-item `MODULE_NAMES` glob
-list and a 3-item `entry_point` list) and expanding raw defs to actual collected test items:
-`test_state.py` → 24, `test_textutil.py` → 14, `test_import_smoke.py` → 13. Total:
-30+26+18+11+8+24+14+13 = **144**, exactly matching `docs/test-report.md`'s claimed figure. This is genuine
-independent corroboration via full parametrize-expansion arithmetic, not a re-statement of qa's number —
-flagging as resolved the standing "someone should run live pytest" request only insofar as this
-hand-verification gives high confidence the count is real; it is still not a substitute for an actual
-`pytest -q` run (same disclosed method caveat as Pass 2/4/5).
+Case-insensitive `shadow` grep across the whole repo (excluding `.git/` and `docs/archive/`) confirms no
+new regression:
+- `.gitignore` — `.shadow-pilot-session-state.md`, the same pre-existing, already-accepted Claude-Code
+  session-file naming convention Pass 6 confirmed unrelated to the feature. Unchanged, not a finding.
+- `docs/requirements.md` — 6 changelog-only historical pointers, verified above. Correct.
+- `docs/test-report.md` — qa-owned, retirement-framed historical run entries (the "Shadow tracks
+  retirement — removal regression pass — 2026-07-16" section Pass 6 already reviewed). Unchanged, correct.
+- `docs/design.md` — still contains extensive `shadow` text, but every occurrence checked is explicitly
+  labeled **RETIRED (2026-07-16)** (§§0, 4, 7, 9, 13, 15, 16, 17, 18) — unchanged since Pass 6's own
+  verification of this file, not touched by any of the three commits in this pass's scope. See REV-023
+  below for one specific staleness this pass found within that retired framing.
+- `qa/test-plan-full-codebase.md` — correctly retired framing (P3-1, P3-7, Phase 6 banner), unchanged since
+  Pass 6.
+- `scripts/`, `tests/`, `sql/` (apart from the already-reviewed drop migration), `.github/workflows/` —
+  zero hits, confirmed by direct grep. No regression.
 
-### Pass 5 — Security audit / migration correctness
+No new orphaned/regressed `shadow` reference found anywhere in the repo as a result of these three
+commits.
 
-Read `sql/drop_shadow_tables_migration.sql` in full:
-```sql
-DROP TABLE IF EXISTS call_log_shadow;
-DROP TABLE IF EXISTS call_log_shadow_nse;
-```
-Exactly the two retired shadow tables, both with `IF EXISTS` guards (safe to run whether or not the tables
-currently exist), no other statement, correctly commented with the design §18.3 pointer and the FR IDs it
-covers. Confirmed **documented as not-yet-applied** in three independent places, all consistent with each
-other: `docs/handoff.md` ("**Not yet applied to the live Supabase project** — that is a separate,
-explicitly-authorized step for the orchestrator"), `docs/test-report.md` ("has not yet been applied to the
-live Supabase project — the `call_log_shadow`/`call_log_shadow_nse` tables may still exist in the live
-DB"), and `qa/test-plan-full-codebase.md` P3-1 ("as of this test-plan update it had not yet been applied to
-the live project"). No doc claims it has been applied — no false "done" claim, matching the task brief's
-statement that live application is a separate authorized step out of this audit's scope. No committed
-secrets in any new/changed file (grepped `scripts/config.py`, `sql/drop_shadow_tables_migration.sql`,
-`.github/workflows/hourly-watchlist.yml`, `docs/handoff.md`, `docs/test-report.md` for API-key/token/PAT
-patterns — only the pre-existing, already-accepted `sb_secret_...` naming-convention comment in
-`config.py:15`, unchanged from every prior pass). No new network/file operations, no new trust-boundary
-surface introduced by a pure-deletion change.
+### New finding
 
-### Re-check of prior open items
+**REV-023 — [BLOAT] minor (doc staleness, cross-reference) — `docs/design.md` lines 8, 76, 81, 617, 658,
+659, 660, 674, 684, 691, 694.** `83b27de` deleted `docs/requirements.md`'s former §10 (Experimental
+Tracks, including §10.1/§10.2/§10.3) and renumbered the old §11 (Configuration) down to the new §10 — but
+`docs/design.md` (not itself touched by any of the three commits, so this is a side effect, not a direct
+edit) still points to the now-nonexistent old section numbers in at least nine places:
+- Lines 658–660 (the §15 requirements-coverage map): "FR24–FR30, NFR5 | RETIRED 2026-07-16 — ... see
+  `docs/requirements.md` §10.1", "FR31 | RETIRED ... §10.2", "FR32–FR39, NFR6 | RETIRED ... §10.3" — all
+  three point at sections that no longer exist; `docs/requirements.md` §10 is now the Configuration
+  section, not the (deleted) Experimental Tracks section.
+- Lines 8, 76, 81, 617, 674, 684 similarly cite `docs/requirements.md` §10.1/§10.2/§10.3 as where "the
+  requirement text itself is preserved verbatim... for traceability" — this is now factually **wrong**,
+  not just a stale pointer: `83b27de`'s own changelog entry states the FR text was "Deleted... rather than
+  leaving it marked retired" and is preserved only "in git history," not in the live document. Design.md
+  is telling a future reader to look in a document location that both (a) doesn't have that section number
+  anymore and (b) never held the text this way even before renumbering — the text was deleted outright, not
+  kept "verbatim" in a numbered subsection.
+- Lines 691, 694 cite "`docs/requirements.md` §10 (2026-07-16 changelog entries)" / "requirements.md §10
+  changelog" — also wrong: the Changelog is now an unnumbered section at the bottom of the document, not
+  §10 (§10 is Configuration).
 
-Not re-litigated in depth (out of this diff's file scope — none of `run_shadow.py`/`hourly-watchlist.yml`'s
-`SHADOW_TIMEOUT_MINUTES` prose/`test-report.md` §10.1 exist to re-check anymore, since the files they lived
-in are deleted or superseded by this pass's fresh `docs/test-report.md`). **REV-015, REV-018, REV-020,
-REV-021** are now moot: REV-015/REV-021 concerned a workflow `timeout-minutes` literal on the now-deleted
-shadow steps; REV-018 concerned `run_shadow.py::main()`'s exception handling, and that file is now deleted
-outright; REV-020 concerned per-file test counts in a `test-report.md` section that has itself been
-superseded (the old run archived, per doc hygiene). Marking all four **MOOT (removal supersedes)**, dated
-2026-07-16 — not RESOLVED (nobody fixed the underlying code; the code they were about no longer exists) and
-not silently dropped. **REV-002/REV-006/REV-016/REV-017/REV-019** were already fully resolved/disposed of
-by Pass 4/5 and remain so — the FR31 harness they concerned is itself now retired and deleted, consistent
-with the requirements.md changelog.
+This is the same staleness class as the already-resolved REV-017/REV-021 (design.md text lagging a change
+made in a sibling document), not a new category. **Not a blocker, not a major** — purely a traceability
+cross-reference and a "where is this preserved" claim, not a change to any prescriptive/requirement
+content; no reader would be misled about what to build, only about where to find retired FR text if they
+went looking for it. **Owner: tech-lead** (`docs/design.md` is tech-lead-owned) — update the nine citations
+to either drop the specific-subsection pointer (since it no longer resolves) or point to git history
+directly (matching `docs/requirements.md`'s own front-matter framing: "full FR/NFR text is preserved in
+git history if ever needed").
 
-### Pass 6 summary
+### Pass 7 summary
 
 **New findings by tag:**
-- `[BLOAT]` (doc staleness): 1 (REV-022, minor — `docs/idea-brief.md` still describes both retired shadow
-  pilots as active scope; `README.md`'s equivalent staleness was already caught and fixed this same pass by
-  pm, per dev's handoff sweep)
+- `[BLOAT]` (doc staleness): 1 (REV-023, minor — `docs/design.md`'s cross-references to `docs/requirements.md`
+  §10.1/§10.2/§10.3/§10-changelog, all deleted/renumbered by `83b27de`)
 - `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` / `[CODE-GAP]` / `[TEST-GAP]` / `[SCOPE-CREEP]` / `[SECURITY]` /
   `[HARDCODED]`: 0
 
-**Resolved this pass:** none newly resolved (nothing open from Pass 5 fell within this diff's file scope to
-re-verify).
-
-**Marked MOOT this pass (4):** REV-015, REV-018, REV-020, REV-021 — all concerned files/sections deleted or
-superseded by this removal; the underlying code/doc-section they referenced no longer exists, so there is
-nothing left to fix or re-check. Not counted as open or as newly resolved.
+**Resolved this pass:** REV-022 (`docs/idea-brief.md` shadow-pilot staleness — fixed by pm in `ee32d2d`,
+independently confirmed by direct read).
 
 **Open blocker count: 0.**
 **Open major count: 0.**
-**Open minor count: 1** (REV-022, new this pass — pm-owned `docs/idea-brief.md` staleness).
-**ACCEPTED-DEBT count: 0** (REV-006 was specific to the now-deleted live-infra-dependent shadow orchestration
-test gap — retired alongside the code it concerned; no longer applicable).
+**Open minor count: 1** (REV-023, new this pass — tech-lead-owned `docs/design.md` cross-reference
+staleness following `docs/requirements.md`'s §10 deletion/renumbering).
 
-### Verdict — shadow-pilot removal change request
+### Verdict — REV-022 closure + 3 follow-up commits
 
-**CLEAR TO MERGE. 0 blockers, 0 majors.** Every retired FR/NFR ID (FR24–FR39, NFR5–NFR6) is consistently
-and correctly marked retired across `docs/requirements.md`, `docs/design.md`, `qa/test-plan-full-codebase.md`,
-and `docs/test-report.md` — independently verified by direct read, not taken on trust. A full-repo,
-case-insensitive grep for `shadow` (my own, not dev's/qa's sweep) confirms zero orphaned references in
-`scripts/`, `sql/` (apart from the new, correct drop migration), `.github/workflows/`, or `tests/`; the two
-remaining doc-level hits outside already-correctly-retired locations (`.gitignore`'s unrelated session-file
-name, `requirements_docs/`'s unrelated CSS "no shadows" rule) are genuinely unrelated to the feature, not
-missed cleanup. Production code paths (FR1–FR23) are confirmed untouched: `nse_models()` still exists and
-is confirmed called by production NSE dispatch in `run_hourly.py`, every other `scripts/config.py` tunable
-and function is present and unchanged, and the workflow YAML runs exactly one (production) step. The new
-`sql/drop_shadow_tables_migration.sql` is correct — drops exactly `call_log_shadow` and
-`call_log_shadow_nse`, both `IF EXISTS`-guarded, and is consistently documented in three places as not yet
-applied to the live database (a separate, explicitly-authorized step, correctly out of this audit's scope
-per the task brief). The claimed "144 passed / 0 failed" test result was independently corroborated by hand
-via full parametrize-expansion arithmetic (144 exactly), not merely re-stated from qa's report. No hardcoded
-tunables introduced (this is a pure deletion/edit); no new security surface.
+**CLEAR. 0 blockers, 0 majors.** REV-022 is genuinely resolved, independently confirmed by direct read of
+the current `docs/idea-brief.md` (zero `shadow` hits, not just taken on the commit message's word). All
+three follow-up commits (`ee32d2d`, `8b86f81`, `83b27de`) do exactly what they claim: `idea-brief.md`'s
+stale section is gone; `docs/handoff.md` now correctly documents the shadow-tables DROP migration as
+applied to the live Supabase project (resting on the orchestrator's stated verification, not an
+independent reviewer re-check — no Supabase MCP tool available this session); `docs/requirements.md`'s
+shadow-experiment content is deleted outright per the user's explicit follow-up instruction, with the
+audit trail correctly preserved as one-line changelog pointers rather than silently vanishing. A fresh,
+independent full-repo grep for `shadow` found no new regression anywhere in `scripts/`, `tests/`, `sql/`,
+or `.github/workflows/`.
 
-**One open minor, not blocking:** **REV-022** — `docs/idea-brief.md`'s "Experimental addition... shadow
-wallet pilot" section is stale (present-tense, active-feature language for both retired tracks), the one
-place this sweep found that `docs/handoff.md`'s own repo-wide grep flagged to pm but which does not appear
-to have been fixed yet (unlike its `README.md` sibling, which was). Route to **pm**.
+**One new open minor, not blocking: REV-023** — `docs/design.md`'s traceability cross-references to
+`docs/requirements.md`'s now-deleted/renumbered §10.1/§10.2/§10.3 subsections (and one "§10 changelog"
+reference) are stale, a side effect of `83b27de`'s requirements.md edit that was never propagated to
+design.md's own citations of it. Route to **tech-lead**.
 
-**Four prior open items (REV-015, REV-018, REV-020, REV-021) are now MOOT**, not resolved and not
-reopened — the files/sections they concerned were deleted or superseded by this removal itself.
-
-**Method caveat (unchanged from every prior pass):** no shell-execution tool available this session — the
-144-test claim rests on careful, fully-shown parametrize-expansion arithmetic by hand rather than an actual
-`pytest -q` run. Recommend the orchestrator or qa run one live `python3 -m pytest tests/ -q` as a final
-machine-verified confirmation, the same standing recommendation carried since Pass 2 and still never
-executed by a reviewer session directly.
+**Method caveats (disclosed, not silently assumed away):** (a) no shell-execution tool available this
+session — verification of the three commits' effect rests on reading the current working-tree state and a
+fresh independent grep, not on `git show`/`git diff` output; (b) no Supabase MCP tool available this
+session — the live-migration-applied claim in `docs/handoff.md` rests on the orchestrator's documented
+verification, not an independent reviewer re-check.
