@@ -1,6 +1,7 @@
 """state.py — the single-rule verdict-change state machine (FR7, FR8, FR15) and
 the discovery Buy-only push gate (FR4 Decision #16). This is the load-bearing
-core the whole product's alerting behavior rests on (design.md §0 #1/#2, §6).
+core the whole product's alerting behavior rests on (docs/design.md §0 #1/#2,
+docs/design/data-and-flow.md §6).
 
 Supabase is faked in-memory (no network, no real client) so the state machine
 is exercised exactly the way `state.process_ticker` / `state.process_candidate`

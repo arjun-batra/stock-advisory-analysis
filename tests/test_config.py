@@ -1,4 +1,4 @@
-"""config.py — the tunables surface (docs/requirements.md §11, design.md §9).
+"""config.py — the tunables surface (docs/requirements.md §10, docs/design/non-functional-ops.md §9).
 
 Covers: (1) env-var overrides actually propagate and defaults are correct when
 unset (the reviewer's hardcoding-audit baseline — "No tunable may live only in
@@ -46,7 +46,7 @@ def reload_config():
     importlib.reload(config)
 
 
-# --- defaults (2026-07-13 change request, Change 2 / design.md §16 note): ---
+# --- defaults (2026-07-13 change request, Change 2 / docs/design.md "Retired: shadow-pilot tracks" note): ---
 # --- corrected from gemini-3.5-flash / gemini-3.1-flash-lite (unstable) to ---
 # --- the paid-tier gemini-2.5-flash family, standardized across every track --
 

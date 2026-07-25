@@ -11,8 +11,8 @@ open bugs.
 **Scope:** the US/TSX and NSE shadow wallet pilots (FR24–FR31/NFR5, FR32–FR39/NFR6) were retired; dev
 deleted their code (`scripts/shadow.py`, `scripts/run_shadow.py`, `scripts/run_shadow_nse.py`,
 `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, both shadow SQL migrations, both workflow steps) and
-edited `scripts/config.py`/`.github/workflows/hourly-watchlist.yml`/`scripts/ai_judge.py` — see
-`docs/design.md` §18 (removal plan) and `docs/handoff.md`. This is a removal-only change; no new FR/NFR IDs
+edited `scripts/config.py`/`.github/workflows/hourly-watchlist.yml`/`scripts/ai_judge.py` — see the
+"Retired: shadow-pilot tracks" note in `docs/design.md` (removal plan) and `docs/handoff.md`. This is a removal-only change; no new FR/NFR IDs
 to cover, no new production behavior. QA's job: delete/edit the now-orphaned tests, confirm the suite is
 clean, and confirm FR1–FR23 production paths are unaffected.
 
@@ -75,7 +75,8 @@ touched. This is a removal-only change to `scripts/`; regression is clean as exp
 
 ### Bugs filed
 
-**None.** No test/production-code mismatch found. dev's removal matches `docs/design.md` §18 exactly:
+**None.** No test/production-code mismatch found. dev's removal matches the "Retired: shadow-pilot tracks"
+note in `docs/design.md` exactly:
 `scripts/config.py` exposes no `SHADOW_*`/`EVAL_WINDOW_DAYS` names, all seven deleted files are gone, the
 workflow YAML's shadow steps are gone, and no `scripts/`/`sql/`/`.github/workflows/` file still references
 "shadow" (confirmed by grep, matching dev's own handoff sweep).

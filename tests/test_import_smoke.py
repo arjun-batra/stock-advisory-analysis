@@ -33,7 +33,7 @@ def test_module_imports_cleanly(module_name):
 
 @pytest.mark.parametrize("entry_point", ["run_hourly", "run_discovery", "publish_prices"])
 def test_entry_points_do_not_execute_business_logic_on_import(entry_point):
-    """Entry points must be thin orchestrators (design.md §3): importing them
+    """Entry points must be thin orchestrators (docs/design/foundations.md §3): importing them
     must never touch Supabase/Gemini/yfinance/ntfy. If import succeeds without
     a real SUPABASE_URL/GEMINI_API_KEY (conftest fakes them, no live client is
     actually contacted at import time), the module has no import-time side
