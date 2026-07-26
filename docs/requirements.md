@@ -45,6 +45,13 @@ correct and would not have been caught manually. This requires the system to log
 - Read-only dashboard (GitHub Pages) showing all tickers grouped by market with a near-live price
   (server-published snapshot, refreshed on the market cadence — see FR21/Decision #18) and last run
   verdict
+- System-wide operational kill-switch: pause/resume all scheduled workflows from a single control point
+  (§5.10)
+- Authenticated admin portal for operational management — watchlist/holdings CRUD, a curated tunables
+  editor, a read-only track-record view, and the kill-switch UI — separate from any future user-facing
+  portal (§5.11)
+- AI provider abstraction layer behind the AI judgment call path; Gemini remains the sole implemented/live
+  provider (§5.12)
 
 ### Out of scope (explicit)
 - Trade execution or order placement of any kind
@@ -52,6 +59,10 @@ correct and would not have been caught manually. This requires the system to log
 - Options, crypto, derivatives, or any asset class beyond stocks/ETFs
 - Multi-user or shared/team access
 - Licensed financial advice — this is a personal informational tool, not a registered advisory service
+- A user-facing portal/dashboard beyond the existing read-only GitHub Pages dashboard (FR19-FR22) —
+  planned as a separate, later increment, not part of the admin portal in §5.11
+- A second, live AI provider implementation — §5.12 is an abstraction layer only; no second provider is
+  built or wired up as part of this scope
 
 ## 4. Users
 
@@ -153,6 +164,63 @@ reference, not a spec for a contractor.
 - **FR16** — Logging is confirmed in for v1 — it's the only way to validate §2's success criterion. Kept
   minimal: no accuracy dashboard or analytics layer in v1.
 
+### 5.10 Operational Control — Kill-Switch
+- **FR24** — A single control point (a flag held in Supabase) can pause the entire system: when set, no
+  scheduled workflow dispatches — this covers both watchlist loops (US/TSX and NSE), daily discovery (both
+  regions), and the price-snapshot publisher. Enforcement is at the `pg_cron` dispatch layer (the
+  `SECURITY DEFINER` dispatch functions), not a Python-layer or alerts-only suppression — while paused, no
+  AI calls, no Yahoo fetches, no pushes, and no price-snapshot updates occur. Unsetting the flag resumes
+  normal operation with no other action required.
+- **FR25** — While the system is deliberately paused (FR24), NFR2's active dead-man monitor treats the
+  absence of runs as expected-quiet, not a failure — no monitor alert fires for a missed/skipped run caused
+  by a deliberate pause. Monitor alerting resumes normally once the pause is lifted.
+- **FR26** — Every kill-switch state change (pause on, pause off) is logged with a timestamp and the
+  actor/source of the change (e.g., admin portal, direct SQL), consistent with FR15's logging posture — the
+  pause/resume history is part of the auditable record, not a blind spot.
+
+### 5.11 Admin Portal
+A single-user, authenticated, operational/back-office tool — **not** a redesign or replacement of the
+existing read-only GitHub Pages dashboard (FR19-FR22), and explicitly **not** the future user-facing
+portal (ticker views, graphs) that Arjun is planning as a separate, later increment. Scope is limited to
+the operational chores below.
+- **FR27** — Access to the admin portal requires authentication via Google OAuth (Supabase Auth). No
+  email/password or magic-link login path; no anonymous access.
+- **FR28** — The portal can add, edit, and remove watchlist entries (ticker, market, type, status),
+  replacing manual SQL edits to the `watchlist` table.
+- **FR29** — The portal can add, edit, and remove holdings data (shares, cost basis, currency) for held
+  tickers, replacing manual SQL edits to the `holdings` table.
+- **FR30** — The portal includes a tunables editor covering a curated subset of `scripts/config.py` values
+  (listed below) — not the full tunables surface. Each field displays a human-readable description, an
+  example value, and the current effective default/value — never a bare input box with no context. Edits
+  write through to the same GitHub Actions Variables the system already reads at runtime (that remains the
+  source of truth); the portal does not introduce a second, competing config store. The write path runs
+  through a server-side proxy holding the necessary GitHub write credentials — those credentials are never
+  exposed client-side (see NFR6).
+  Curated subset: `GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`, `ALERTS_ENABLED`, `DISCOVERY_GAINER_PCT`,
+  `DISCOVERY_LOSER_PCT`, `DISCOVERY_VOL_SPIKE`, `DISCOVERY_MIN_MARKET_CAP`, `DISCOVERY_MIN_MARKET_CAP_INR`,
+  `DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS`. All other tunables in §10 remain
+  editable only via GitHub Actions Variables / code defaults, not through the portal.
+- **FR31** — The portal includes a read-only track-record view: a cleaner presentation of `call_log` data
+  already captured under FR15. No new analytics, aggregation, scoring, or trend computation beyond what is
+  already logged.
+- **FR32** — The portal includes a kill-switch control (a UI toggle) that reads and writes the FR24 pause
+  flag. It inherits FR25's monitor pause-awareness and FR26's audit logging automatically, since it
+  operates on the same backend flag rather than a separate mechanism.
+
+### 5.12 AI Provider Abstraction
+- **FR33** — The AI judgment call path (`scripts/ai_judge.py`) abstracts Gemini-specific SDK calls, request/
+  response schema handling, and error/retry classification behind a provider-neutral interface (a batch
+  verdict request/response contract). Gemini remains the sole implemented/live provider — no second
+  provider is built or wired up as part of this requirement. The interface exists so that adding a future
+  provider is an additive change rather than a rewrite of the judgment layer.
+
+  > **Note for tech-lead (design-time, not a requirement):** Arjun asked about using LiteLLM (a unified
+  > multi-provider SDK/library) as the implementation approach for FR33, instead of a hand-rolled
+  > interface. This is explicitly a design/implementation decision, not a requirements decision — evaluate
+  > hand-rolled vs. LiteLLM (or any other viable approach) when writing `design.md` for this increment, on
+  > normal engineering tradeoffs. Flagged here only so it isn't lost between requirements approval and
+  > design.
+
 ## 6. Non-Functional Requirements
 
 - **NFR1 — Cost:** Target $0–15/month (unchanged cap). Gemini now runs on Google's **paid tier** (not
@@ -168,6 +236,14 @@ reference, not a spec for a contractor.
 - **NFR4 — Data freshness:** The 30-minute cadence means up to ~30 minutes of lag is acceptable. This
   system is not suited for intraday/fast-moving trade timing — that was explicitly traded away for
   cost/simplicity.
+- **NFR5 — Admin portal cost:** Hosting (Vercel) and authentication (Google OAuth via Supabase Auth) are
+  expected to fit within free tiers with no new recurring spend. If actual usage ever exceeds free-tier
+  limits, any resulting cost still falls under NFR1's existing $0-15/month cap, not a separate budget.
+- **NFR6 — Admin portal security:** Write access (watchlist, holdings, tunables, kill-switch) requires
+  authenticated Google OAuth login (FR27); no unauthenticated write path exists. The GitHub PAT used by the
+  tunables editor (FR30) to write GitHub Actions Variables lives only in the portal's server-side
+  environment and is never exposed to client-side code — consistent with NFR3's "secrets never in code"
+  posture and `scripts/config.py`'s existing "nothing sensitive hardcoded" convention.
 
 ## 7. Data Sources
 
@@ -202,6 +278,14 @@ reference, not a spec for a contractor.
 | 16 | Discovery verdict suppression | Buys only generate a push notification from discovery; Hold and Sell verdicts are logged silently | A Sell on a stock you don't own is noise; Hold from discovery is not actionable; only Buy surfaces a new candidate worth knowing about |
 | 17 | Detail-page access control | Unguessable UUID URL only, no auth gate. FR19's access-control requirement applies to the dashboard, not the detail page. | Detail page is read-only/informational (NFR3); UUID-only is a deliberate accepted posture for this surface, not an oversight |
 | 18 | Dashboard "current price" freshness | Server-published snapshot (`prices.json`) refreshed on the ~30-min market cadence, read same-origin by the dashboard; the "prices updated" age keys off the snapshot's `generated_at`. | Yahoo's price API is browser-CORS-blocked for all three markets (SD issue #18) — a direct client fetch is infeasible. Publish-cadence freshness matches the system's own 30-min cadence posture (NFR4); the honest data-age indicator was preferred over a refresh-tick illusion of liveness |
+| 19 | Kill-switch scope | Full-system pause — all scheduled workflows (both watchlist loops, both discovery regions, price publisher), enforced at the `pg_cron` dispatch layer | Closest to the documented Supabase single-point-of-failure (idea-brief risk #6); a partial pause (alerts-only or AI-only) doesn't stop cost/dispatch and doesn't match "pause the whole system" |
+| 20 | Kill-switch + dead-man monitor | NFR2's monitor treats a deliberate pause as expected-quiet, not an outage (FR25) | Otherwise flipping the kill-switch pages the user via the very monitor built to catch real failures |
+| 21 | Kill-switch audit trail | Every toggle (on/off) logged with timestamp + actor/source (FR26) | Consistent with FR15's "log everything" posture; an unlogged pause/unpause would be a blind spot in the audit trail |
+| 22 | Admin portal scope boundary | Purely operational/back-office (watchlist/holdings CRUD, tunables editor, track-record view, kill-switch UI); explicitly not the future user-facing dashboard | Keeps this item bounded and avoids designing the portal to double as, or evolve into, the read-facing product surface (planned as a separate future increment) |
+| 23 | Admin portal hosting & auth | Vercel (frontend + serverless functions); Google OAuth via Supabase Auth for login (FR27) | Arjun has an existing Vercel account and already uses this exact secrets pattern on another repo; Google OAuth was his explicit preference over email/password or magic link |
+| 24 | Admin portal tunables source of truth | GitHub Actions Variables remain the source of truth; the portal edits them via a server-side proxy holding a GitHub PAT (FR30) | Avoids re-plumbing how the production workflow loads its config; a lightweight backend is cheap and available via Vercel either way, so this is lower-risk than migrating live tunables into Supabase |
+| 25 | Admin portal tunables subset | Curated list only (FR30), not the full ~28-key surface — see FR30 for the list | These are the tunables actually plausible to adjust after observing the system run day-to-day; the rest are set-once/infra knobs tuned from a specific incident or smoke test and don't need a portal form |
+| 26 | AI provider abstraction scope | Interface-only (FR33): abstract Gemini specifics behind a provider-neutral contract; Gemini remains the sole implemented/live provider, no second provider built now | Motivation is general vendor-optionality, not a specific cost/reliability problem to fix; building a second provider with no concrete target risks guessing the interface shape wrong |
 
 ## 9. Out of Scope — Explicit Confirmation
 
@@ -269,13 +353,19 @@ tunables, not fixed requirements.
 | `DISCOVERY_PUSH_COOLDOWN_DAYS` | `7` | Per-candidate re-push cooldown (days) |
 | Dashboard refresh interval | build-time config (FR22) | Auto-refresh timer while page open |
 
+> **Admin portal exposure (FR30):** the admin portal's tunables editor exposes a curated subset of the
+> tunables above — `GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`, `ALERTS_ENABLED`, `DISCOVERY_GAINER_PCT`,
+> `DISCOVERY_LOSER_PCT`, `DISCOVERY_VOL_SPIKE`, `DISCOVERY_MIN_MARKET_CAP`, `DISCOVERY_MIN_MARKET_CAP_INR`,
+> `DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS` — with a description, example, and current
+> value shown per field. All other tunables in the tables above remain GitHub-Actions-Variable/code-default
+> only; the portal does not expose them.
+
 ---
 
 ## Changelog
 
 | Date | Change | Reason |
 |---|---|---|
-| 2026-07-12 | **Adoption-pass port.** Created `docs/requirements.md` by porting FR1–FR23 / NFR1–NFR4, the Problem/Goals/Scope sections, and the full Decisions Log (#1–#18) verbatim (lightly reformatted, no meaning changes) from `requirements_docs/stock-advisory-agent-requirements.md` (v5). Original v5 doc retained untouched in `requirements_docs/` as historical record. Added a Configuration section (§11 at the time) as the reviewer hardcoding-audit baseline, populated from `scripts/config.py` and SD.md. | Multi-agent-template adoption: port current source-of-truth docs into the new `docs/` locations without altering meaning. |
 | 2026-07-12 | Added an Experimental Tracks section (§10) documenting a previously-undocumented shadow wallet pilot (FR24–FR31, NFR5), explicitly outside core v1 scope. Retired and removed outright 2026-07-16 — see below and git history. | Documenting shipped-but-undocumented code as explicit requirements; superseded by later retirement. |
 | 2026-07-12 | **Synced §11 audit baseline with 6 newly-extracted tunables.** Added `YF_HISTORY_RETRIES` (`2`), `YF_HISTORY_PERIOD` (`3mo`), `HEADLINES_LIMIT` (`5`), `NOTIF_BODY_MAX` (`150`), `RATIONALE_MAX` (`280`) to the Core system table and `DISCOVERY_EARNINGS_RECENT_DAYS` (`2`) to the Discovery prefilter table. Each default equals the literal it replaced (no behavior change from these keys). Baseline-only sync; no new/changed FR/NFR. | Dev's debt-cleanup pass moved these previously-hardcoded literals into `scripts/config.py` as env-overridable tunables, resolving reviewer findings REV-007–REV-012; the hardcoding-audit baseline table must list every tunable. |
 | 2026-07-13 | Added an NSE shadow wallet pilot (§10.3, FR32–FR39, NFR6) mirroring the US/CA shadow pilot on NSE tickers, and upgraded FR31 (shared wallet-sim evaluation harness) from an open gap to an in-scope requirement covering both tracks. Retired and removed outright 2026-07-16 — see below and git history. | User change request per CLAUDE.md change-request process; superseded by later retirement. |
@@ -285,3 +375,4 @@ tunables, not fixed requirements.
 | 2026-07-16 | **Change request — retire both shadow tracks.** User: "End both US/TSX and NSE experiment (shadow) and remove the codebase for it." Marked RETIRED: §10.1 (US/TSX shadow, FR24–FR30, NFR5), §10.3 (NSE shadow, FR32–FR39, NFR6), and the related §11 config tunable tables. Core FR1–FR23/NFR1–NFR4 untouched. Three follow-up questions (FR31/§10.2's fate, Supabase table retention, deletion-vs-archival scope) resolved in the next entry. | User change request per CLAUDE.md change-request process step 1. |
 | 2026-07-16 | Resolved all three open questions from the same-day retirement change request: FR31/§10.2 also retired (no future revival planned); Supabase tables `call_log_shadow` / `call_log_shadow_nse` to be dropped from the live database, not just orphaned; clean-deletion scope confirmed — code, SQL, and workflow steps deleted outright, nothing preserved for revival. | User answered all three open questions; no-inference rule satisfied — ready for tech-lead's design.md removal work. |
 | 2026-07-16 | **Removed all shadow-experiment content outright** (user follow-up: "remove all traces of shadow experiment from requirements document as well"), rather than leaving it marked retired. Deleted §10 (Experimental Tracks: all FR24–FR31, FR32–FR39 text and narrative), the three retired config tables in old §11 (Configuration renumbered §11→§10), and the NFR5/NFR6 verbatim text block. Fixed dangling shadow references in the front-matter provenance note, the numbering note, and NFR1 (removed "and each shadow track" from the per-track Gemini-call description). Trimmed the changelog rows above that restated shadow FR/NFR detail to one-line pointers; kept them (not deleted) as the audit trail that the pilots existed and were retired. Core FR1–FR23/NFR1–NFR4 and the Decisions Log untouched. Only this changelog now references the pilots; full FR/NFR text is preserved in git history if ever needed. | User follow-up to the 2026-07-16 change request: retired content must be physically removed from the document, not left as marked-retired verbatim text, per the "traces" instruction. |
+| 2026-07-26 | **Change request — three items: system-wide kill-switch, admin portal, AI provider abstraction.** Added FR24–FR26 (kill-switch: full-system pause enforced at the `pg_cron` dispatch layer, dead-man-monitor pause-awareness, audit logging of every toggle), FR27–FR32 (admin portal: Google-OAuth-via-Supabase-Auth login, watchlist CRUD, holdings CRUD, curated-subset tunables editor with description/example/current-value per field, read-only track-record view, kill-switch UI — explicitly scoped as operational/back-office only, not the future user-facing dashboard), and FR33 (AI provider abstraction: Gemini specifics abstracted behind a provider-neutral interface, Gemini remains the sole live provider, LiteLLM vs. hand-rolled flagged as a design-time note for tech-lead). Added NFR5 (admin portal cost — free-tier hosting/auth expected) and NFR6 (admin portal security — auth-gated writes, server-side-only secrets). Added Decisions Log #19–#26. Updated §3 Scope (in/out) and the §10 Configuration section (portal tunables-exposure note). Archived the oldest changelog entry (2026-07-12, adoption-pass port) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Three-item change request per CLAUDE.md's change-request process; three rounds of discovery with Arjun resolved every open scope/cost/architecture question (sequencing, budget, portal auth/hosting/tunables-source-of-truth, kill-switch blast radius, provider-abstraction depth) with no items opted out — pending Arjun's approval of this document (CR's GATE-2 equivalent) before tech-lead design work starts. |
