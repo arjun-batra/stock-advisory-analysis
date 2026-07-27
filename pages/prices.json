@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-27T20:01:42.518449+00:00",
+  "generated_at": "2026-07-27T20:31:38.356209+00:00",
   "prices": {
     "AAPL": {
       "chg": 1.17,
@@ -14,10 +14,10 @@
       "price": 231.39
     },
     "BB": {
-      "chg": -1.52,
+      "chg": -1.41,
       "currency": "USD",
       "market": "US",
-      "price": 8.41
+      "price": 8.42
     },
     "BHARTIARTL.NS": {
       "chg": -1.7,
@@ -92,7 +92,7 @@
       "price": 3785.6001
     },
     "NFLX": {
-      "chg": 2.19,
+      "chg": 0.44,
       "currency": "USD",
       "market": "US",
       "price": 70.4
