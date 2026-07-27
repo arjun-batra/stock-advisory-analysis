@@ -24,12 +24,14 @@ carefully, not by analogy to the read-only surfaces.
   repo, deployed to **Vercel** with the project root set to `admin-portal/`. Same repo as the rest of
   the system (not a separate repo) — consistent with the existing "public repo, $0 hosting" posture; no
   secrets live in the portal's client-side code (NFR6), so a public repo is not a new exposure.
-  Next.js gives both the static/SSR frontend and serverless **API routes** (Vercel Functions) in one
-  deploy — the API routes are the only place the GitHub PAT is ever used (§16.4).
+  deploy. **As of Decision #27 (2026-07-27), no feature in this portal needs a server-only secret** —
+  including the FR30 tunables editor, which now writes directly to Supabase under RLS (§16.4) — so
+  Next.js's serverless API routes are used only for the standard Supabase Auth OAuth callback exchange
+  (§16.8), not for any secret-holding proxy.
 - **Auth:** Supabase Auth, **Google OAuth as the only enabled provider** — email/password and
   magic-link are disabled in the Supabase Auth dashboard config (an ops/config step at INC-5, not code;
   dev confirms and records it in `docs/handoff.md`). No anonymous access; every read/write from the
-  portal (except the tunables proxy, see §16.4) goes through the Supabase JS client carrying the signed-in
+  portal, **including tunables** (§16.4), goes through the Supabase JS client carrying the signed-in
   user's session JWT.
 - **Cost (NFR5):** Vercel Hobby tier (free) and Supabase Auth (free, included in the existing free-tier
   Supabase project) are expected to cover single-user traffic with no new recurring spend; any overage
@@ -61,17 +63,17 @@ $$;
 below and the kill-switch function (INC-7, `operational-controls.md` §13.3) call it, so there is exactly
 one place to audit or change who's authorized.
 
-**Defense in depth (three independent layers, not just one):**
-1. **RLS (the real enforcement).** Every write policy below is gated on `is_admin()`. This holds even if
-   the frontend has a bug — a malicious or buggy client can't write past it.
+**Defense in depth (two independent layers):**
+1. **RLS (the real enforcement).** Every write policy below — watchlist, holdings, **and now the FR30
+   `tunables` table** (§16.4) — is gated on `is_admin()`. This holds even if the frontend has a bug; a
+   malicious or buggy client can't write past it. As of Decision #27, this is the **only** authorization
+   mechanism the portal needs anywhere — there is no longer a server-side proxy path with its own,
+   separate re-verification step (§16.4 below no longer holds a secret at all).
 2. **Portal UI check.** Immediately after Google sign-in, the frontend checks the signed-in email against
    `admin_allowlist` (via a lightweight authenticated read or an `is_admin()` RPC call) and **signs the
    user out immediately** with a visible "not authorized" message if it doesn't match — this is a UX
    improvement (a clear rejection instead of a confusing wall of failed writes), not the actual security
    boundary; RLS is.
-3. **Server-side re-verification for the tunables proxy** (§16.4) — the one path that touches a secret
-   (the GitHub PAT) never trusts the client's "I'm an admin" claim; it re-checks server-side against
-   Supabase using the request's own session token before doing anything.
 
 ### 16.3 Watchlist & holdings CRUD (FR28, FR29)
 
@@ -99,107 +101,152 @@ create policy "admin_write_holdings" on public.holdings
 (USD/CAD/INR — matches the ticker's market). The portal's forms mirror these columns and their existing
 CHECK constraints 1:1; no new validation rules invented beyond what the DB already enforces.
 
-### 16.4 Tunables editor (FR30)
+### 16.4 Tunables editor (FR30) — REVISED 2026-07-27, Decision #27 (supersedes #24)
 
-**Source of truth stays GitHub Actions Variables (Decision #24)** — the portal is a write-through client,
-never a second config store. The only server-side secret in this whole feature is a GitHub PAT with
-`actions:write` scope on this repo, held in a Vercel **server-only** environment variable (not
-`NEXT_PUBLIC_*`), used exclusively inside one Next.js API route:
+**The former design (below this note, historically) proposed a GitHub-PAT-holding Vercel proxy that
+wrote directly to GitHub Actions Variables.** During design that premise was checked against the live
+workflow YAML and found false for 8 of the 10 curated keys (see the superseded write-up this replaces,
+preserved in git history) — only `GEMINI_MODEL`/`GEMINI_MODEL_BACKUP` were actually wired from a GitHub
+Variable into a running workflow; `ALERTS_ENABLED` came from a `workflow_dispatch` input, and the seven
+`DISCOVERY_*` keys weren't wired to anything. Fixing that gap required touching `scripts/config.py`
+either way, which removed the entire reason to prefer GitHub Variables as the target. **Decision #27**
+(requirements.md, approved by Arjun) moves the source of truth for these 10 keys to a new Supabase
+`tunables` table instead — consolidating onto the control plane the system already trusts (Supabase
+already holds `watchlist`, `holdings`, and the FR24 kill-switch flag), reusing the *exact* auth mechanism
+already built for FR28/29 (no second authorization scheme), and eliminating the GitHub PAT / proxy route
+/ third secrets store entirely. **This is a net simplification, not an addition** — no GitHub API
+integration code, no server-only secret anywhere in the portal, one authorization mechanism for every
+write the portal makes.
 
+**Schema** (`tunables` table — exact columns per FR30):
+
+```sql
+create table public.tunables (
+  key         text primary key,           -- e.g. 'GEMINI_MODEL'
+  value       text not null,               -- stored as text; scripts/config.py casts per key
+  description text not null,               -- human-readable purpose (FR30: never a bare input box)
+  example     text not null,               -- an example legal value
+  updated_at  timestamptz not null default now(),
+  updated_by  text
+);
+
+-- actor stamped server-side on every write, same "never trust the client's
+-- self-reported identity" principle as kill_switch_audit (operational-controls.md §13.3):
+create or replace function public._stamp_tunable_update() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  new.updated_at := now();
+  new.updated_by := coalesce(auth.jwt() ->> 'email', session_user);
+  return new;
+end; $$;
+
+create trigger tunables_stamp_update
+  before update on public.tunables
+  for each row execute function public._stamp_tunable_update();
+
+create policy "admin_write_tunables" on public.tunables
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
 ```
-GET  /api/tunables         -> for each of the 10 curated keys, read the live GitHub Actions Variable
-                               value (GitHub REST: GET /repos/{owner}/{repo}/actions/variables/{name})
-                               and pair it with static metadata (description, example, workflow-YAML
-                               fallback default) shipped in the portal codebase.
-POST /api/tunables         -> { key, value } -> re-verify the caller is an authenticated admin
-                               (server-side: validate the Supabase session token against
-                               admin_allowlist using the Supabase SERVICE/secret key from the server
-                               route — never the client's anon key/session alone), reject with 401/403
-                               otherwise; then PATCH the corresponding GitHub Actions Variable
-                               (PATCH /repos/{owner}/{repo}/actions/variables/{name}) using the PAT.
+
+No anon/public policy — only the authenticated admin (portal) reads/writes this table; `scripts/config.py`
+reads it with the existing `SUPABASE_SECRET_KEY` (service role, bypasses RLS, same posture every other
+Python module already uses — no new grant needed there).
+
+**Seed migration (INC-6):** one `insert` per curated key, at the value/description/example already
+documented for these keys in `requirements.md` §10 / `scripts/config.py`'s existing comments — **no
+behavior change at cutover** (Decision #27's explicit requirement: seeded values equal the literals they
+replace). `GEMINI_MODEL_BACKUP`'s `description` row states "leave empty to disable the fallback model" —
+since the table always has a row once seeded (no more GitHub-Variable-style "unset" ambiguity), the old
+proxy design's special-cased "current effective value" display logic is no longer needed: the portal
+just renders whatever `value` currently holds.
+
+**Portal UI:** no static metadata array in the portal codebase anymore (`description`/`example` are now
+DB columns, seeded once) — the tunables screen is a straight read/render/write against
+`public.tunables`, using the same browser-side Supabase client + RLS pattern as watchlist/holdings
+(§16.3). **No Next.js API route, no server-only secret, for this feature at all.**
+
+**`scripts/config.py` fetch-with-fallback (FR30's explicit fail-safe posture — "same posture already
+used elsewhere," e.g. `ai_judge`'s fail-safe-to-Hold):**
+
+```python
+def _fetch_tunables() -> dict[str, str]:
+    """Best-effort fetch of the 10 curated rows at process start. Returns {}
+    on ANY failure (network, auth, missing table) so every caller falls back
+    to its own hardcoded Python literal — a bad/slow fetch can only ever
+    fall back to a known-good prior default, never crash the run or serve a
+    garbage value. Short explicit timeout so a Supabase hiccup can't hang
+    process startup."""
+    try:
+        client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)   # same pattern as state.py's _client()
+        rows = client.table("tunables").select("key,value").execute().data
+        return {r["key"]: r["value"] for r in rows}
+    except Exception as e:
+        print(f"  [config] tunables fetch failed ({e}); using hardcoded defaults")
+        return {}
+
+_TUNABLES = _fetch_tunables()   # one fetch, all 10 keys, at import time
+
+def _tunable(key: str, cast, default):
+    raw = _TUNABLES.get(key)
+    if raw is None:
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        print(f"  [config] tunables value for {key!r} ({raw!r}) failed to cast; using default")
+        return default
+
+# example usage — replaces the plain os.environ.get(...) reads for these 10 keys only;
+# every other config.py tunable (the ~18 non-curated keys) is completely untouched:
+GEMINI_MODEL = _tunable("GEMINI_MODEL", str, "gemini-2.5-flash")
+ALERTS_ENABLED_TABLE = _tunable("ALERTS_ENABLED", lambda v: str(v).lower() == "true", True)
 ```
 
-**Curated field metadata** (FR30 — description + example + current value per field, never a bare input
-box) is a small static array in the portal codebase, one entry per key:
+Precedence for these 10 keys is now **table value → hardcoded Python literal** — a clean two-level
+fallback, per FR30's text. No workflow-YAML env-var layer is consulted for them any more.
 
-```ts
-type TunableField = {
-  key: string;              // GitHub Actions Variable name
-  description: string;      // human-readable purpose
-  example: string;          // an example legal value
-  workflowDefault: string;  // the literal fallback baked into the workflow YAML when the Variable
-                             // is unset — shown as "(using default)" so "current effective value"
-                             // is never blank just because no one has ever touched this key
-  kind: "string" | "number" | "boolean";
-};
+**`ALERTS_ENABLED` — the one key with a real second input to reconcile.** Unlike the other 9 curated
+keys, `ALERTS_ENABLED` is *also* driven by the existing `workflow_dispatch` input
+(`${{ inputs.alerts_enabled }}` → env var `ALERTS_ENABLED`, unchanged, no YAML touch), which is the
+documented **safe forced-test pattern** (`components.md` §4.1: "for any off-hours forced run, set
+`ALERTS_ENABLED=false`"). That mechanism must keep working exactly as today — a manual dry-run test
+should still be able to force alerts off regardless of what the table says. The table's value, symmetric
+with the kill-switch's spirit but *softer* (checks/AI calls/logging still run; only the push is muted,
+same as today's dry-run behavior — this does not duplicate FR24, which explicitly rejects an
+alerts-only mechanism as the kill-switch's own enforcement), should be able to **additionally suppress**
+real scheduled alerts, which the input alone can never do (pg_cron dispatches carry no inputs, so the
+input always resolves to the YAML default `true` on every real run today). Resolution — pure Python, no
+workflow YAML change needed, since both signals are already available as of INC-6:
+
+```python
+_alerts_input = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"   # workflow_dispatch input, unchanged
+ALERTS_ENABLED = _alerts_input and ALERTS_ENABLED_TABLE   # table fetch failure -> ALERTS_ENABLED_TABLE
+                                                            # defaults True -> AND is a no-op -> today's
+                                                            # exact behavior, unchanged, on any fetch failure
 ```
+
+The portal's toggle can only ever **suppress** alerts, never force them on over an explicit manual
+dry-run request. `hourly-watchlist.yml` / `daily-discovery.yml` are **not touched** by this increment —
+the existing `ALERTS_ENABLED: ${{ inputs.alerts_enabled }}` line stays exactly as-is; only
+`scripts/config.py` changes. (The pre-existing `${{ vars.GEMINI_MODEL || '...' }}` / `_BACKUP` Variable
+wiring in `hourly-watchlist.yml` becomes a harmless, unread vestige once the table takes precedence for
+those two keys — safe to leave as-is; not required to remove it for correctness, since `_tunable()`
+no longer consults that env var at all. Flagging as a future cleanup opportunity, not INC-6 scope.)
 
 The 10 keys (verbatim from FR30 / `requirements.md` §10's portal-exposure note): `GEMINI_MODEL`,
 `GEMINI_MODEL_BACKUP`, `ALERTS_ENABLED`, `DISCOVERY_GAINER_PCT`, `DISCOVERY_LOSER_PCT`,
 `DISCOVERY_VOL_SPIKE`, `DISCOVERY_MIN_MARKET_CAP`, `DISCOVERY_MIN_MARKET_CAP_INR`,
-`DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS`. No other tunable is reachable from this UI.
+`DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS`. No other tunable is reachable from this UI;
+the other ~18 non-curated tunables are completely unaffected — still GitHub Variables/code defaults.
 
-**`GEMINI_MODEL_BACKUP` special case:** unlike the other keys, an *unset* `GEMINI_MODEL_BACKUP` Variable
-does not fall back to a literal model string — it **disables the fallback model entirely** (empty env →
-`config.py`'s `if m` filter drops it; `components.md` §4.4, `hourly-watchlist.yml` comment). This key's
-`workflowDefault` metadata must say "unset = fallback disabled," not a model name, or the portal would
-display a misleading "current effective value."
-
-> ### ⚠️ OPEN DESIGN GAP — found while designing this increment, needs Arjun's/pm's sign-off before INC-6 starts
->
-> FR30 and Decision #24 both assume "the portal edits [GitHub Actions Variables] the system already
-> reads at runtime." **That's only true for 2 of the 10 curated keys today.** Verified against the live
-> workflow YAML (`.github/workflows/hourly-watchlist.yml`, `daily-discovery.yml`):
-> - `GEMINI_MODEL` / `GEMINI_MODEL_BACKUP` — ✅ already wired as `${{ vars.X }}` in
->   `hourly-watchlist.yml`. The portal editing these Just Works with no other change.
-> - `ALERTS_ENABLED` — ❌ currently wired to the `workflow_dispatch` **input**
->   `${{ inputs.alerts_enabled }}` in **both** workflows, not a Variable. A scheduled (pg_cron,
->   no-inputs) dispatch always gets the YAML input default (`true`); there is no GitHub Actions
->   Variable named `ALERTS_ENABLED` today. Writing one via the portal would have **zero effect** on any
->   real scheduled run.
-> - The seven `DISCOVERY_*` keys — ❌ not present in `daily-discovery.yml`'s `env:` block at all. They
->   are pure `os.environ.get(name, <literal default>)` reads in `scripts/config.py` that always resolve
->   to the Python literal today, because the workflow never passes them through as env vars. Setting a
->   GitHub Actions Variable for any of these today would also have **zero effect**.
->
-> **My recommended resolution (concrete enough for dev to build against, but flagging for explicit
-> confirmation since it touches production workflow YAML and one documented safety mechanism):**
-> 1. **The seven `DISCOVERY_*` keys** — mechanical, zero behavioral risk: add
->    `${{ vars.KEY || '<existing literal default>' }}` env lines to `daily-discovery.yml`'s `env:`
->    block, exactly mirroring the already-working `GEMINI_MODEL` pattern. Unset Variable → identical
->    behavior to today (same literal falls through). I'm confident recommending this outright; it's the
->    same pattern already used four times in this codebase.
-> 2. **`ALERTS_ENABLED`** — this one is a genuine judgment call, because `inputs.alerts_enabled` is the
->    documented **safe forced-test pattern** (`components.md` §4.1: "for any off-hours forced run, set
->    `ALERTS_ENABLED=false`") and I don't want the portal's toggle to silently weaken it. Recommended
->    design: keep the *input* wiring exactly as-is (unchanged manual-dry-run behavior), and **AND-gate**
->    it with a new, independent `vars.ALERTS_ENABLED` Variable that the portal controls:
->    ```yaml
->    ALERTS_ENABLED: ${{ inputs.alerts_enabled }}        # unchanged — manual dry-run override
->    ALERTS_ENABLED_VAR: ${{ vars.ALERTS_ENABLED || 'true' }}   # new — portal-controlled global mute
->    ```
->    ```python
->    # scripts/config.py — additive, one new line, fully backward compatible when the new
->    # Variable is unset (defaults to "true", so the AND is a no-op and behavior is unchanged):
->    _alerts_input = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
->    _alerts_var = os.environ.get("ALERTS_ENABLED_VAR", "true").lower() == "true"
->    ALERTS_ENABLED = _alerts_input and _alerts_var
->    ```
->    Effect: the portal's `ALERTS_ENABLED` toggle can only ever **suppress** alerts (never force them on
->    over an explicit manual dry-run request), and every existing scheduled/manual run keeps its exact
->    current behavior until an operator actually touches the new Variable. This is *not* a duplicate of
->    the kill-switch (FR24 explicitly rejects "alerts-only suppression" as the kill-switch's mechanism;
->    this is the softer, already-intended-by-FR30 sibling control — checks/AI calls/logging still run,
->    only the push is muted, same as today's dry-run behavior).
->
-> **Why this is flagged rather than just built:** it means INC-6's file scope is not "the portal
-> codebase alone" — it also touches `daily-discovery.yml`, `hourly-watchlist.yml`, and
-> `scripts/config.py` (production dispatch/safety-toggle files), which is bigger than "build a portal
-> that edits variables the system already reads." Routing to pm/Arjun per the no-inference rule before
-> INC-6 starts, not guessing silently on a change to a documented safety mechanism. If Arjun prefers a
-> different resolution (e.g., trim FR30's curated list to only the 2 keys that already work, deferring
-> the rest), that's a requirements.md change pm would take back through the CR process — either answer
-> is buildable from here once confirmed.
+**Open design gap from the prior pass is now RESOLVED, not just deferred:** the previous write-up
+flagged that 8 of 10 keys weren't actually wired to anything live, and needed Arjun's sign-off on a
+GitHub-YAML-touching fix before INC-6 could start. Decision #27 resolves it structurally — the table
+fetch in `scripts/config.py` is now how *all 10* keys take effect, so there is no wiring gap left to
+close, and (per §16.4 above) `ALERTS_ENABLED`'s manual-dry-run interaction is resolved with a pure Python
+change, not a workflow-YAML one. **No open question remains for INC-6.**
 
 ### 16.5 Track-record view (FR31)
 
@@ -251,32 +298,47 @@ grants above.
 
 ### 16.7 Secrets inventory (NFR6 traceability)
 
+**REVISED 2026-07-27 (Decision #27):** the portal holds **no server-only secret at all**, for any
+feature, including tunables. Every write (watchlist, holdings, tunables, kill-switch) goes through the
+signed-in user's own Supabase session JWT, authorized by RLS/`is_admin()` — there is no longer a
+credential in this system whose blast radius is broader than "one Supabase Auth account's own session."
+
 | Secret | Lives in | Never appears in |
 |---|---|---|
-| GitHub PAT (`actions:write`) | Vercel server-only env var (e.g. `GITHUB_ACTIONS_PAT`), read only inside `/api/tunables` | Client bundle, `NEXT_PUBLIC_*` vars, git history, browser network responses |
 | Supabase anon/publishable key | Vercel `NEXT_PUBLIC_SUPABASE_ANON_KEY` (client-side, by design — this is the low-privilege key, RLS-gated) | N/A — intentionally public, same posture as the existing dashboard/detail page |
-| Supabase service/secret key | **Not used by the portal at all** for watchlist/holdings/kill-switch (those go through the user's own session JWT + RLS); used *only* server-side inside the tunables route's admin re-verification step (§16.4), from a Vercel server-only env var | Client bundle |
+| Supabase service/secret key | **Not used by the portal at all**, for any feature — every portal write (watchlist, holdings, tunables, kill-switch) goes through the user's own session JWT + RLS. The secret key is used only by the existing Python workflows (`scripts/config.py`'s tunables fetch, §16.4, included) — unchanged from before this feature existed | Portal codebase, client bundle |
 | Google OAuth client secret | Configured in Supabase Auth dashboard (Supabase-managed), not portal code | Portal repo/env at all |
 
-### 16.8 Repo/module boundaries
+~~GitHub PAT (`actions:write`)~~ — **removed by Decision #27.** No longer needed; there is no GitHub-API
+write path anywhere in the portal.
+
+### 16.8 Repo/module boundaries — REVISED 2026-07-27 (Decision #27)
 
 ```
 admin-portal/                    # new directory, deployed to Vercel (root = admin-portal/)
   app/
     login/                       # Google OAuth sign-in, allowlist check + reject UX (§16.2)
+    auth/callback/                # OAuth code-exchange route (standard Supabase Auth/Next.js
+                                   #   PKCE flow — anon key only, no secret; unrelated to the
+                                   #   removed GitHub-PAT proxy)
     watchlist/                   # FR28 CRUD screens
     holdings/                    # FR29 CRUD screens
-    tunables/                    # FR30 editor (calls /api/tunables)
+    tunables/                    # FR30 editor — reads/writes public.tunables directly (§16.4)
     track-record/                # FR31 read-only view
     (kill-switch toggle surfaced on a shared authenticated layout/header, not a standalone page)
-  app/api/tunables/route.ts      # FR30 server-side GitHub-PAT proxy (§16.4) — the ONLY route touching the PAT
-  lib/supabase-client.ts         # browser client (anon key + session)
-  lib/supabase-server.ts         # server-side client for admin re-verification (§16.4/§16.2 layer 3)
-  lib/tunables-metadata.ts       # the static TunableField[] array (§16.4)
+  lib/supabase-client.ts         # browser client (anon key + session) — used by EVERY feature now,
+                                  #   including tunables; no separate server-side data path exists
 sql/
   admin_portal_rls.sql           # INC-5: admin_allowlist, is_admin(), watchlist/holdings write policies
+  admin_portal_tunables.sql      # INC-6: tunables table, _stamp_tunable_update() trigger,
+                                  #   admin_write_tunables policy, 10-row seed (§16.4)
   kill_switch_portal_grant.sql   # INC-7: set_kill_switch admin-check + grant, kill_switch_state SELECT policy
 ```
+
+**No `app/api/` routes and no server-only secret anywhere in the portal** — every feature (watchlist,
+holdings, tunables, kill-switch RPC, track-record reads) is a direct, RLS-gated browser-to-Supabase call.
+This is strictly smaller than the pre-Decision-#27 design (which had one API route + two server-side
+library files for the GitHub-PAT proxy alone).
 
 ### 16.9 Requirement coverage
 
@@ -285,8 +347,8 @@ sql/
 | FR27 (Google OAuth via Supabase Auth, no other login path) | §16.1, §16.2 |
 | FR28 (watchlist CRUD) | §16.3 |
 | FR29 (holdings CRUD) | §16.3 |
-| FR30 (curated tunables editor, GH-Variables source of truth, PAT server-side only) | §16.4 |
+| FR30 (curated tunables editor, Supabase `tunables` table source of truth, RLS-gated, no PAT) | §16.4 |
 | FR31 (read-only track-record view) | §16.5 |
 | FR32 (kill-switch UI) | §16.6 |
 | NFR5 (portal cost) | §16.1 |
-| NFR6 (auth-gated writes, server-side-only secrets) | §16.2, §16.4, §16.7 |
+| NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |

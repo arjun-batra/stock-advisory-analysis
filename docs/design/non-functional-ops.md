@@ -50,15 +50,21 @@ scripts/
   publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point
 sql/
   scheduler_pgcron.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
-  kill_switch.sql, admin_portal_rls.sql, kill_switch_portal_grant.sql   # DRAFT, 2026-07-26 CR, INC-3/5/7
+  kill_switch.sql, admin_portal_rls.sql, admin_portal_tunables.sql,
+  kill_switch_portal_grant.sql                        # DRAFT, 2026-07-26/27 CR, INC-3/5/6/7
 pages/
   detail.html, dashboard.html, prices.json
 ```
 
-> **DRAFT additions (2026-07-26 CR, not yet implemented):** `scripts/ai_provider.py` (INC-4 — `AIProvider`
-> interface + `GeminiProvider`, see `operational-controls.md` §14) and a new top-level `admin-portal/`
-> directory (INC-5/6/7 — Next.js app deployed to Vercel, see `admin-portal.md` §16.8). Neither exists in
-> the repo yet; listed here in advance so this section stays the accurate map once they ship.
+> **DRAFT additions (2026-07-26/27 CR, not yet implemented):** `scripts/ai_provider.py` (INC-4 —
+> `AIProvider` interface + `GeminiProvider`, see `operational-controls.md` §14) and a new top-level
+> `admin-portal/` directory (INC-5/6/7 — Next.js app deployed to Vercel, **no server-only secrets or API
+> proxy routes**, see `admin-portal.md` §16.8, revised 2026-07-27/Decision #27). Neither exists in the
+> repo yet; listed here in advance so this section stays the accurate map once they ship. `config.py`
+> also gains a `_fetch_tunables()` / `_tunable()` fetch-with-fallback pair (INC-6, `admin-portal.md`
+> §16.4) — the first module-level network call this file has ever made, short-timeout and
+> exception-wrapped so a Supabase hiccup falls back to the existing hardcoded literals rather than
+> hanging or crashing process startup.
 
 > **Shadow-track files removed 2026-07-16** (`scripts/shadow.py`, `scripts/run_shadow.py`,
 > `scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, both shadow SQL
@@ -118,10 +124,21 @@ Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action 
 > the `AIProvider` implementation `judge_batch()` uses; see `operational-controls.md` §14.4. Not on the
 > admin portal's curated list (FR30) — single-valued today, nothing to edit.
 >
-> **DRAFT (2026-07-26 CR, INC-6, pending confirmation — see `admin-portal.md` §16.4):** `ALERTS_ENABLED`
-> would gain a second, independent env var `ALERTS_ENABLED_VAR` (sourced from a new `vars.ALERTS_ENABLED`
-> GitHub Actions Variable, default `"true"`) AND-gated with the existing `workflow_dispatch`-input-driven
-> `ALERTS_ENABLED`, so the admin portal's tunables editor can globally mute real scheduled alerts without
-> weakening the existing manual-dry-run safety pattern. The seven `DISCOVERY_*` curated keys would also
-> gain `${{ vars.KEY || '<default>' }}` wiring in `daily-discovery.yml` (currently not wired to any
-> Variable at all, despite being on FR30's curated list) — mechanical, no behavior change when unset.
+> **DRAFT — REVISED 2026-07-27, Decision #27 (supersedes the prior GitHub-Variable-AND-gate plan
+> recorded here; superseded text is preserved in git history, not here — doc hygiene, don't restate
+> retired plans verbatim):** the 10 FR30-curated keys (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`,
+> `ALERTS_ENABLED`, and the seven `DISCOVERY_*` gate/signal/shortlist/cooldown keys) no longer come from
+> a GitHub Actions Variable at all — **no workflow YAML change of any kind** is part of INC-6. Instead,
+> `scripts/config.py` fetches all 10 from a new Supabase `tunables` table at process start
+> (`_fetch_tunables()`/`_tunable()`, fail-safe to the existing hardcoded literal on any fetch failure —
+> full detail in `admin-portal.md` §16.4). `ALERTS_ENABLED` is the one key with a second live input to
+> reconcile (the pre-existing `workflow_dispatch` `inputs.alerts_enabled` manual-dry-run override, env
+> var unchanged); resolved as a pure `scripts/config.py` AND (table value can only *suppress*, never
+> force on, over an explicit manual dry-run) — see `admin-portal.md` §16.4 for the exact logic. This is
+> **not on this section's config-surface list** as a `${{ vars.X }}` workflow-Variable tunable the way
+> `GEMINI_MAX_RETRIES` etc. are — it's a `config.py`-internal fetch against Supabase, a third tunables
+> surface alongside "`config.py` env-var defaults" and "workflow-YAML `vars.X`" described above. The
+> pre-existing `${{ vars.GEMINI_MODEL || '...' }}` / `_BACKUP` Variable wiring already in
+> `hourly-watchlist.yml` becomes a harmless, unread vestige once the table takes precedence for those two
+> keys (`_tunable()` no longer consults that env var) — safe to leave, not required to remove for
+> correctness; noted as an optional future cleanup, not INC-6 scope.

@@ -132,8 +132,20 @@ above — numbers are not reused). Sequencing follows the approved build order: 
 refactor, independent of the portal), then the admin portal last, split into vertical slices so each is
 independently shippable — the portal's kill-switch-UI slice (INC-7) intentionally comes last because it
 depends on INC-3's backend flag/function already existing. **No increment starts before the previous one
-passes QA (CLAUDE.md non-negotiable); INC-6 additionally has one open design question that needs
-Arjun's/pm's confirmation before it starts (flagged below and in `admin-portal.md` §16.4).**
+passes QA (CLAUDE.md non-negotiable).**
+
+**2026-07-27 revision (Decision #27, supersedes #24):** INC-6 (tunables editor) originally carried an
+open design gap and a wider file footprint (a GitHub-PAT-holding Vercel proxy, plus edits to two
+production workflow YAML files). Design-time investigation found Decision #24's premise false — only 2
+of the 10 curated keys were actually wired from a GitHub Variable into the live workflows — and Arjun
+approved moving the tunables source of truth to a new Supabase `tunables` table instead, reusing INC-5's
+`is_admin()`/RLS mechanism directly rather than a separate GitHub-API code path. **INC-6 is now smaller
+than originally planned, not larger: no GitHub API integration, no server-only secret, no workflow-YAML
+changes, and the open design gap is resolved (not just deferred).** INC-6 now also has a **direct,
+literal dependency on INC-5's `is_admin()`/`admin_allowlist` objects** (not just a shared pattern it
+happens to reuse) — the `tunables` table's write policy calls the exact same function INC-5 creates for
+watchlist/holdings, so INC-6 cannot be built or even meaningfully designed against a stub. See
+`docs/design/admin-portal.md` §16.4 for the full mechanism.
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
@@ -178,6 +190,9 @@ Arjun's/pm's confirmation before it starts (flagged below and in `admin-portal.m
 **Design:** `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8. **Files:** new `admin-portal/`
 Next.js app (Vercel); new `sql/admin_portal_rls.sql` (`admin_allowlist`, `is_admin()`, watchlist/holdings
 write policies).
+**Note:** `admin_allowlist`/`is_admin()` built here are a **hard, literal dependency for INC-6** as of
+Decision #27 — the tunables table's write policy calls this exact function, not just a shared pattern.
+Keep the migration's function signature stable once INC-6 is built against it.
 **Acceptance criteria:**
 1. Portal deployed on Vercel at a stable URL; logged-out visits redirect to Google sign-in; no
    email/password or magic-link UI exists anywhere in the app (confirm both in the Supabase Auth
@@ -192,32 +207,42 @@ write policies).
    session are rejected by RLS (`curl` returns a permissions error) — proves NFR6's "no unauthenticated
    write path."
 6. `admin_allowlist`/`is_admin()` exist and are used by both new RLS policies (grep the migration).
-7. No secret (GitHub PAT or otherwise) appears in the built client bundle or any browser network request
-   — trivially true this increment (no PAT usage yet) but asserted as the INC-6 baseline.
+7. No secret of any kind (there is none in this design — no GitHub PAT, no server-only credential) appears
+   in the built client bundle or any browser network request; the portal's only "credential" is the
+   signed-in user's own Supabase session, which is expected and RLS-gated.
 
-### INC-6 — Admin portal: tunables editor (FR30)
-**Design:** `docs/design/admin-portal.md` §16.4. **Files:** `admin-portal/app/api/tunables/route.ts`,
-`admin-portal/lib/tunables-metadata.ts`, `admin-portal/app/tunables/`; **plus**, pending the open
-question below, `daily-discovery.yml`, `hourly-watchlist.yml`, `scripts/config.py`.
-**⚠️ Do not start this increment until the open design gap in `admin-portal.md` §16.4 is confirmed with
-Arjun via pm** — 8 of the 10 curated tunables are not actually wired to a GitHub Actions Variable in the
-live workflows today, contrary to what FR30/Decision #24 assumed; a recommended resolution is written up
-in §16.4 but needs an explicit nod since it touches a documented safety mechanism (`ALERTS_ENABLED`)
-before dev builds against it.
+### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27, Decision #27 (supersedes #24)
+**Design:** `docs/design/admin-portal.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
+(`tunables` table, `_stamp_tunable_update()` trigger, `admin_write_tunables` RLS policy, 10-row seed);
+`admin-portal/app/tunables/` (portal UI); one small addition to `scripts/config.py`
+(`_fetch_tunables()`/`_tunable()` and the `ALERTS_ENABLED` AND-gate, §16.4). **No workflow YAML files are
+touched.** **Depends on INC-5's `admin_allowlist`/`is_admin()` already existing.**
+**Simplification note:** this increment is now **smaller** than the original plan — no GitHub API
+integration, no PAT, no Vercel API route/proxy, no production-workflow-YAML risk. The open design gap
+from the original pass (8 of 10 keys not actually wired to a GitHub Variable) is resolved structurally,
+not deferred: all 10 keys now take effect purely through `scripts/config.py`'s new table fetch.
 **Acceptance criteria:**
-1. `/api/tunables` reads the GitHub PAT only from a server-only Vercel env var; absent from any client
-   bundle (grep the built output).
-2. The route rejects requests without a valid authenticated admin session — direct unauthenticated
-   `curl` returns 401/403.
-3. The UI lists exactly the 10 FR30 keys, each with description, example, and a correct current
-   effective value (including the `GEMINI_MODEL_BACKUP` "unset = fallback disabled" special case, §16.4)
-   — no other tunable is editable here.
-4. Editing and saving a value updates the corresponding GitHub Actions Variable (`gh variable list`
-   confirms), and the next workflow run picks it up.
-5. `scripts/config.py`'s existing tunables and the `${{ vars.X || 'default' }}` wiring already in
-   `hourly-watchlist.yml` are unmodified by keys that were already correctly wired (`GEMINI_MODEL`/
-   `_BACKUP`); the `DISCOVERY_*`/`ALERTS_ENABLED` wiring fix (if confirmed) is additive per §16.4, not a
-   behavior change when the new Variables are left unset.
+1. `tunables` table exists, seeded with exactly the 10 FR30 keys at their current default
+   value/description/example (matches `requirements.md` §10's per-key defaults — no behavior change at
+   cutover, confirmed by diffing a fresh run's `data_snapshot`/discovery output against the pre-INC-6
+   baseline for an unedited row).
+2. Writing to `tunables` with the anon key and **no** authenticated admin session is rejected by RLS
+   (`curl` returns a permissions error) — same proof pattern as INC-5 item 5.
+3. Updating a row via the portal stamps `updated_at`/`updated_by` correctly (server-side, via the
+   trigger — not client-supplied) and is visible on next read; `select * from tunables` after an edit
+   confirms the new `value` and the signed-in admin's email in `updated_by`.
+4. `scripts/config.py`'s `_tunable()`-derived values (e.g. `GEMINI_MODEL`, `DISCOVERY_GAINER_PCT`) pick
+   up a table edit on the **next process start** (import-time fetch — not live/hot-reloaded mid-run,
+   confirmed by editing a row, then re-running a script and observing the new value in its `[config]`
+   startup log line).
+5. With the Supabase project temporarily unreachable (or the table renamed/dropped in a scratch test),
+   every one of the 10 keys falls back to its exact pre-INC-6 hardcoded literal — confirmed against the
+   existing `test-report.md` config-default assertions, zero regressions.
+6. `ALERTS_ENABLED`: with the `tunables` row set to `false`, a scheduled (no-`inputs`) run sends no real
+   push even though the `workflow_dispatch` input defaults to `true` (table suppresses). With the table
+   row `true` and a manual dry-run (`inputs.alerts_enabled=false`), no real push is sent either (input
+   still wins as a floor) — proves the AND-gate direction is correct, not just "some interaction exists."
+7. `git diff` shows **zero** changes to `hourly-watchlist.yml` / `daily-discovery.yml` for this increment.
 
 ### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
