@@ -50,9 +50,15 @@ scripts/
   publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point
 sql/
   scheduler_pgcron.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
+  kill_switch.sql, admin_portal_rls.sql, kill_switch_portal_grant.sql   # DRAFT, 2026-07-26 CR, INC-3/5/7
 pages/
   detail.html, dashboard.html, prices.json
 ```
+
+> **DRAFT additions (2026-07-26 CR, not yet implemented):** `scripts/ai_provider.py` (INC-4 — `AIProvider`
+> interface + `GeminiProvider`, see `operational-controls.md` §14) and a new top-level `admin-portal/`
+> directory (INC-5/6/7 — Next.js app deployed to Vercel, see `admin-portal.md` §16.8). Neither exists in
+> the repo yet; listed here in advance so this section stays the accurate map once they ship.
 
 > **Shadow-track files removed 2026-07-16** (`scripts/shadow.py`, `scripts/run_shadow.py`,
 > `scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, both shadow SQL
@@ -107,3 +113,15 @@ Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action 
 > **RETIRED (2026-07-16):** the `SHADOW_TIMEOUT_MINUTES` repo Variable and its `timeout-minutes` binding
 > on the two shadow workflow steps were removed along with those steps. No replacement is needed — there
 > is no shadow work left to bound.
+
+> **DRAFT (2026-07-26 CR, INC-4, not yet implemented):** `AI_PROVIDER` (default `"gemini"`) — selects
+> the `AIProvider` implementation `judge_batch()` uses; see `operational-controls.md` §14.4. Not on the
+> admin portal's curated list (FR30) — single-valued today, nothing to edit.
+>
+> **DRAFT (2026-07-26 CR, INC-6, pending confirmation — see `admin-portal.md` §16.4):** `ALERTS_ENABLED`
+> would gain a second, independent env var `ALERTS_ENABLED_VAR` (sourced from a new `vars.ALERTS_ENABLED`
+> GitHub Actions Variable, default `"true"`) AND-gated with the existing `workflow_dispatch`-input-driven
+> `ALERTS_ENABLED`, so the admin portal's tunables editor can globally mute real scheduled alerts without
+> weakening the existing manual-dry-run safety pattern. The seven `DISCOVERY_*` curated keys would also
+> gain `${{ vars.KEY || '<default>' }}` wiring in `daily-discovery.yml` (currently not wired to any
+> Variable at all, despite being on FR30's curated list) — mechanical, no behavior change when unset.

@@ -52,6 +52,10 @@ Carried from `SD.md §2` plus the pilot additions. These are recorded so they ar
 9. **RETIRED (2026-07-16).** Formerly: "Shadow pilot kill switch defaults fail-open." Both shadow tracks
    and their kill switches are removed; see `docs/design.md`'s "Retired: shadow-pilot tracks" note. The
    risk no longer exists.
+10. **(DRAFT, 2026-07-26 CR) The new operational kill-switch (FR24–FR26) does not block a manual
+    `workflow_dispatch`** (GitHub UI / `gh workflow run`) — only *scheduled* (pg_cron-originated)
+    dispatches are gated. Accepted, same posture as the existing `FORCE_RUN` manual-override pattern;
+    only Arjun has repo write access to trigger one. See `operational-controls.md` §13.1.
 
 ---
 

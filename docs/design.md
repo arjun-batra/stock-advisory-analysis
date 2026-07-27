@@ -1,8 +1,13 @@
-# Stock Advisory Agent — Solution Design (as-built)
+# Stock Advisory Agent — Solution Design (as-built + draft increment plan)
 
-**Owner:** tech-lead. **Status:** DESCRIPTIVE / as-built for the live production system. Split into
-per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index; read the
-module file(s) your increment actually touches, not the whole tree.**
+**Owner:** tech-lead. **Status:** DESCRIPTIVE / as-built for FR1–FR23, NFR1–NFR4 (core, live). **DRAFT**
+for the 2026-07-26 change request — kill-switch (FR24–FR26), admin portal (FR27–FR32, NFR5–6), AI
+provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and two new module
+files. **Not yet implemented; no dev work starts before the user approves this plan at GATE 3**, per
+CLAUDE.md's pipeline gates. One open design gap needs Arjun's/pm's sign-off before INC-6 specifically —
+see `docs/design/admin-portal.md` §16.4. Split into per-module files under `docs/design/` (2026-07-25,
+REV-024) — **this file is a thin index; read the module file(s) your increment actually touches, not the
+whole tree.**
 
 **Provenance:** Originally produced during the 2026-07-12 multi-agent-template adoption pass by condensing
 the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into this
@@ -27,6 +32,8 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/data-and-flow.md` | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
 | `docs/design/non-functional-ops.md` | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
+| `docs/design/operational-controls.md` **(DRAFT)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
+| `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, tunables editor, track-record view, kill-switch UI, secrets inventory | §16 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -117,6 +124,119 @@ content backs them anymore.
 
 ---
 
+## Increment plan — 2026-07-26 change request (DRAFT, pending GATE 3)
+
+Continues the project's increment numbering (INC-1/INC-2 were the retired shadow-pilot tracks, see
+above — numbers are not reused). Sequencing follows the approved build order: kill-switch first
+(self-contained, no dependency on the other two items), then the AI provider abstraction (a contained
+refactor, independent of the portal), then the admin portal last, split into vertical slices so each is
+independently shippable — the portal's kill-switch-UI slice (INC-7) intentionally comes last because it
+depends on INC-3's backend flag/function already existing. **No increment starts before the previous one
+passes QA (CLAUDE.md non-negotiable); INC-6 additionally has one open design question that needs
+Arjun's/pm's confirmation before it starts (flagged below and in `admin-portal.md` §16.4).**
+
+### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
+**Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
+(`kill_switch_state`, `kill_switch_audit`, `set_kill_switch()`); edits to `dispatch_github_workflow` and
+`check_pipeline_health` in `sql/scheduler_pgcron.sql` / `sql/phase5_monitoring.sql`. **No Python changes**
+— enforcement is entirely at the SQL/pg_cron dispatch layer, per FR24.
+**Acceptance criteria (dev self-verifiable):**
+1. `kill_switch_state` (singleton), `kill_switch_audit`, and `set_kill_switch(p_paused, p_source)` exist
+   in the live Supabase project (confirm via `list_tables` / `list_functions`).
+2. With `select set_kill_switch(true);`, manually invoking any of the 5 dispatch paths (both watchlist
+   gates, both discovery calls, publish-prices) during their normal trigger window makes **no** `pg_net`
+   HTTP request (no new `net._http_response` row) and writes **no** `run_heartbeat` row. With
+   `select set_kill_switch(false);`, the same calls dispatch normally (a `pg_net` request row appears).
+3. `select check_pipeline_health();` with `paused=true` and a synthetically stale heartbeat produces
+   **no** `monitor_alerts` change and **no** `send_ntfy` call. After `set_kill_switch(false, ...)`,
+   re-running immediately (heartbeat still stale purely from the pause duration) still produces **no**
+   false "stale" alert — confirms the resume-baseline fix (§13.4).
+4. Each `set_kill_switch` call inserts exactly one `kill_switch_audit` row with the correct `action`
+   (`pause`/`resume`), a non-null `actor`, and `changed_at` — verified across ≥2 toggles.
+5. Full existing test suite passes unmodified; no `scripts/*.py` file is touched by this increment (grep
+   confirms zero diff outside `sql/`).
+
+### INC-4 — AI provider abstraction (FR33)
+**Design:** `docs/design/operational-controls.md` §14. **Files:** new `scripts/ai_provider.py`; refactor
+`scripts/ai_judge.py`. No other file changes — `run_hourly.py`/`run_discovery.py` are untouched.
+**Acceptance criteria:**
+1. `scripts/ai_provider.py` defines `AIProvider` (ABC), `ProviderResult`, `TokenUsage`, `ErrorClass`,
+   `ProviderError`, `BatchVerdictSchema`, `GeminiProvider`, `get_provider()`, per §14.2.
+2. `grep -n "genai\|types\." scripts/ai_judge.py` returns **zero** matches — all Gemini-SDK-specific
+   imports/calls now live only in `ai_provider.py`.
+3. `judge_batch()`'s public signature/return contract is unchanged (`{ticker: {verdict, confidence,
+   rationale, raw_model_response, parse_status, model_used, usage, fallback_from, retry_count}}`);
+   `git diff` shows **zero** changes to `run_hourly.py` and `run_discovery.py`.
+4. Full existing test suite passes with no assertion changes (import-path updates only) — proves
+   behavior parity, not a rewrite. `config.GEMINI_TIMEOUT_MS` / `GEMINI_MAX_RETRIES` /
+   `GEMINI_RETRY_BASE_MS` still govern retry/backoff identically (same log lines, same jitter formula).
+5. `config.AI_PROVIDER` (default `"gemini"`) added to `scripts/config.py` and the config audit baseline
+   (`non-functional-ops.md` §9); `get_provider("bogus")` raises `SystemExit` with a clear message.
+6. A real smoke-test batched call against live Gemini still returns valid verdicts through the new path.
+
+### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD (FR27, FR28, FR29, NFR5, NFR6)
+**Design:** `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8. **Files:** new `admin-portal/`
+Next.js app (Vercel); new `sql/admin_portal_rls.sql` (`admin_allowlist`, `is_admin()`, watchlist/holdings
+write policies).
+**Acceptance criteria:**
+1. Portal deployed on Vercel at a stable URL; logged-out visits redirect to Google sign-in; no
+   email/password or magic-link UI exists anywhere in the app (confirm both in the Supabase Auth
+   provider config and the login page markup).
+2. Signing in with a non-allowlisted Google account is signed out immediately with a visible
+   "not authorized" message; devtools network tab shows no successful watchlist/holdings query for that
+   session.
+3. Signing in with the allowlisted admin account reaches the authenticated app.
+4. Admin can add/edit/delete a `watchlist` row and a `holdings` row from the portal; each change is
+   confirmed by querying Supabase directly.
+5. The same writes attempted via a direct REST call with the anon key and **no** authenticated admin
+   session are rejected by RLS (`curl` returns a permissions error) — proves NFR6's "no unauthenticated
+   write path."
+6. `admin_allowlist`/`is_admin()` exist and are used by both new RLS policies (grep the migration).
+7. No secret (GitHub PAT or otherwise) appears in the built client bundle or any browser network request
+   — trivially true this increment (no PAT usage yet) but asserted as the INC-6 baseline.
+
+### INC-6 — Admin portal: tunables editor (FR30)
+**Design:** `docs/design/admin-portal.md` §16.4. **Files:** `admin-portal/app/api/tunables/route.ts`,
+`admin-portal/lib/tunables-metadata.ts`, `admin-portal/app/tunables/`; **plus**, pending the open
+question below, `daily-discovery.yml`, `hourly-watchlist.yml`, `scripts/config.py`.
+**⚠️ Do not start this increment until the open design gap in `admin-portal.md` §16.4 is confirmed with
+Arjun via pm** — 8 of the 10 curated tunables are not actually wired to a GitHub Actions Variable in the
+live workflows today, contrary to what FR30/Decision #24 assumed; a recommended resolution is written up
+in §16.4 but needs an explicit nod since it touches a documented safety mechanism (`ALERTS_ENABLED`)
+before dev builds against it.
+**Acceptance criteria:**
+1. `/api/tunables` reads the GitHub PAT only from a server-only Vercel env var; absent from any client
+   bundle (grep the built output).
+2. The route rejects requests without a valid authenticated admin session — direct unauthenticated
+   `curl` returns 401/403.
+3. The UI lists exactly the 10 FR30 keys, each with description, example, and a correct current
+   effective value (including the `GEMINI_MODEL_BACKUP` "unset = fallback disabled" special case, §16.4)
+   — no other tunable is editable here.
+4. Editing and saving a value updates the corresponding GitHub Actions Variable (`gh variable list`
+   confirms), and the next workflow run picks it up.
+5. `scripts/config.py`'s existing tunables and the `${{ vars.X || 'default' }}` wiring already in
+   `hourly-watchlist.yml` are unmodified by keys that were already correctly wired (`GEMINI_MODEL`/
+   `_BACKUP`); the `DISCOVERY_*`/`ALERTS_ENABLED` wiring fix (if confirmed) is additive per §16.4, not a
+   behavior change when the new Variables are left unset.
+
+### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32)
+**Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
+reference). **Files:** `admin-portal/app/track-record/`; kill-switch toggle on the shared authenticated
+layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
+`kill_switch_state` SELECT policy). **Depends on INC-3.**
+**Acceptance criteria:**
+1. Read-only, paginated presentation of `call_log`/`latest_call_per_ticker` — no new aggregation/scoring
+   beyond what's already logged (review confirms no derived-analytics code was added).
+2. Kill-switch toggle shows the live `kill_switch_state.paused` value on load; flipping it calls
+   `set_kill_switch(..., p_source:='admin-portal')` and produces a new `kill_switch_audit` row with
+   `source='admin-portal'` and `actor` = the signed-in admin's email.
+3. After toggling pause on via the portal, a subsequent dispatch call makes no `pg_net` request (reuses
+   INC-3's verification method) — proves the UI is wired to the real flag.
+4. All INC-5/INC-6 acceptance criteria still hold (full portal regression: auth gate, allowlist, RLS,
+   no client-exposed secrets).
+
+---
+
 ## 15. Requirement coverage map
 
 | Requirement | Where satisfied |
@@ -137,11 +257,17 @@ content backs them anymore.
 | NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor |
 | NFR3 | `components.md` §4.6, §4.7; `non-functional-ops.md` §7.2 |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
-| FR24–FR30, NFR5 | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). |
-| FR31 | **RETIRED 2026-07-16** — formerly the shared wallet-sim evaluation harness; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
-| FR32–FR39, NFR6 | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
+| FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
+| FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
+| FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
+| FR24, FR25, FR26 (kill-switch, 2026-07-26 CR) | **DRAFT** — `operational-controls.md` §13. INC-3. |
+| FR27, FR28, FR29, FR30, FR31, FR32 (admin portal, 2026-07-26 CR), NFR5, NFR6 | **DRAFT** — `admin-portal.md` §16. INC-5/INC-6/INC-7. |
+| FR33 (AI provider abstraction, 2026-07-26 CR) | **DRAFT** — `operational-controls.md` §14. INC-4. |
 
 **Coverage:** FR1–FR23 and NFR1–NFR4 (core, live) are covered as-built across the module files above.
-**FR24–FR31/NFR5 and FR32–FR39/NFR6 are retired (2026-07-16)** — the requirement IDs remain in
-`docs/requirements.md` for historical traceability only. Every currently-active FR/NFR is covered by
-shipped code; there are no un-designed and no un-implemented active requirements, and no open increments.
+**FR24–FR31/NFR5 and FR32–FR39/NFR6 (old numbering) are retired (2026-07-16)** — the requirement IDs
+remain in `docs/requirements.md` for historical traceability only. **FR24–FR33 and NFR5–NFR6 (current,
+2026-07-26 CR) are DRAFT design**, covered by the Increment Plan above (INC-3–INC-7) and the two new
+module files; not yet implemented, and INC-6 has one open design gap pending confirmation
+(`admin-portal.md` §16.4). No dev work starts on any of INC-3–INC-7 before the user approves this plan
+at GATE 3.
