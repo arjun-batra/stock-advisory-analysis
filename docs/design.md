@@ -42,7 +42,8 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(DRAFT)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
 | `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
-| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table + RLS, seed data, Decision #28 cache-file fail-safe (`config/tunables_cache.json`, two-tier `config.py` fallback chain — table then cache, fails loud via `SystemExit` if both miss a key — `hourly-watchlist.yml` write-back), `ALERTS_ENABLED` AND-gate. Split out of `admin-portal.md` 2026-07-27 — INC-6 reads only this file, not the rest of §16. | §16.4 |
+| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
+| `docs/design/tunables-fallback.md` **(DRAFT)** | Tunables editor (FR30) runtime half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier `config.py` fallback chain — table then cache, fails loud via `SystemExit` if both miss a key, explicit fetch timeout + offline test seam (REV-041), cache write-back validation (REV-036), `TUNABLES_DEGRADED` heartbeat signal (REV-045), `hourly-watchlist.yml` write-back, `ALERTS_ENABLED` AND-gate. Split out of `admin-portal-tunables.md` 2026-07-28 — INC-6 reads both tunables files, not the rest of §16. | §16.4 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -157,14 +158,14 @@ INC-6 cannot be built or even meaningfully designed against a stub.
 
 **2026-07-27 revision, second pass (Decision #28, refines #27):** the failed-Supabase-fetch fallback for
 these 10 keys is no longer a fixed hardcoded Python literal — it's a repo-committed cache file
-(`config/tunables_cache.json`) holding the last successfully-fetched value per key, reusing
+(`tunables_cache.json`) holding the last successfully-fetched value per key, reusing
 `publish-prices.yml`'s already-proven commit-on-change mechanism. Arjun confirmed the write-ownership
 shape tech-lead proposed: `hourly-watchlist.yml` (runs most frequently) is the **sole** writer;
 `daily-discovery.yml` and `publish-prices.yml` remain read-only consumers, as they already are for the
 Supabase table itself. **This does add one small workflow-YAML change** — `hourly-watchlist.yml` gains a
 `permissions: contents: write` block (absent today) and one new commit-on-change step — but it's a
 direct copy of a pattern already live and working in this exact repo, not new risk surface. See
-`docs/design/admin-portal-tunables.md` §16.4 for the full mechanism.
+`docs/design/tunables-fallback.md` (§16.4, split 2026-07-28) for the full mechanism.
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
@@ -233,9 +234,9 @@ Keep the migration's function signature stable once INC-6 is built against it.
 ### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines #27)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
 (`tunables` table, `_stamp_tunable_update()` trigger, `admin_write_tunables` RLS policy, 10-row seed);
-new `config/tunables_cache.json` (10-key seed file, identical values to the SQL seed); new
+new `tunables_cache.json` (10-key seed file, identical values to the SQL seed); new
 `admin-portal/app/tunables/` (portal UI); additions to `scripts/config.py` (two-tier fallback chain —
-Supabase table → `config/tunables_cache.json`, no third hardcoded-literal tier; fails loud via
+Supabase table → `tunables_cache.json`, no third hardcoded-literal tier; fails loud via
 `SystemExit` if both tiers miss a key, see `admin-portal-tunables.md` §16.4's 2026-07-28 revision — plus
 `write_tunables_cache_if_fetched()` and the `ALERTS_ENABLED` AND-gate, §16.4); one line added to
 `run_hourly.py`'s entry point; **`.github/workflows/hourly-watchlist.yml`** gains a `permissions:
@@ -256,7 +257,7 @@ write-ownership question — are resolved structurally, not deferred.
    baseline for an unedited row). **`ALERTS_ENABLED`'s seed value is `"true"`** (today's actual live
    default via the `workflow_dispatch` input), not `config.py`'s bare `"false"` literal — verify this
    specific row explicitly, since seeding it wrong would silently break production alerting.
-2. `config/tunables_cache.json` is committed with **exactly** the same 10 key/value pairs as the SQL
+2. `tunables_cache.json` is committed with **exactly** the same 10 key/value pairs as the SQL
    seed above (byte-for-byte value match per key, including `ALERTS_ENABLED: "true"`) — diff the two
    seed sources directly, don't just eyeball them.
 3. Writing to `tunables` with the anon key and **no** authenticated admin session is rejected by RLS
@@ -271,20 +272,20 @@ write-ownership question — are resolved structurally, not deferred.
 6. **Cache write-back, unchanged case:** running `hourly-watchlist.yml` (or `run_hourly.py` locally
    against a live Supabase connection) when no `tunables` row has changed since the last run produces
    **zero** git commits — `git log` before/after shows no new commit touching
-   `config/tunables_cache.json`.
+   `tunables_cache.json`.
 7. **Cache write-back, changed case:** editing one `tunables` row via the portal, then triggering
    `hourly-watchlist.yml`, produces **exactly one** new commit authored by `github-actions[bot]`, message
-   `chore: refresh tunables cache [skip ci]`, touching only `config/tunables_cache.json`, containing the
+   `chore: refresh tunables cache [skip ci]`, touching only `tunables_cache.json`, containing the
    new value and nothing else changed.
 8. **Read-only workflows never write:** simulating a Supabase fetch failure (e.g. temporarily wrong
    `SUPABASE_URL`/blocked network) during a `daily-discovery.yml` or `publish-prices.yml` run — (a) the
-   run falls back to `config/tunables_cache.json`'s values correctly (confirmed via the `[config]`
+   run falls back to `tunables_cache.json`'s values correctly (confirmed via the `[config]`
    startup log line naming the fallback tier used) and completes normally; (b) `git status`/`git log`
-   shows **no** attempt to write or commit `config/tunables_cache.json` from either workflow — grep
+   shows **no** attempt to write or commit `tunables_cache.json` from either workflow — grep
    `run_discovery.py` and `publish_prices.py` for `write_tunables_cache_if_fetched` and confirm zero
    matches.
 9. **Double-failure fails loud, not silent.** With the Supabase project unreachable (or the fetch
-   returning no rows) **and** `config/tunables_cache.json` deleted or corrupted in a scratch test,
+   returning no rows) **and** `tunables_cache.json` deleted or corrupted in a scratch test,
    importing `scripts/config.py` (and therefore any entry point that imports it —
    `run_hourly.py`/`run_discovery.py`/`publish_prices.py`) raises `SystemExit` naming the first
    unresolvable tunable key and both failed sources, and the process exits non-zero — it must **not**
