@@ -1,101 +1,95 @@
-# Handoff — Shadow tracks retirement (code removal)
+# Handoff — Review-log Pass 11: dev-assigned findings
 
-Source: `docs/design.md` "Retired: shadow-pilot tracks" note. Covers the code-side cleanup for the change request that
-retired FR24-FR31/NFR5 and FR32-FR39/NFR6 in `docs/requirements.md` and design.md's "Retired: shadow-pilot
-tracks" note. This is a
-deletion/edit increment, not a new feature — no new acceptance criteria beyond "the shadow tracks are gone
-and production is untouched."
+Source: `docs/review-log.md` Pass 11 (REV-033..061), dev's assigned subset per Arjun's go-ahead:
+REV-039 (major, model-name literal duplication / drift), REV-051 (require_secrets generalization),
+REV-052 (dev's half: detail.html headline slice, textutil.py docstring, notify.py ntfy tunables),
+REV-053 (pages/common.js + common.css extraction), REV-054 (httpx pin), REV-056 (dev's half: .gitignore).
+This is a direct fix pass against the live, currently-running production system — no live DB change,
+mechanical/self-contained code fixes only.
 
-## Files deleted
-- `scripts/shadow.py`, `scripts/run_shadow.py`, `scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`,
-  `scripts/eval_shadow.py`
-- `sql/shadow_call_log_migration.sql`, `sql/shadow_nse_call_log_migration.sql`
+## Files changed
+- `scripts/config.py` — `require_secrets()` now takes `*names`, defaulting to the existing three-secret
+  list; added `NTFY_BASE_URL`/`NTFY_TIMEOUT_SECONDS` tunables (REV-052); comments on the model-name block
+  and `DISCOVERY_GEMINI_MODEL*` updated to state this file is now the single source of truth for those
+  defaults (REV-039). No default *values* changed — same models, same secrets list.
+- `.github/workflows/hourly-watchlist.yml` / `.github/workflows/daily-discovery.yml` — removed the
+  `${{ vars.X || 'literal' }}`-style env lines for `GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`,
+  `NSE_GEMINI_MODEL`, `NSE_GEMINI_MODEL_BACKUP`, `DISCOVERY_GEMINI_MODEL`, `DISCOVERY_GEMINI_MODEL_BACKUP`
+  entirely (REV-039), rather than just dropping the literal tail — an unset `${{ vars.X }}` arrives as an
+  *empty string* env var, which would defeat `config.py`'s two-arg `os.environ.get(name, default)` and
+  silently blank the model, so no env line is passed for these six keys and `config.py`'s own
+  defaults/inheritance apply unconditionally. This also fixes REV-038 (NSE model inheritance): confirmed
+  live that setting `GEMINI_MODEL` now propagates to `NSE_GEMINI_MODEL` when the latter is unset (see
+  Verification below). `GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS`/`GEMINI_TIMEOUT_MS` wiring is untouched
+  (already used the safe `or`-default pattern, not in scope).
+- `scripts/publish_prices.py` — replaced the inline required-secrets check with
+  `config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")` (REV-051); dropped the now-unused
+  manual `os.environ.get` loop (import `os` still used elsewhere in the file).
+- `scripts/textutil.py` — docstring no longer restates the `RATIONALE_MAX`/`NOTIF_BODY_MAX` literal
+  values (280/150), which are env-tunable and can drift from the docstring; points at `config.py` instead
+  (REV-052).
+- `scripts/notify.py` — `NtfyNotifier.push` now reads the ntfy base URL and request timeout from
+  `config.NTFY_BASE_URL`/`config.NTFY_TIMEOUT_SECONDS` instead of hardcoding `https://ntfy.sh/` and
+  `timeout=10` (REV-052).
+- `requirements.txt` — added `httpx==0.28.1` (pinned to the version already resolved transitively today)
+  since `scripts/ai_judge.py` imports it directly (REV-054).
+- `pages/detail.html` — removed the client-side `.slice(0,5)` re-cap on `snap.headlines`; the pipeline
+  already limits the stored array to `config.HEADLINES_LIMIT` before it's written, so the client-side cap
+  was a second, driftable copy of the same tunable (REV-052). Also updated per REV-053 below.
+- `pages/common.js` / `pages/common.css` (new) — shared `SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY`,
+  `esc()`, the `VERDICT` colour map, `_TZSHORT`/`tzLabel()`/`clockIn()`, and the CSS `:root` token block,
+  previously duplicated verbatim in both pages (REV-053). Also unifies the two different currency-lookup
+  shapes into one: `CUR` (currency code -> symbol) + `MKT_CUR_CODE` (market -> currency code), with
+  `curSymByCode`/`curSymByMarket` helpers. Both pages load `common.js`/`common.css` same-origin (no CORS).
+- `pages/dashboard.html` / `pages/detail.html` — load `common.css`/`common.js`, drop the duplicated
+  declarations, alias `curSym` to `curSymByMarket` (dashboard, which only ever has a market) or
+  `curSymByCode` (detail, which has currency codes directly). `clockIn(iso, tz)` on the dashboard now
+  calls the shared 3-arg `clockIn(iso, tz, withDate)` with `withDate` omitted (defaults falsy — identical
+  behavior to the page's previous 2-arg version).
+- `.gitignore` — removed the `.shadow-pilot-session-state.md` entry, a leftover from the fully-retired
+  shadow-pilot track, flagged ambiguous-ownership since 2026-07-16 and never actioned (REV-056, dev's half
+  only — the runbook/README parts of REV-056 are release's/pm's job).
 
-`wallet_sim.walk` had no production caller (confirmed via grep before deleting — only `run_shadow.py`/
-`run_shadow_nse.py`/`eval_shadow.py` referenced it); production's own change-detection logic in
-`state.py` is separate and was not touched.
+## Explicitly out of scope (flagged, not touched)
+- `sql/phase5_monitoring.sql:37` also hardcodes the ntfy base URL (same issue as REV-052's `notify.py`
+  finding) — this is SQL, tech-lead's/release's domain per the task brief, not edited here.
+- REV-039/038's suggested fix text says "owner: tech-lead (design), dev at INC-6" — implemented now,
+  ahead of INC-6, as a mechanical dedup per explicit instruction. **Flag for the orchestrator**: this
+  touches `.github/workflows/hourly-watchlist.yml` and `daily-discovery.yml`, which INC-3-7's admin-portal
+  design (tech-lead, in flight, `docs/design/admin-portal-tunables.md`) also plans to modify (adding the
+  tunables-cache fetch/writer wiring). Check for conflicts before tech-lead's INC-6 branch merges — this
+  pass only removed the literal-fallback env lines for six model-name keys; it did not touch the
+  `permissions:`/`concurrency:` blocks or add any new env keys.
+- `docs/runbook.md` §2.2 documents the now-removed `vars.GEMINI_MODEL` GitHub-UI override path — release's
+  artifact, not edited here; flagging since it will read stale once this lands.
 
-## Files edited
-- `scripts/config.py` — removed `SHADOW_ENABLED`/`SHADOW_PROMPT_VARIANT`/`SHADOW_SNAPSHOT_LOOKBACK_MIN`,
-  `SHADOW_NSE_ENABLED`/`SHADOW_NSE_PROMPT_VARIANT`/`SHADOW_NSE_SNAPSHOT_LOOKBACK_MIN`, and
-  `EVAL_WINDOW_DAYS`. Reworded the retry-loop comment (dropped the "shadow pilot" clause) and the
-  `GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS` truthiness-trap comment (no longer references the deleted
-  `SHADOW_ENABLED` block). `nse_models()` is kept — it's the production NSE model-pair helper
-  (`run_hourly.py` calls it), unrelated to the shadow tracks despite the name overlap.
-- `.github/workflows/hourly-watchlist.yml` — deleted both shadow step blocks in full ("Run shadow verdict
-  track (US/CA pilot)" and "Run NSE shadow verdict track (NSE pilot)"), including their comment headers,
-  `SHADOW_TIMEOUT_MINUTES`/`SHADOW_ENABLED`/`SHADOW_NSE_*` env references. Reworded the
-  `GEMINI_MAX_RETRIES` production-step comment from "shared by the production and shadow tracks" to
-  "shared by the production track." Production watchlist step and the NSE-production model-variable
-  comments are untouched.
-- `scripts/ai_judge.py` — dropped the shadow-pilot clause from the `_generate` docstring (cosmetic only,
-  no behavior change).
-
-## New file
-- `sql/drop_shadow_tables_migration.sql` — `DROP TABLE IF EXISTS call_log_shadow;` /
-  `DROP TABLE IF EXISTS call_log_shadow_nse;`. Committed for reproducibility per repo convention (design
-  §8: schema changes are versioned files, not ad hoc SQL). **Applied to the live Supabase project** by the
-  orchestrator; confirmed via `list_tables` that `call_log_shadow`/`call_log_shadow_nse` are gone and the
-  remaining tables (`watchlist`, `holdings`, `verdict_state`, `call_log`, `run_heartbeat`,
-  `monitor_alerts`) are untouched.
-
-## Repo-wide grep sweep
-Ran `grep -rni shadow` across the repo (excluding `docs/archive/`, `.git/`) after the edits above.
-Remaining hits are all outside dev's ownership (src/config/workflow) and are historical/other-owner
-material, not live code:
-- `docs/design.md`, `docs/requirements.md` — retired sections/changelog entries (tech-lead/pm-owned,
-  correctly describe the retirement as historical).
-- `docs/idea-brief.md`, `README.md` — pm-owned; `README.md` still describes the shadow pilot as a current
-  feature (e.g. "An experimental, non-production 'shadow wallet' pilot runs alongside production...") —
-  **flagging to pm** to update since it now describes removed functionality.
-- `docs/review-log.md`, `docs/test-report.md` — reviewer/qa-owned historical entries.
-- `qa/test-plan-full-codebase.md`, `tests/test_shadow.py`, `tests/test_run_shadow.py`,
-  `tests/test_run_shadow_nse.py`, `tests/test_eval_shadow.py`, `tests/test_config.py`,
-  `tests/test_import_smoke.py`, `tests/conftest.py` — already flagged by tech-lead in `docs/design.md`'s
-  "Retired: shadow-pilot tracks" note for qa to delete/edit next; not touched here per CLAUDE.md (dev never
-  touches tests/).
-- `.gitignore` — one entry, `.shadow-pilot-session-state.md` (a Claude Code build-session scratch file
-  name, not a shadow-*feature* reference; unrelated to call_log_shadow/etc.). Left as-is — ambiguous
-  ownership and zero functional impact; flagging in case someone wants to rename it for hygiene.
-- `requirements_docs/stock-advisor-ui-handoff-v3-spec.md` — "no shadows" is a CSS box-shadow styling
-  rule, unrelated to the shadow wallet feature. No action needed.
-
-No hits remained in `scripts/`, `sql/`, or `.github/workflows/` after the edits.
-
-## How to verify
+## How to run / verify
 ```
-python3 -m py_compile scripts/*.py
-python3 -c "import yaml; yaml.safe_load(open('.github/workflows/hourly-watchlist.yml'))"
-python3 -c "
+python3 -m pip install -r requirements.txt
+python3 -m pytest -q --tb=short          # 157 passed, 0 regressions (baseline before this pass: 144)
+node --check pages/common.js             # syntax check (also checked both pages' inline scripts concatenated with common.js)
+
+SUPABASE_URL=x SUPABASE_SECRET_KEY=x GEMINI_API_KEY=x python3 -c "
 import sys; sys.path.insert(0, 'scripts')
-import config, ai_judge, ingest, notify, prefilter, run_discovery, run_hourly, publish_prices, state, textutil
-assert not [a for a in dir(config) if 'SHADOW' in a.upper()]
-assert not hasattr(config, 'EVAL_WINDOW_DAYS')
-assert hasattr(config, 'nse_models')
-print('ok')
+import config, notify, publish_prices, ai_judge, textutil
+config.require_secrets('SUPABASE_URL', 'SUPABASE_SECRET_KEY')  # subset form
+config.require_secrets()                                        # default form, both must not raise
+print(config.NTFY_BASE_URL, config.NTFY_TIMEOUT_SECONDS)
+"
+
+# REV-038 side-effect check: NSE model now inherits GEMINI_MODEL when unset
+SUPABASE_URL=x SUPABASE_SECRET_KEY=x GEMINI_API_KEY=x GEMINI_MODEL=custom-model python3 -c "
+import sys; sys.path.insert(0, 'scripts'); import config
+assert config.NSE_GEMINI_MODEL == 'custom-model'
 "
 ```
-All three passed in a clean venv (`pip install -r requirements.txt`) before this handoff. Full pytest
-suite was NOT run by dev — qa owns `tests/` cleanup (per `docs/design.md`'s "Retired: shadow-pilot
-tracks" note) and the full regression pass next; the existing shadow-only test files (`test_shadow.py`,
-`test_run_shadow*.py`, `test_wallet_sim.py`, `test_eval_shadow.py`) will currently fail to collect since
-their target modules are deleted, which is expected until qa deletes/edits them per that note.
 
-## Confirmation: production untouched
-FR1-FR23 code paths (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`, `ingest.py`, `ai_judge.py`'s
-`judge_batch`, `notify.py`, `prefilter.py`, `state.py`, `textutil.py`, and `config.py`'s non-shadow
-tunables including `nse_models()`/`NSE_GEMINI_MODEL*`/`is_nse_open`) are unmodified except for the two
-comment rewords noted above (config.py retry-loop comment, ai_judge.py docstring) — no logic, defaults, or
-signatures changed. The production step in `hourly-watchlist.yml` (`Run hourly watchlist check`) is
-byte-identical except for the one comment reword.
-
-## Known limitations / follow-ups for other agents
-- qa: delete/edit the test files per `docs/design.md`'s "Retired: shadow-pilot tracks" note (`test_shadow.py`, `test_run_shadow.py`,
-  `test_run_shadow_nse.py`, `test_wallet_sim.py`, `test_eval_shadow.py` deleted outright;
-  `test_config.py`/`test_import_smoke.py`/`conftest.py` edited to drop shadow-specific cases/fixtures) and
-  rewrite the shadow-referencing rows in `qa/test-plan-full-codebase.md`.
-- pm: `README.md` still describes the shadow wallet pilot as a live feature — needs an update to reflect
-  the retirement (flagged above).
-- reviewer: `docs/review-log.md` retains historical shadow-track entries (REV-001, REV-005, REV-015,
-  REV-018, Pass 3, Pass 4) per `docs/design.md`'s "Retired: shadow-pilot tracks" note — no action needed
-  from dev, noted for traceability.
+## Known limitations
+- Removing the workflow-level model overrides means an operator can no longer swap
+  `GEMINI_MODEL`/`DISCOVERY_GEMINI_MODEL`/etc. from the GitHub UI Variables tab without a code edit, until
+  INC-6's admin-portal tunables table ships (tech-lead's in-flight work). This is the explicit intent of
+  REV-039's suggested fix, not an oversight — noted here so it isn't mistaken for a capability regression.
+- `pages/common.js`/`common.css` extraction covers exactly the items REV-053 named (Supabase URL/key,
+  `esc()`, `VERDICT`, timezone helpers, `:root` CSS, currency shape). Other duplicated CSS classes between
+  the two pages (`.mkt`, `.pill`, etc., not flagged in the review) were left as-is — out of the assigned
+  finding's scope.
