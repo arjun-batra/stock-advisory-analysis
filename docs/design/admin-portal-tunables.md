@@ -205,19 +205,52 @@ volatile), and Supabase's own base URL/secret-key resolution already goes throug
 before any of this runs — but "rare" is exactly why it must fail loud rather than fail silent: nobody is
 watching for a quiet, wrong default on a path nobody expects to exercise.
 
+**REV-041 fix, 2026-07-28 — timeout + a deterministic offline path.** The sketch above (and every version
+of this section before this fix) called `create_client(...).table(...).execute()` with no timeout
+argument. `supabase-py`'s default PostgREST timeout is not short, and `config.py` is imported by *every*
+module and every entry point — a hung or slow Supabase connection would stall the start of every scheduled
+run, on a module that had never made a network call before this increment. Two additions, both below:
+(a) an explicit, non-curated timeout tunable (`TUNABLES_FETCH_TIMEOUT_MS`) passed into the client — it
+cannot itself live in the `tunables` table, since resolving it is a precondition for fetching that table
+at all; (b) an explicit `SKIP_TUNABLES_FETCH` offline switch so tests and local runs deterministically use
+tier 2 (the cache) instead of making a real network call — needed because `tests/conftest.py` points
+`SUPABASE_URL` at a fake host and `config` is reloaded roughly fifteen times per suite run (`test_config.py`'s
+`reload_config` fixture); without this, INC-6 would turn every test run into ~15 live connection attempts
+against that fake host. `_fetch_tunables()` is the **single patchable seam** for both — qa mocks this one
+function, the same pattern `ai_judge._client` already establishes as this codebase's convention for an
+external-call boundary.
+
 ```python
-_CACHE_PATH = pathlib.Path(__file__).resolve().parent.parent / "config" / "tunables_cache.json"
+TUNABLES_FETCH_TIMEOUT_MS = int(os.environ.get("TUNABLES_FETCH_TIMEOUT_MS", "5000"))   # non-curated;
+    # bootstraps the fetch below, so it cannot itself be sourced from the `tunables` table
+
+_CACHE_PATH = pathlib.Path(__file__).resolve().parent.parent / "tunables_cache.json"   # repo root,
+    # REV-046 — NOT inside a `config/` subdirectory (see the naming note above the JSON seed block)
+
+_TUNABLE_CASTS: dict[str, "Callable[[str], object]"] = {}   # populated by every _tunable() call below;
+    # write_tunables_cache_if_fetched() reuses this exact registry to validate before persisting (REV-036)
+    # rather than re-deriving cast rules in a second place.
 
 def _fetch_tunables() -> dict[str, str]:
-    """This run's live fetch — unchanged from Decision #27. Returns {} on ANY
-    failure; NEVER writes to the cache file itself (only write_tunables_cache_
-    if_fetched(), called explicitly, does that — see below)."""
+    """This run's live fetch. Returns {} on ANY failure, or when explicitly
+    skipped (REV-041's offline path, below) — NEVER writes to the cache file
+    itself (only write_tunables_cache_if_fetched(), called explicitly, does
+    that — see below). This is the ONE function qa patches to test every
+    fallback-tier path deterministically, mirroring ai_judge._client."""
+    if os.environ.get("SKIP_TUNABLES_FETCH", "false").lower() == "true":
+        print("  [config] SKIP_TUNABLES_FETCH set; using tunables_cache.json only "
+              "(no live Supabase call made) — deterministic for tests/local runs")
+        return {}
     try:
-        client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+        client = create_client(
+            SUPABASE_URL, SUPABASE_SECRET_KEY,
+            options=ClientOptions(postgrest_client_timeout=TUNABLES_FETCH_TIMEOUT_MS / 1000),
+            # exact kwarg/unit to confirm against the installed supabase-py version at INC-6 build time
+        )
         rows = client.table("tunables").select("key,value").execute().data
         return {r["key"]: r["value"] for r in rows}
     except Exception as e:
-        print(f"  [config] tunables fetch failed ({e}); falling back to config/tunables_cache.json")
+        print(f"  [config] tunables fetch failed ({e}); falling back to tunables_cache.json")
         return {}
 
 def _load_tunables_cache() -> dict[str, str]:
@@ -233,33 +266,82 @@ def _load_tunables_cache() -> dict[str, str]:
 
 _TUNABLES = _fetch_tunables()               # tier 1: this run's live Supabase fetch
 _TUNABLES_CACHE = _load_tunables_cache()    # tier 2: last-known-good, repo-committed
+TUNABLES_DEGRADED = False    # REV-045: set True the first time any curated key resolves from tier 2
+                              # instead of tier 1 this run — read by every entry point's heartbeat write
+                              # (below) so a persistently-stale tunables state is monitor-visible, not silent.
 
 def _tunable(key: str, cast):
-    """Two tiers only: live Supabase fetch, then the repo-committed cache. If
-    neither has a usable value for `key`, fail loud rather than guess — same
-    posture as require_secrets() above for a missing required secret."""
-    for source in (_TUNABLES, _TUNABLES_CACHE):    # tier 1, then tier 2
-        raw = source.get(key)
-        if raw is not None:
-            try:
-                return cast(raw)
-            except (TypeError, ValueError):
-                print(f"  [config] tunables value for {key!r} ({raw!r}) failed to cast; trying next tier")
-                continue
+    """Two tiers only: live Supabase fetch, then the repo-committed cache.
+
+    REV-036 fix: a tier-1 value that FAILS TO CAST now fails loud immediately
+    (SystemExit) instead of silently falling through to tier 2. A cast failure
+    on a value Supabase actually returned is an operator-caused data error
+    (e.g. a bad portal edit — `5%` typed into a numeric field), not a fetch
+    failure; silently falling through let that bad value later get persisted
+    into the cache by write_tunables_cache_if_fetched() (see below), turning
+    one typo into a permanently corrupted last-known-good. Only a MISSING key
+    (source.get(key) is None) falls through to the next tier — a genuinely
+    absent value, not a malformed one.
+    """
+    global TUNABLES_DEGRADED
+    raw1 = _TUNABLES.get(key)
+    if raw1 is not None:
+        try:
+            return cast(raw1)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"[config] tunable {key!r} was fetched from Supabase as {raw1!r} but failed to "
+                f"cast. This is an operator-entered value error, not a fetch failure — refusing "
+                f"to fall through to the cache tier and risk persisting it as the new "
+                f"last-known-good. Fix the value in the tunables table (portal or SQL editor)."
+            )
+    raw2 = _TUNABLES_CACHE.get(key)
+    if raw2 is not None:
+        try:
+            value = cast(raw2)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"[config] tunable {key!r} unavailable: Supabase tunables fetch did not include "
+                f"this key, AND the cached value {raw2!r} in tunables_cache.json failed to cast. "
+                f"Refusing to start with an unknown value for a portal-controlled tunable."
+            )
+        TUNABLES_DEGRADED = True
+        print(f"  [config] tunable {key!r} resolved from tunables_cache.json (tier 2) — "
+              f"live Supabase fetch did not include it this run")
+        return value
     raise SystemExit(
         f"[config] tunable {key!r} unavailable: Supabase tunables fetch failed or did not "
-        f"include this key, AND config/tunables_cache.json is missing, unreadable, or also "
+        f"include this key, AND tunables_cache.json is missing, unreadable, or also "
         f"missing this key. Refusing to start with an unknown value for a portal-controlled "
         f"tunable rather than silently guessing one."
     )
 
 def write_tunables_cache_if_fetched() -> None:
-    """Serialize THIS RUN'S successful Supabase fetch to config/tunables_cache.json,
-    unconditionally overwriting the file with current values — mirrors
-    publish_prices.py always writing pages/prices.json fresh and letting the
-    WORKFLOW's git-diff step (not this function) decide whether anything
-    actually changed and needs a commit. No-ops silently if this run's fetch
-    failed (_TUNABLES is empty) — a failed fetch never overwrites a good cache.
+    """Validate and merge THIS RUN'S successful Supabase fetch into the
+    existing cache, then write the result to tunables_cache.json. No-ops
+    silently if this run's fetch failed entirely (_TUNABLES is empty) — a
+    failed fetch never touches a good cache.
+
+    REV-036 fix (three changes from the original draft, which serialized
+    `_TUNABLES` verbatim and unconditionally):
+      1. VALIDATE before writing: a fetched value is only persisted if it
+         still casts cleanly under `_TUNABLE_CASTS[key]` (populated by every
+         `_tunable()` call above). In practice a tier-1 cast failure now
+         raises SystemExit during import (see `_tunable()` above) before this
+         function is ever reached, so this re-check is redundant with that
+         invariant today — kept anyway as an independent safety net, since
+         trusting a single enforcement point for "never persist a bad value"
+         is exactly the kind of assumption that's cheap to double up on.
+      2. MERGE, never overwrite: start from the existing cache and only
+         update keys this run's fetch actually returned. The original draft
+         wrote `_TUNABLES` directly, so a fetch that legitimately omitted a
+         key (e.g. a transient partial response) silently DELETED that key's
+         last-known-good from the file — the exact opposite of what
+         "last-known-good" promises. The merged file can never be smaller
+         than the cache already on disk.
+      3. No-op cleanly when nothing changed, so the workflow's git-diff step
+         (not this function) still decides whether a commit is needed —
+         unchanged behavior from the original draft, preserved here.
 
     Decision #28: hourly-watchlist.yml is the SOLE writer (runs most
     frequently, every 30 min in-hours). Called ONLY from run_hourly.py's
@@ -268,7 +350,21 @@ def write_tunables_cache_if_fetched() -> None:
     above, same as every script already reads it."""
     if not _TUNABLES:
         return
-    _CACHE_PATH.write_text(json.dumps(_TUNABLES, indent=2, sort_keys=True) + "\n")
+    merged = dict(_TUNABLES_CACHE)
+    for key, raw in _TUNABLES.items():
+        cast = _TUNABLE_CASTS.get(key)
+        if cast is None:
+            continue   # a key this run never read via _tunable(); leave the cache's value untouched
+        try:
+            cast(raw)   # validate only — the cache stores the raw string, same shape as today
+        except (TypeError, ValueError):
+            print(f"  [config] tunables cache write-back: {key!r}={raw!r} failed to validate; "
+                  f"keeping the existing cached value for this key")
+            continue
+        merged[key] = raw
+    if merged == _TUNABLES_CACHE:
+        return
+    _CACHE_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
 
 # example usage — replaces the plain os.environ.get(...) reads for these 10 keys only;
 # every other config.py tunable (the ~18 non-curated keys) is completely untouched:
@@ -276,11 +372,19 @@ GEMINI_MODEL = _tunable("GEMINI_MODEL", str)
 ALERTS_ENABLED_TABLE = _tunable("ALERTS_ENABLED", lambda v: str(v).lower() == "true")
 ```
 
-`run_hourly.py`'s only change: one line, early in `main()` (before the market gate, so the cache
-refreshes on every dispatch regardless of whether the market check inside `main()` goes on to skip
-work) — `config.write_tunables_cache_if_fetched()`. Still "no logic in entry points": it's a single
-delegate call to a `config.py` function, same shape as every other entry-point/module boundary in this
-codebase.
+`run_hourly.py`'s change: one line, early in `main()` (before the market gate, so the cache refreshes on
+every dispatch regardless of whether the market check inside `main()` goes on to skip work) —
+`config.write_tunables_cache_if_fetched()`. Still "no logic in entry points": it's a single delegate call
+to a `config.py` function, same shape as every other entry-point/module boundary in this codebase.
+**REV-045 fix — a second, smaller addition to all three entry points** (`run_hourly.py`,
+`run_discovery.py`, `publish_prices.py`): each already computes a `degraded` boolean/count before writing
+its `run_heartbeat` status (`components.md` §4.8, issue #2's `partial`-vs-`ok` rule). Each of those three
+existing expressions gains `or config.TUNABLES_DEGRADED` — e.g. `run_hourly.py:155` becomes `status =
+"partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"` — so a run that silently fell back to the
+tunables cache is monitor-visible via NFR2's existing dead-man/degraded-alert path (REV-042's fix, below in
+`components.md`, is what makes the SQL side of "degraded" actually alert for discovery/publish-prices; this
+is the Python side setting the status correctly for tunables specifically). No new mechanism — reusing the
+status-computation seam that already exists at all three sites.
 
 **Workflow step, `hourly-watchlist.yml` only** (added directly after "Run hourly watchlist check",
 mirroring `publish-prices.yml`'s "Commit prices.json if changed" step exactly — same bot identity, same
@@ -296,7 +400,7 @@ permissions:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add config/tunables_cache.json
+          git add tunables_cache.json
           if git diff --cached --quiet; then
             echo "tunables_cache.json unchanged — nothing to commit."
           else
@@ -307,7 +411,7 @@ permissions:
 ```
 
 `daily-discovery.yml` and `publish-prices.yml` get **no** YAML changes — they already check out the full
-repo (so `config/tunables_cache.json` is present on disk via `actions/checkout`), read it transparently
+repo (so `tunables_cache.json` is present on disk via `actions/checkout`), read it transparently
 through `_tunable()`'s tier-2 fallback exactly like every other script, and never call
 `write_tunables_cache_if_fetched()`. No new permission needed on either — reading a checked-out file
 requires no special token scope.
@@ -349,3 +453,15 @@ Decision #28's actual text, not a requirement, and has been removed; a simultane
 (Supabase fetch fails or misses a key, and the cache file is also missing/unreadable/missing that key)
 now fails loud via `SystemExit`, matching `require_secrets()`'s existing fail-fast posture for missing
 critical config rather than inventing a silent guess. **No open question remains for INC-6.**
+
+**Pass 11 review fixes (2026-07-28, reviewer REV-033/036/041/044/045/046):** RLS enabled on `tunables`
+with zero anon policies and the write policy narrowed to `select, update` plus a key-registry `check`
+(REV-033/044); the cache write-back now validates before persisting, merges instead of overwriting, and a
+tier-1 cast failure fails loud instead of silently degrading (REV-036); the Supabase fetch gained an
+explicit timeout tunable and a deterministic offline test seam (REV-041); a tier-2 fallback now sets
+`config.TUNABLES_DEGRADED`, surfaced through all three entry points' existing heartbeat status computation
+(REV-045); the cache file moved to `tunables_cache.json` at the repo root, out of a `config/` subdirectory
+that would have collided with the `config` module name (REV-046). **Follow-up needed at INC-6 build time,
+not a design gap:** `tests/conftest.py` needs a corresponding `os.environ.setdefault("SKIP_TUNABLES_FETCH",
+"true")` alongside its existing fake-secrets block, so the test suite exercises the offline path by
+default — this is qa's file, noted here for INC-6's dev/qa handoff, not implemented in this design pass.
