@@ -1,95 +1,83 @@
-# Handoff — Review-log Pass 11: dev-assigned findings
+# Handoff — INC-3: Kill-switch (FR24, FR25, FR26, NFR2)
 
-Source: `docs/review-log.md` Pass 11 (REV-033..061), dev's assigned subset per Arjun's go-ahead:
-REV-039 (major, model-name literal duplication / drift), REV-051 (require_secrets generalization),
-REV-052 (dev's half: detail.html headline slice, textutil.py docstring, notify.py ntfy tunables),
-REV-053 (pages/common.js + common.css extraction), REV-054 (httpx pin), REV-056 (dev's half: .gitignore).
-This is a direct fix pass against the live, currently-running production system — no live DB change,
-mechanical/self-contained code fixes only.
+Branch: `claude/admin-portal-evaluation-txaehj` (no new `inc-N` branch cut — Arjun directed batching
+this whole change request on the current branch rather than the per-increment branch/merge cycle).
+
+**Design:** `docs/design/operational-controls.md` §13. **Plan/AC:** `docs/design/increment-plan.md`
+"### INC-3 — Kill-switch". Traces to `docs/requirements.md` FR24-FR26, NFR2 (extended), Decisions Log
+#19-21.
+
+## Constraint honored
+Arjun has explicitly deferred applying any SQL changes to the live Supabase project for this change
+request. **No Supabase apply/execute/migration/DDL tool call was made.** All work below is
+write-only-to-repo: new/edited `.sql` files, reviewed and ready to apply, not yet applied. No
+read-only Supabase check was performed either (not needed to write code that matches the design doc's
+already-specified integration points verbatim).
 
 ## Files changed
-- `scripts/config.py` — `require_secrets()` now takes `*names`, defaulting to the existing three-secret
-  list; added `NTFY_BASE_URL`/`NTFY_TIMEOUT_SECONDS` tunables (REV-052); comments on the model-name block
-  and `DISCOVERY_GEMINI_MODEL*` updated to state this file is now the single source of truth for those
-  defaults (REV-039). No default *values* changed — same models, same secrets list.
-- `.github/workflows/hourly-watchlist.yml` / `.github/workflows/daily-discovery.yml` — removed the
-  `${{ vars.X || 'literal' }}`-style env lines for `GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`,
-  `NSE_GEMINI_MODEL`, `NSE_GEMINI_MODEL_BACKUP`, `DISCOVERY_GEMINI_MODEL`, `DISCOVERY_GEMINI_MODEL_BACKUP`
-  entirely (REV-039), rather than just dropping the literal tail — an unset `${{ vars.X }}` arrives as an
-  *empty string* env var, which would defeat `config.py`'s two-arg `os.environ.get(name, default)` and
-  silently blank the model, so no env line is passed for these six keys and `config.py`'s own
-  defaults/inheritance apply unconditionally. This also fixes REV-038 (NSE model inheritance): confirmed
-  live that setting `GEMINI_MODEL` now propagates to `NSE_GEMINI_MODEL` when the latter is unset (see
-  Verification below). `GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS`/`GEMINI_TIMEOUT_MS` wiring is untouched
-  (already used the safe `or`-default pattern, not in scope).
-- `scripts/publish_prices.py` — replaced the inline required-secrets check with
-  `config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")` (REV-051); dropped the now-unused
-  manual `os.environ.get` loop (import `os` still used elsewhere in the file).
-- `scripts/textutil.py` — docstring no longer restates the `RATIONALE_MAX`/`NOTIF_BODY_MAX` literal
-  values (280/150), which are env-tunable and can drift from the docstring; points at `config.py` instead
-  (REV-052).
-- `scripts/notify.py` — `NtfyNotifier.push` now reads the ntfy base URL and request timeout from
-  `config.NTFY_BASE_URL`/`config.NTFY_TIMEOUT_SECONDS` instead of hardcoding `https://ntfy.sh/` and
-  `timeout=10` (REV-052).
-- `requirements.txt` — added `httpx==0.28.1` (pinned to the version already resolved transitively today)
-  since `scripts/ai_judge.py` imports it directly (REV-054).
-- `pages/detail.html` — removed the client-side `.slice(0,5)` re-cap on `snap.headlines`; the pipeline
-  already limits the stored array to `config.HEADLINES_LIMIT` before it's written, so the client-side cap
-  was a second, driftable copy of the same tunable (REV-052). Also updated per REV-053 below.
-- `pages/common.js` / `pages/common.css` (new) — shared `SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY`,
-  `esc()`, the `VERDICT` colour map, `_TZSHORT`/`tzLabel()`/`clockIn()`, and the CSS `:root` token block,
-  previously duplicated verbatim in both pages (REV-053). Also unifies the two different currency-lookup
-  shapes into one: `CUR` (currency code -> symbol) + `MKT_CUR_CODE` (market -> currency code), with
-  `curSymByCode`/`curSymByMarket` helpers. Both pages load `common.js`/`common.css` same-origin (no CORS).
-- `pages/dashboard.html` / `pages/detail.html` — load `common.css`/`common.js`, drop the duplicated
-  declarations, alias `curSym` to `curSymByMarket` (dashboard, which only ever has a market) or
-  `curSymByCode` (detail, which has currency codes directly). `clockIn(iso, tz)` on the dashboard now
-  calls the shared 3-arg `clockIn(iso, tz, withDate)` with `withDate` omitted (defaults falsy — identical
-  behavior to the page's previous 2-arg version).
-- `.gitignore` — removed the `.shadow-pilot-session-state.md` entry, a leftover from the fully-retired
-  shadow-pilot track, flagged ambiguous-ownership since 2026-07-16 and never actioned (REV-056, dev's half
-  only — the runbook/README parts of REV-056 are release's/pm's job).
+- **New `sql/kill_switch.sql`** — `kill_switch_state` (singleton flag table, `CHECK (id)` constraint,
+  RLS enabled with zero policies — REV-033), `kill_switch_audit` (append-only log, RLS `enable`+`force`
+  with zero policies plus an explicit `revoke insert/update/delete from public, anon, authenticated` —
+  REV-033's belt-and-suspenders fix), and `set_kill_switch(p_paused boolean, p_source text default
+  'sql-direct')` (`SECURITY DEFINER`, updates the flag + inserts one audit row per call, execute revoked
+  from `public/anon/authenticated`). Copied verbatim from `operational-controls.md` §13.2/§13.3 — no
+  deviation from the design doc's SQL.
+- **`sql/scheduler_pgcron.sql`** — `dispatch_github_workflow` (the single choke point all five dispatch
+  paths funnel through: both watchlist gates, both discovery crons, publish-prices) now reads
+  `kill_switch_state.paused` first and returns `null` before the PAT lookup / `pg_net.http_post` if
+  paused, logging a `raise notice`. One guard, one function, per §13.1's design decision (lower-risk
+  diff than touching all five call sites, and a future sixth workflow inherits the guard for free as
+  long as it dispatches through this function).
+- **`sql/phase5_monitoring.sql`** — `check_pipeline_health` now reads `kill_switch_state` first;
+  returns immediately if `paused` (FR25: no alert evaluation at all while deliberately paused). Added
+  the resume-baseline fix (§13.4, load-bearing, not optional): `v_resume_baseline` = the last
+  `kill_switch_state.updated_at` where `paused = false`; all four staleness comparisons (watchlist
+  `wl_last` — both the ET and IST session branches share the same variable/check, discovery `disc_last`,
+  discovery-in `disc_in_last`, publish-prices `pp_last`) now compare against
+  `GREATEST(last_run_at, v_resume_baseline)` instead of the raw `last_run_at`, so lifting a pause
+  doesn't immediately false-alarm on a heartbeat that's merely stale from the pause duration — the
+  monitor gets one full dispatch cycle post-resume before it can alert. Alert *message text* still shows
+  the real, un-adjusted `last_run_at`/`disc_last`/etc. (only the stale/not-stale decision uses the
+  adjusted baseline) — unchanged per the design doc's explicit instruction.
 
-## Explicitly out of scope (flagged, not touched)
-- `sql/phase5_monitoring.sql:37` also hardcodes the ntfy base URL (same issue as REV-052's `notify.py`
-  finding) — this is SQL, tech-lead's/release's domain per the task brief, not edited here.
-- REV-039/038's suggested fix text says "owner: tech-lead (design), dev at INC-6" — implemented now,
-  ahead of INC-6, as a mechanical dedup per explicit instruction. **Flag for the orchestrator**: this
-  touches `.github/workflows/hourly-watchlist.yml` and `daily-discovery.yml`, which INC-3-7's admin-portal
-  design (tech-lead, in flight, `docs/design/admin-portal-tunables.md`) also plans to modify (adding the
-  tunables-cache fetch/writer wiring). Check for conflicts before tech-lead's INC-6 branch merges — this
-  pass only removed the literal-fallback env lines for six model-name keys; it did not touch the
-  `permissions:`/`concurrency:` blocks or add any new env keys.
-- `docs/runbook.md` §2.2 documents the now-removed `vars.GEMINI_MODEL` GitHub-UI override path — release's
-  artifact, not edited here; flagging since it will read stale once this lands.
+Both edited files got a one-line header note pointing at the new `sql/kill_switch.sql`
+apply-order dependency (`kill_switch_state` must exist before either function is applied).
 
-## How to run / verify
+## Confirmed: no Python changes
 ```
-python3 -m pip install -r requirements.txt
-python3 -m pytest -q --tb=short          # 157 passed, 0 regressions (baseline before this pass: 144)
-node --check pages/common.js             # syntax check (also checked both pages' inline scripts concatenated with common.js)
-
-SUPABASE_URL=x SUPABASE_SECRET_KEY=x GEMINI_API_KEY=x python3 -c "
-import sys; sys.path.insert(0, 'scripts')
-import config, notify, publish_prices, ai_judge, textutil
-config.require_secrets('SUPABASE_URL', 'SUPABASE_SECRET_KEY')  # subset form
-config.require_secrets()                                        # default form, both must not raise
-print(config.NTFY_BASE_URL, config.NTFY_TIMEOUT_SECONDS)
-"
-
-# REV-038 side-effect check: NSE model now inherits GEMINI_MODEL when unset
-SUPABASE_URL=x SUPABASE_SECRET_KEY=x GEMINI_API_KEY=x GEMINI_MODEL=custom-model python3 -c "
-import sys; sys.path.insert(0, 'scripts'); import config
-assert config.NSE_GEMINI_MODEL == 'custom-model'
-"
+git diff --name-only -- scripts/   # empty output
 ```
+Zero files under `scripts/` touched. All three changed/new files are under `sql/`.
+
+## How to run / verify (what's verifiable now, pre-apply)
+```
+python3 -m pytest -q --tb=short   # 157 passed, both before and after this change — zero regressions,
+                                   # zero new tests (pure SQL increment, no existing Python test surface
+                                   # touches these functions/tables)
+```
+Dollar-quoted block balance and `begin`/`end` nesting spot-checked manually (no live DB, no `psql`
+available in this environment to run an actual parse/EXPLAIN).
+
+## Acceptance criteria status (per increment-plan.md's 6 ACs)
+- **AC6 (full test suite passes unmodified; zero `scripts/*.py` diff)** — **PASS**, verified above.
+- **AC1-AC5** — written and ready per the design doc, but require live Supabase verification
+  (`list_tables`/`list_functions`, calling `select set_kill_switch(true/false);`, manually invoking the
+  5 dispatch paths and checking `net._http_response`/`run_heartbeat`, calling
+  `check_pipeline_health()` with a synthetic stale heartbeat pre/post-resume, checking
+  `kill_switch_audit` rows across ≥2 toggles, querying `pg_class.relrowsecurity`/`relforcerowsecurity`,
+  and an anon-key REST call against both new tables) that cannot happen until this SQL is actually
+  applied to the live project. **Not attempted, not faked** — per Arjun's explicit deferral. Flagging
+  for whoever applies this later: AC2/AC3's "manually invoking dispatch paths" verification requires
+  toggling the flag on a project where the pg_cron jobs are live, so schedule that verification for a
+  low-traffic window.
 
 ## Known limitations
-- Removing the workflow-level model overrides means an operator can no longer swap
-  `GEMINI_MODEL`/`DISCOVERY_GEMINI_MODEL`/etc. from the GitHub UI Variables tab without a code edit, until
-  INC-6's admin-portal tunables table ships (tech-lead's in-flight work). This is the explicit intent of
-  REV-039's suggested fix, not an oversight — noted here so it isn't mistaken for a capability regression.
-- `pages/common.js`/`common.css` extraction covers exactly the items REV-053 named (Supabase URL/key,
-  `esc()`, `VERDICT`, timezone helpers, `:root` CSS, currency shape). Other duplicated CSS classes between
-  the two pages (`.mkt`, `.pill`, etc., not flagged in the review) were left as-is — out of the assigned
-  finding's scope.
+- The manual-`workflow_dispatch` bypass (a human clicking "Run workflow" in the GitHub UI, or
+  `gh workflow run`, skips pg_cron and therefore the kill-switch check entirely) is an **accepted risk**
+  per §13.1 — FR24's text scopes the guarantee to scheduled dispatches only. Not a bug, not something to
+  fix in this increment.
+- `set_kill_switch()` is callable only via the SQL editor / service-role connection until INC-7 adds the
+  `is_admin()`-gated portal caller (`grant execute ... to authenticated`) — this increment is designed
+  to be fully self-contained with zero portal dependency, per the approved build order.
+- This increment's SQL is **not applied** to the live Supabase project. Nothing in this change request
+  is live yet; apply-time coordination is release's/Arjun's call, out of scope for dev.

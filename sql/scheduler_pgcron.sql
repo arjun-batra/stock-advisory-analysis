@@ -13,6 +13,10 @@
 -- then phase5_monitoring.sql (defines dispatch_watchlist_if_open, re-points the
 -- watchlist cron at the gate, and schedules health-monitor).
 --
+-- INC-3 (FR24): dispatch_github_workflow's kill-switch check below reads
+-- public.kill_switch_state, defined in sql/kill_switch.sql — apply that file
+-- before (or in the same session as) this one.
+--
 -- PREREQUISITES (create once, manually — secrets are NOT in version control):
 --   • extensions:  pg_cron, pg_net   (enable in Supabase dashboard)
 --   • Vault secret 'github_workflow_pat'  -> a GitHub PAT with `actions:write`
@@ -24,6 +28,14 @@
 -- Reads the PAT from Vault (never hardcoded), POSTs to the Actions dispatch API
 -- on ref 'main'. SECURITY DEFINER + locked search_path; execute is revoked from
 -- public/anon/authenticated below so only the cron jobs (postgres) can call it.
+--
+-- INC-3 (FR24, docs/design/operational-controls.md §13.1): kill-switch check is
+-- enforced HERE, not in each of the five callers (both watchlist gates, both
+-- discovery crons, publish-prices) — this is the one function every scheduled
+-- dispatch path already funnels through, so one guard covers all five and a
+-- future sixth workflow inherits it automatically as long as it dispatches
+-- through this function. Requires sql/kill_switch.sql applied first
+-- (kill_switch_state must exist).
 CREATE OR REPLACE FUNCTION public.dispatch_github_workflow(
   workflow_file text,
   inputs jsonb DEFAULT '{}'::jsonb
@@ -37,7 +49,14 @@ declare
   pat text;
   req_id bigint;
   payload jsonb;
+  v_paused boolean;
 begin
+  select paused into v_paused from public.kill_switch_state where id = true;
+  if v_paused then
+    raise notice 'dispatch_github_workflow: kill-switch paused, skipping %', workflow_file;
+    return null;
+  end if;
+
   select decrypted_secret into pat
   from vault.decrypted_secrets
   where name = 'github_workflow_pat'

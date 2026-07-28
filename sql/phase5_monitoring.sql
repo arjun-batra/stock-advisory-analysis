@@ -11,6 +11,10 @@
 -- Lives in Supabase (applied via the Supabase migration
 -- phase5_pipeline_monitoring); committed here for version control / reproducibility.
 -- Requires Vault secret 'ntfy_topic' (the ntfy topic to publish alerts to).
+--
+-- INC-3 (FR25, NFR2): check_pipeline_health's pause-awareness + resume-baseline
+-- fix below reads public.kill_switch_state, defined in sql/kill_switch.sql —
+-- apply that file before (or in the same session as) this one.
 -- =====================================================================
 
 -- --- alert state (dedup / state-machine) -----------------------------
@@ -110,9 +114,31 @@ declare
   disc_in_last timestamptz;
   pp_last timestamptz;
   mins numeric;
+  v_paused boolean;
+  v_resume_baseline timestamptz;
 begin
   if dow > 5 then
     return;   -- weekends: nothing is scheduled, so nothing to watch
+  end if;
+
+  -- INC-3 (FR25, NFR2, docs/design/operational-controls.md §13.4): a
+  -- deliberate pause is expected-quiet, not a failure — skip all alert
+  -- evaluation while paused. v_resume_baseline is the timestamp of the most
+  -- recent resume (kill_switch_state.updated_at when paused = false); every
+  -- staleness comparison below uses GREATEST(last_run_at, v_resume_baseline)
+  -- instead of last_run_at alone, so lifting a long pause doesn't
+  -- immediately false-alarm on a heartbeat that's merely stale from the
+  -- pause duration — the monitor gets one full dispatch cycle post-resume
+  -- before it can alert. A never-paused system is unaffected: with no
+  -- kill_switch_state row this defaults to NULL and GREATEST ignores it,
+  -- always picking the real last_run_at. Requires sql/kill_switch.sql
+  -- applied first (kill_switch_state must exist).
+  select paused, (case when not paused then updated_at end)
+    into v_paused, v_resume_baseline
+    from public.kill_switch_state where id = true;
+
+  if v_paused then
+    return;   -- FR25: no alert evaluation at all while deliberately paused
   end if;
 
   -- ===== WATCHLIST: stale or degraded, during the ET session + grace =====
@@ -126,7 +152,7 @@ begin
     select last_run_at, status into wl_last, wl_status
       from public.run_heartbeat where workflow_name = 'hourly-watchlist';
 
-    if wl_last is null or p_now - wl_last > interval '70 minutes' then
+    if wl_last is null or p_now - GREATEST(wl_last, v_resume_baseline) > interval '70 minutes' then
       mins := extract(epoch from (p_now - coalesce(wl_last, p_now)))/60;
       perform public._raise_monitor(
         'watchlist', 'stale', '⚠️ Watchlist stalled',
@@ -154,7 +180,7 @@ begin
     select last_run_at, status into wl_last, wl_status
       from public.run_heartbeat where workflow_name = 'hourly-watchlist';
 
-    if wl_last is null or p_now - wl_last > interval '70 minutes' then
+    if wl_last is null or p_now - GREATEST(wl_last, v_resume_baseline) > interval '70 minutes' then
       mins := extract(epoch from (p_now - coalesce(wl_last, p_now)))/60;
       perform public._raise_monitor(
         'watchlist', 'stale', '⚠️ Watchlist stalled',
@@ -180,7 +206,7 @@ begin
     select last_run_at, status into disc_last, disc_status
       from public.run_heartbeat where workflow_name = 'daily-discovery';
 
-    if disc_last is null or disc_last < date_trunc('day', p_now) + interval '21 hours' then
+    if disc_last is null or GREATEST(disc_last, v_resume_baseline) < date_trunc('day', p_now) + interval '21 hours' then
       perform public._raise_monitor(
         'discovery', 'stale', '⚠️ Discovery did not run',
         format('No daily-discovery run in today''s window (last: %s).',
@@ -202,7 +228,7 @@ begin
     select last_run_at into disc_in_last
       from public.run_heartbeat where workflow_name = 'daily-discovery-in';
 
-    if disc_in_last is null or disc_in_last < date_trunc('day', p_now) + interval '9 hours 30 minutes' then
+    if disc_in_last is null or GREATEST(disc_in_last, v_resume_baseline) < date_trunc('day', p_now) + interval '9 hours 30 minutes' then
       perform public._raise_monitor(
         'discovery-in', 'stale', '⚠️ NSE discovery did not run',
         format('No daily-discovery (region=in) run in today''s window (last: %s).',
@@ -226,7 +252,7 @@ begin
     select last_run_at into pp_last
       from public.run_heartbeat where workflow_name = 'publish-prices';
 
-    if pp_last is null or p_now - pp_last > interval '70 minutes' then
+    if pp_last is null or p_now - GREATEST(pp_last, v_resume_baseline) > interval '70 minutes' then
       perform public._raise_monitor(
         'publish-prices', 'stale', '⚠️ Dashboard prices stale',
         format('No publish-prices run since %s — pages/prices.json is not refreshing.',
