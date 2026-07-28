@@ -15,6 +15,25 @@
 -- INC-3 (FR25, NFR2): check_pipeline_health's pause-awareness + resume-baseline
 -- fix below reads public.kill_switch_state, defined in sql/kill_switch.sql —
 -- apply that file before (or in the same session as) this one.
+--
+-- RECONCILED 2026-07-28 (reviewer REV-062, blocker): check_pipeline_health()
+-- had three independently committed, mutually incompatible bodies — this
+-- file's INC-3 pause-check/resume-baseline fix, sql/fix_missing_degraded_checks.sql's
+-- REV-042 degraded-check branches, and sql/dedup_watchlist_health_check.sql's
+-- REV-047 ET/IST dedup — with no apply order that produced a correct function
+-- (whichever was applied last silently reverted the other two). The function
+-- below is the single reconciled body carrying ALL THREE: the kill-switch
+-- pause check + GREATEST(last_run_at, v_resume_baseline) resume-baseline fix
+-- on all four staleness comparisons (INC-3, FR25/NFR2,
+-- docs/design/operational-controls.md §13.4), the discovery-NA/discovery-IN/
+-- publish-prices degraded (`status <> 'ok'`) branches (REV-042), and the
+-- single parameterized ET/IST watchlist branch (REV-047). This file (the one
+-- INC-3 already edited, and where the base function is defined) is now the
+-- SOLE authoritative source for check_pipeline_health() — sql/fix_missing_degraded_checks.sql
+-- and sql/dedup_watchlist_health_check.sql are superseded; their bodies have
+-- been reduced to a pointer back here so they can no longer be applied and
+-- silently revert this function (see each file's header). git history retains
+-- their original bodies for reproducibility.
 -- =====================================================================
 
 -- --- alert state (dedup / state-machine) -----------------------------
@@ -111,11 +130,15 @@ declare
   ist time := (p_now at time zone 'Asia/Kolkata')::time;      -- Phase 6 D4: NSE/IST watchlist window
   wl_last timestamptz; wl_status text;
   disc_last timestamptz; disc_status text;
-  disc_in_last timestamptz;
-  pp_last timestamptz;
+  disc_in_last timestamptz; disc_in_status text;   -- REV-042: disc_in_status added (was unread before)
+  pp_last timestamptz; pp_status text;              -- REV-042: pp_status added (was unread before)
   mins numeric;
   v_paused boolean;
   v_resume_baseline timestamptz;
+  -- REV-047: which watchlist session (if any) is active right now, and its
+  -- label — computed once, replacing the old duplicated ET-block/IST-block.
+  v_session_active boolean := false;
+  v_session_label  text;
 begin
   if dow > 5 then
     return;   -- weekends: nothing is scheduled, so nothing to watch
@@ -141,42 +164,30 @@ begin
     return;   -- FR25: no alert evaluation at all while deliberately paused
   end if;
 
-  -- ===== WATCHLIST: stale or degraded, during the ET session + grace =====
-  -- #9/#12 fix: gate on real Eastern time, not a fixed UTC window. The old
-  -- 14:30-21:30 UTC window ran ~90 min past the ET close in EDT, firing a false
-  -- "stalled" alert at 20:50 UTC (post-close no-op runs don't write a heartbeat).
-  -- ET 10:15 = grace after the 09:30 open (lets the first run land); 16:00 = close.
-  -- (p_now at time zone 'America/New_York') is DST-aware in both EST and EDT.
-  -- Stale if newest heartbeat > 70 min old (~2 missed */30 cycles, allows a slow run).
+  -- ===== WATCHLIST: stale or degraded, during EITHER session + grace =====
+  -- REV-047 dedup: was two ~25-line near-identical branches (ET 10:15-16:00,
+  -- IST 10:00-15:30), collapsed into one, computing which session (if any) is
+  -- active first, then evaluating the stale/degraded/ok logic exactly once,
+  -- parameterized by v_session_label (used only in the one message string
+  -- that actually differed). Sessions never overlap (docs/design/data-and-flow.md
+  -- §6), so at most one of these is ever true.
+  -- #9/#12 fix (unchanged): gate on real Eastern/Kolkata time, not a fixed UTC
+  -- window — (p_now at time zone '...') is DST-aware. ET 10:15 = grace after
+  -- the 09:30 open, 16:00 = close; IST 10:00 = grace after the 09:15 open,
+  -- 15:30 = close (fixed offset, no DST). Stale if newest heartbeat > 70 min
+  -- old (~2 missed */30 cycles, allows a slow run).
+  -- INC-3 (FR25/NFR2, §13.4): staleness uses GREATEST(wl_last, v_resume_baseline)
+  -- so lifting a pause doesn't immediately false-alarm on a heartbeat that's
+  -- merely stale from the pause duration.
   if et >= time '10:15' and et <= time '16:00' then
-    select last_run_at, status into wl_last, wl_status
-      from public.run_heartbeat where workflow_name = 'hourly-watchlist';
-
-    if wl_last is null or p_now - GREATEST(wl_last, v_resume_baseline) > interval '70 minutes' then
-      mins := extract(epoch from (p_now - coalesce(wl_last, p_now)))/60;
-      perform public._raise_monitor(
-        'watchlist', 'stale', '⚠️ Watchlist stalled',
-        format('No hourly-watchlist run since %s (%s min ago). The pg_cron dispatch, PAT, or workflow may be down.',
-               coalesce(to_char(wl_last,'Mon DD HH24:MI UTC'),'never'),
-               coalesce(round(mins)::text,'?')),
-        5, interval '6 hours');
-    elsif wl_status is not null and wl_status <> 'ok' then
-      perform public._raise_monitor(
-        'watchlist', 'degraded', '⚠️ Watchlist degraded',
-        format('Latest hourly-watchlist run status = %s (%s). Some tickers skipped/errored.',
-               wl_status, to_char(wl_last,'Mon DD HH24:MI UTC')),
-        3, interval '12 hours');
-    else
-      perform public._clear_monitor('watchlist', '✅ Watchlist recovered',
-        format('hourly-watchlist running cleanly again (last run %s).',
-               to_char(wl_last,'Mon DD HH24:MI UTC')));
-    end if;
-
-  -- ===== NSE WATCHLIST: same checks during the IST session (10:00-15:30 IST) =====
-  -- Phase 6 D4. ET and IST sessions never overlap, so this shares the 'watchlist'
-  -- monitor key + the hourly-watchlist heartbeat; only one window is active at a
-  -- time. IST 10:00 = grace after the 09:15 open; 15:30 = close (fixed offset).
+    v_session_active := true;
+    v_session_label := 'ET';
   elsif ist >= time '10:00' and ist <= time '15:30' then
+    v_session_active := true;
+    v_session_label := 'IST';
+  end if;
+
+  if v_session_active then
     select last_run_at, status into wl_last, wl_status
       from public.run_heartbeat where workflow_name = 'hourly-watchlist';
 
@@ -184,9 +195,10 @@ begin
       mins := extract(epoch from (p_now - coalesce(wl_last, p_now)))/60;
       perform public._raise_monitor(
         'watchlist', 'stale', '⚠️ Watchlist stalled',
-        format('No hourly-watchlist run since %s (%s min ago) during the NSE session. The pg_cron dispatch, PAT, or workflow may be down.',
+        format('No hourly-watchlist run since %s (%s min ago)%s. The pg_cron dispatch, PAT, or workflow may be down.',
                coalesce(to_char(wl_last,'Mon DD HH24:MI UTC'),'never'),
-               coalesce(round(mins)::text,'?')),
+               coalesce(round(mins)::text,'?'),
+               case when v_session_label = 'IST' then ' during the NSE session' else '' end),
         5, interval '6 hours');
     elsif wl_status is not null and wl_status <> 'ok' then
       perform public._raise_monitor(
@@ -212,6 +224,12 @@ begin
         format('No daily-discovery run in today''s window (last: %s).',
                coalesce(to_char(disc_last,'Mon DD HH24:MI UTC'),'never')),
         4, interval '6 hours');
+    elsif disc_status is not null and disc_status <> 'ok' then   -- REV-042: was a dead read before this fix
+      perform public._raise_monitor(
+        'discovery', 'degraded', '⚠️ Discovery degraded',
+        format('Latest daily-discovery run status = %s (%s). Some screens errored or tickers skipped.',
+               disc_status, to_char(disc_last,'Mon DD HH24:MI UTC')),
+        3, interval '12 hours');
     else
       perform public._clear_monitor('discovery', '✅ Discovery recovered',
         format('daily-discovery ran (last run %s).', to_char(disc_last,'Mon DD HH24:MI UTC')));
@@ -225,7 +243,7 @@ begin
   -- overwrote its heartbeat evidence the same day. Expect today's region=in run
   -- after 09:30 UTC (the dispatch fires at 10:00).
   if t >= time '11:00' then
-    select last_run_at into disc_in_last
+    select last_run_at, status into disc_in_last, disc_in_status   -- REV-042: status added (was last_run_at only)
       from public.run_heartbeat where workflow_name = 'daily-discovery-in';
 
     if disc_in_last is null or GREATEST(disc_in_last, v_resume_baseline) < date_trunc('day', p_now) + interval '9 hours 30 minutes' then
@@ -234,6 +252,12 @@ begin
         format('No daily-discovery (region=in) run in today''s window (last: %s).',
                coalesce(to_char(disc_in_last,'Mon DD HH24:MI UTC'),'never')),
         4, interval '6 hours');
+    elsif disc_in_status is not null and disc_in_status <> 'ok' then   -- REV-042: new branch
+      perform public._raise_monitor(
+        'discovery-in', 'degraded', '⚠️ NSE discovery degraded',
+        format('Latest daily-discovery (region=in) run status = %s (%s). Some screens errored or tickers skipped.',
+               disc_in_status, to_char(disc_in_last,'Mon DD HH24:MI UTC')),
+        3, interval '12 hours');
     else
       perform public._clear_monitor('discovery-in', '✅ NSE discovery recovered',
         format('daily-discovery (region=in) ran (last run %s).',
@@ -249,7 +273,7 @@ begin
   -- an ever-growing "prices updated Nh ago").
   if (et >= time '10:15' and et <= time '16:00')
      or (ist >= time '10:00' and ist <= time '15:30') then
-    select last_run_at into pp_last
+    select last_run_at, status into pp_last, pp_status   -- REV-042: status added (was last_run_at only)
       from public.run_heartbeat where workflow_name = 'publish-prices';
 
     if pp_last is null or p_now - GREATEST(pp_last, v_resume_baseline) > interval '70 minutes' then
@@ -258,6 +282,12 @@ begin
         format('No publish-prices run since %s — pages/prices.json is not refreshing.',
                coalesce(to_char(pp_last,'Mon DD HH24:MI UTC'),'never')),
         3, interval '6 hours');
+    elsif pp_status is not null and pp_status <> 'ok' then   -- REV-042: new branch
+      perform public._raise_monitor(
+        'publish-prices', 'degraded', '⚠️ Dashboard prices degraded',
+        format('Latest publish-prices run status = %s (%s). Some tickers skipped.',
+               pp_status, to_char(pp_last,'Mon DD HH24:MI UTC')),
+        3, interval '12 hours');
     else
       perform public._clear_monitor('publish-prices', '✅ Dashboard prices recovered',
         format('publish-prices running again (last run %s).',

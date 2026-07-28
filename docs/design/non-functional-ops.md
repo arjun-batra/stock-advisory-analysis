@@ -87,9 +87,13 @@ sql/
                          #   phase5_monitoring.sql's monitor_alerts table was missing; apply order:
                          #   after phase5_monitoring.sql (see that file's own header).
   fix_missing_degraded_checks.sql, dedup_watchlist_health_check.sql
-                         #   NEW 2026-07-28 (REV-042/047), live-system fixes for check_pipeline_health(),
-                         #   reviewed but NOT YET APPLIED — apply dedup_watchlist_health_check.sql alone
-                         #   (the later, complete version) when release schedules deployment.
+                         #   SUPERSEDED 2026-07-28 (REV-062 reconciliation) — each independently committed
+                         #   a full check_pipeline_health() body that conflicted with INC-3's edit to
+                         #   phase5_monitoring.sql; no apply order produced a correct function. Their
+                         #   REV-042/REV-047 fixes are now folded into phase5_monitoring.sql's single
+                         #   reconciled function (see that file's header). These two files no longer
+                         #   define the function and must NOT be applied; kept only as non-applyable
+                         #   historical markers (git history has the original bodies).
   kill_switch.sql, admin_portal_rls.sql, admin_portal_tunables.sql,
   kill_switch_portal_grant.sql                        # DRAFT, 2026-07-26/27 CR, INC-3/5/6/7
 pages/
