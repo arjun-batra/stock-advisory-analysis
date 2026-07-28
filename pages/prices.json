@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-28T08:31:29.747084+00:00",
+  "generated_at": "2026-07-28T09:01:47.416317+00:00",
   "prices": {
     "AAPL": {
       "chg": 1.17,
@@ -20,10 +20,10 @@
       "price": 8.42
     },
     "BHARTIARTL.NS": {
-      "chg": -0.32,
+      "chg": -0.54,
       "currency": "INR",
       "market": "NSE",
-      "price": 1899.2
+      "price": 1895.0
     },
     "BNS.TO": {
       "chg": 0.65,
@@ -50,34 +50,34 @@
       "price": 326.57
     },
     "HDFCBANK.NS": {
-      "chg": -0.24,
+      "chg": -0.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 737.8
+      "price": 737.1
     },
     "HINDUNILVR.NS": {
-      "chg": -6.14,
+      "chg": -6.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 2041.0
+      "price": 2037.0
     },
     "ICICIBANK.NS": {
-      "chg": -1.36,
+      "chg": -1.6,
       "currency": "INR",
       "market": "NSE",
-      "price": 1426.1
+      "price": 1422.5
     },
     "INFY.NS": {
-      "chg": 2.67,
+      "chg": 2.6,
       "currency": "INR",
       "market": "NSE",
-      "price": 1108.0
+      "price": 1107.3
     },
     "ITC.NS": {
-      "chg": -0.58,
+      "chg": -0.47,
       "currency": "INR",
       "market": "NSE",
-      "price": 284.2
+      "price": 284.5
     },
     "L.TO": {
       "chg": 2.49,
@@ -86,10 +86,10 @@
       "price": 64.97
     },
     "LT.NS": {
-      "chg": 0.74,
+      "chg": 0.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 3834.0
+      "price": 3818.5
     },
     "NFLX": {
       "chg": 0.44,
@@ -104,7 +104,7 @@
       "price": 196.51
     },
     "RELIANCE.NS": {
-      "chg": -0.57,
+      "chg": -0.73,
       "currency": "INR",
       "market": "NSE",
       "price": 1270.7
@@ -116,10 +116,10 @@
       "price": 296.11
     },
     "SBIN.NS": {
-      "chg": -0.78,
+      "chg": -0.84,
       "currency": "INR",
       "market": "NSE",
-      "price": 1012.6
+      "price": 1012.0
     },
     "SHOP.TO": {
       "chg": 13.48,
