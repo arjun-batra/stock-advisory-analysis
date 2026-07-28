@@ -55,6 +55,17 @@ def test_default_model_is_gemini_2_5_flash(reload_config):
     assert cfg.GEMINI_MODEL == "gemini-2.5-flash"
 
 
+def test_default_ai_provider_is_gemini(reload_config):
+    """Pins the out-of-the-box AI_PROVIDER default (REV-080): the existing
+    get_provider() coverage in test_ai_provider.py monkeypatches
+    config.AI_PROVIDER to exercise the config-default selection path, but
+    none of it asserts the real unset-env default -- so a typo'd default
+    (e.g. "gemin") would leave the suite green while both entry points
+    (run_hourly.py/run_discovery.py) failed at startup."""
+    cfg = reload_config(AI_PROVIDER=None)
+    assert cfg.AI_PROVIDER == "gemini"
+
+
 def test_default_backup_model(reload_config):
     cfg = reload_config(GEMINI_MODEL_BACKUP=None)
     assert cfg.GEMINI_MODEL_BACKUP == "gemini-2.5-flash-lite"

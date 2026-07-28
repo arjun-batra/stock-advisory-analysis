@@ -1,4 +1,13 @@
-# Increment plan — 2026-07-26 change request (DRAFT, pending GATE 3)
+# Increment plan — 2026-07-26 change request — INC-3/INC-4 IMPLEMENTED, INC-5–7 DRAFT
+
+**Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch) and INC-4 (AI provider
+abstraction) are IMPLEMENTED** — dev-built, qa-tested, reviewer-cleared with zero blockers through Pass 15
+(`docs/review-log.md`). "IMPLEMENTED" here does **not** mean fully live-verified: INC-3's
+`sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral,
+`review-log.md` REV-070) — a deployment/scheduling obligation, not a design or code gap — and INC-4's AC6
+(live-Gemini smoke test) is deferred, not failed, pending a real `GEMINI_API_KEY` (`docs/handoff.md`).
+Phase-4 closure must not treat FR24–FR26/FR33 as live-verified until those two items resolve. **INC-5,
+INC-6, INC-7 (admin portal) remain genuinely DRAFT** — no dev work has started on them.
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -52,7 +61,9 @@ draft guarded only the `git pull --rebase`, leaving the push itself to fail the 
 lost race). See `docs/design/tunables-workflow-writeback.md` §16.4 for the full mechanism and exact YAML
 diff (and `docs/design/tunables-fallback.md` §16.4 for `scripts/config.py`'s fetch/fallback side).
 
-### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
+### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2) — **IMPLEMENTED** (dev-built, qa-tested, reviewer-cleared
+zero blockers through Pass 15; `sql/kill_switch.sql` not yet applied to the live Supabase project — see
+status note above)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
 (`kill_switch_state`, `kill_switch_audit`, `set_kill_switch()`); edits to `dispatch_github_workflow` and
 `check_pipeline_health` in `sql/scheduler_pgcron.sql` / `sql/phase5_monitoring.sql`. **No Python changes**
@@ -79,7 +90,9 @@ diff (and `docs/design/tunables-fallback.md` §16.4 for `scripts/config.py`'s fe
 6. Full existing test suite passes unmodified; no `scripts/*.py` file is touched by this increment (grep
    confirms zero diff outside `sql/`).
 
-### INC-4 — AI provider abstraction (FR33)
+### INC-4 — AI provider abstraction (FR33) — **IMPLEMENTED** (dev-built, qa-tested 5 of 6 AC,
+reviewer-cleared zero blockers through Pass 15; AC6 live-Gemini smoke test deferred pending real
+credentials — see status note above)
 **Design:** `docs/design/operational-controls.md` §14. **Files:** new `scripts/ai_provider.py`; refactor
 `scripts/ai_judge.py`. No other file changes — `run_hourly.py`/`run_discovery.py` are untouched.
 **Acceptance criteria:**
@@ -97,7 +110,7 @@ diff (and `docs/design/tunables-fallback.md` §16.4 for `scripts/config.py`'s fe
    (`non-functional-ops.md` §9); `get_provider("bogus")` raises `SystemExit` with a clear message.
 6. A real smoke-test batched call against live Gemini still returns valid verdicts through the new path.
 
-### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD (FR27, FR28, FR29, NFR5, NFR6)
+### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD (FR27, FR28, FR29, NFR5, NFR6) — **DRAFT** (not yet built)
 **Design:** `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8. **Files:** new `admin-portal/`
 Next.js app (Vercel); new `sql/admin_portal_rls.sql` (`admin_allowlist`, `is_admin()`, watchlist/holdings
 write policies).
@@ -137,7 +150,7 @@ Keep the migration's function signature stable once INC-6 is built against it.
    version-controlled starting point, but INC-5 must re-check the live project directly since it's the
    first increment that makes `authenticated` an internet-reachable principal at all.
 
-### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
+### INC-6 — Admin portal: tunables editor (FR30) — **DRAFT** (not yet built) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI),
 `docs/design/tunables-fallback.md` §16.4 (`scripts/config.py`'s fetch/cache-fallback chain, timeout), and
 `docs/design/tunables-workflow-writeback.md` §16.4 (which workflow commits the cache, REV-040's
@@ -262,7 +275,7 @@ REV-040 mitigations, both incorporated above.
     `jobs.watchlist`, not at the workflow's top level (`yq`/`grep` the YAML structure) — no top-level
     `permissions:` block exists in the file.
 
-### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32)
+### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — **DRAFT** (not yet built)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
 reference). **Files:** `admin-portal/app/track-record/`; kill-switch toggle on the shared authenticated
 layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
