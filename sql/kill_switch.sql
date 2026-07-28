@@ -5,12 +5,16 @@
 -- copied verbatim from §13.2/§13.3 (RLS/REVOKE lockdown per reviewer's
 -- REV-033 blocker finding, already fixed in the design doc this implements).
 --
--- Apply order: after sql/scheduler_pgcron.sql and sql/phase5_monitoring.sql
--- (this file only adds new tables/a new function; the edits those two files
--- need — the pause check inside dispatch_github_workflow, and the
--- pause-awareness + resume-baseline fix inside check_pipeline_health — are
--- committed as `create or replace function` blocks directly in those files,
--- not here, so each function's full current definition stays in one place).
+-- Apply order: this file FIRST, before sql/scheduler_pgcron.sql and
+-- sql/phase5_monitoring.sql — dispatch_github_workflow and
+-- check_pipeline_health (edited in those two files) both `select ... from
+-- public.kill_switch_state`, so applying them before this table exists would
+-- hit a runtime error on a live project. This file only adds new tables/a new
+-- function; the edits those two files need — the pause check inside
+-- dispatch_github_workflow, and the pause-awareness + resume-baseline fix
+-- inside check_pipeline_health — are committed as `create or replace
+-- function` blocks directly in those files, not here, so each function's
+-- full current definition stays in one place.
 --
 -- NOT APPLIED. dev/release coordinate actual deployment separately (Arjun
 -- has deferred applying any SQL changes to the live Supabase project for
