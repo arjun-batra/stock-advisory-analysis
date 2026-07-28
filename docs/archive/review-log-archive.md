@@ -2188,3 +2188,51 @@ instances anywhere outside `docs/archive/` and `requirements_docs/`. This closes
 REV-023-through-REV-032 chain (spanning Passes 7, 8, and 9) with zero open items. Pass 9 is archived here
 in full per `CLAUDE.md`'s doc-hygiene rule; see `docs/review-log.md` Pass 10 for the current, active review
 state (now empty of open items from this chain).
+
+---
+
+## Pass 10 — 2026-07-25 (final closing verification: REV-023–REV-032 chain) — ARCHIVED 2026-07-28
+
+Archived at Pass 12's close. Pass 10 closed the REV-023–REV-032 template-conformance chain with a CLEAR
+verdict, zero new findings, and zero open items of any severity. It independently re-verified REV-028
+(dev, `6b0f077`+`45bb3b2`), REV-029 (qa, `6b0f077`), REV-030 (qa, `6b0f077`), REV-031 (release,
+`45bb3b2`), and REV-032 (pm, `45bb3b2`) by direct read of current file state, re-ran repo-wide greps for
+the two recurring stale-citation defect classes (`design.md §13–18`, `requirements.md §11`) plus a
+broader `design.md §<N>` sanity sweep, and found zero live hits outside `docs/archive/` and
+`requirements_docs/`. Nothing from Pass 10 or earlier remains open. Full text is in git history at the
+Pass-11 commit.
+
+---
+
+## Pass 11 — 2026-07-28 (proactive whole-system architecture & efficiency audit) — ARCHIVED 2026-07-28
+
+Archived at Pass 12's close, per `CLAUDE.md`'s doc-hygiene rule. Pass 11 was a deliberately broad
+architecture/efficiency audit requested by Arjun, covering every file under `scripts/`, `sql/`, `tests/`,
+`pages/`, `.github/workflows/`, plus `docs/design.md` and all 8 design modules, `docs/requirements.md`,
+`docs/idea-brief.md`, `docs/runbook.md`, `docs/handoff.md`, `docs/test-report.md`. It logged 29 findings
+(REV-033 through REV-061): 1 blocker, 10 majors, 18 minors, across `[SECURITY]` 5, `[DESIGN-GAP]` 11,
+`[CODE-GAP]` 1, `[HARDCODED]` 4, `[BLOAT]` 7, `[TEST-GAP]` 1, `[REQUIREMENTS-GAP]` 1. Verdict was
+**NOT CLEAR — one blocker** (REV-033, RLS never enabled on the four new tables). Full finding text is in
+git history at the Pass-12 commit.
+
+**Closing disposition (Pass 12, 2026-07-28 — independently re-verified by direct read of current file
+state, not taken on commit messages or agent self-reports):**
+
+- **RESOLVED (22):** REV-033 (blocker — all four new tables plus `monitor_alerts` now `enable row level
+  security`; `kill_switch_audit` additionally `force`d with `revoke insert, update, delete ... from
+  public, anon, authenticated`; every surviving `to authenticated` policy is `is_admin()`-gated; zero
+  anon policies anywhere on the new tables), REV-034 (INC-5 AC8 grant/policy enumeration added),
+  REV-035 (`sql/schema.sql` captured; runbook/README apply order corrected), REV-036 (validated,
+  merge-never-shrink `write_tunables_cache_if_fetched()`), REV-037 (all four cited locations now state
+  two-tier + fail-loud; every surviving "third tier" string in the repo is a negation, not an
+  assertion), REV-038, REV-040 (Decision #29 + both mitigations in design + INC-6 AC15/AC16), REV-041,
+  REV-044, REV-045, REV-046, REV-050, REV-051, REV-053, REV-054, REV-055
+  (`tests/test_run_orchestration.py`, 13 tests covering all five named gaps), REV-056, REV-057,
+  REV-058 (NFR7 added), REV-059 (a/b/c all fixed), REV-060, REV-061.
+- **RESOLVED-with-dependency (2):** REV-042 and REV-047 — the corrective SQL is written and correct in
+  isolation (`sql/fix_missing_degraded_checks.sql`, `sql/dedup_watchlist_health_check.sql`) but is not
+  deployable as written; see REV-062 in `docs/review-log.md` Pass 12.
+- **STILL OPEN, carried into Pass 12 (5):** REV-039 (runbook §2.2 residual), REV-043 (design call made,
+  code not written), REV-048 (linked table added, drift test not built, citations wrong — see REV-067),
+  REV-049 (portal CI story still undecided), REV-052 (code side done, config-audit-baseline side not).
+  Full carried text lives in `docs/review-log.md` Pass 12, §"Carried forward".

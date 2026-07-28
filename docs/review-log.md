@@ -6,643 +6,431 @@ review cycle; previously logged items are re-checked and marked RESOLVED with da
 
 ---
 
-## Passes 1–9 (2026-07-12 through 2026-07-25) — archived
+## Passes 1–11 (2026-07-12 through 2026-07-28) — archived
 
-Passes 1–9 are archived in full to `docs/archive/review-log-archive.md` per `CLAUDE.md`'s doc-hygiene rule
-("reviewer: on clearing an increment, move RESOLVED entries to `docs/archive/review-log-archive.md`").
-Passes 1–6 were archived 2026-07-25 when REV-022 (Pass 6's one remaining open item) was independently
-confirmed RESOLVED. Passes 7–8 were archived the same day, at Pass 9's close, once their combined open
-items (REV-023 through REV-027) were all independently confirmed RESOLVED. Pass 9 itself was archived
-2026-07-25 at this Pass 10's close, once its five open items (REV-028 through REV-032) were all
-independently confirmed RESOLVED — see the Pass 10 entry below for the closing verification. Nothing from
-Passes 1–9 remains open. Agents never read `docs/archive/` per `CLAUDE.md`.
+Passes 1–11 are archived in full to `docs/archive/review-log-archive.md` per `CLAUDE.md`'s doc-hygiene
+rule. Passes 1–9 were archived across Passes 6, 9 and 10 as their chains closed; Passes 10 and 11 were
+archived 2026-07-28 at this Pass 12's close, with Pass 11's per-finding closing disposition (REV-033
+through REV-061) appended there. Nothing from Passes 1–10 remains open. Pass 11's five still-open items
+are carried forward in full below and are **not** in the archive as open work. Agents never read
+`docs/archive/` per `CLAUDE.md`.
 
 ---
 
-## Pass 10 — 2026-07-25 (final closing verification: REV-023–REV-032 chain, Passes 7–9)
+## Pass 12 — 2026-07-28 (combined: Pass-11 closing verification + INC-3 diff-scoped clearance)
 
-**Scope:** last pass in the template-conformance audit chain that started at Pass 7. Independently
-re-verify REV-028 through REV-032 (Pass 9's five open minor items) against current file state, re-run a
-fresh repo-wide grep for the two defect classes that recurred across this whole chain (stale
-`design.md §13–18` citations, stale `requirements.md §11` citations), and do one broader sanity sweep for
-any `design.md §<N>` citation this chain hasn't already checked. Relevant commits: `6b0f077` (REV-028's
-four originally-flagged instances, REV-029, REV-030) and `45bb3b2` (a fifth REV-028 instance dev caught
-independently, plus REV-031 and REV-032).
+**Scope.** Diff-scoped to the 42 files changed since Pass 10's clearance (`d8e3988..HEAD`), covering two
+jobs at once:
 
-### 1. Independent re-verification of REV-028 through REV-032
+1. **Part 1 — independent re-verification of REV-033 through REV-061** (Pass 11's 29 findings) against
+   current file content. Same standard Pass 10 used to close the REV-023–032 chain: read the actual
+   current state of every cited location; a commit message or an agent's self-report is not evidence.
+2. **Part 2 — INC-3 (kill-switch, FR24/FR25/FR26/NFR2) diff-scoped clearance.** Design:
+   `docs/design/increment-plan.md` "### INC-3 — Kill-switch" (6 ACs) and
+   `docs/design/operational-controls.md` §13. Files under audit: new `sql/kill_switch.sql`, edits to
+   `sql/scheduler_pgcron.sql` and `sql/phase5_monitoring.sql`. qa's own pass:
+   `docs/test-report.md` (PASS conditional, BUG-002 filed and fixed).
 
-- **REV-028 (`docs/handoff.md`, dangling `§18.4`/`§18.5` citations, owner dev).** Read `docs/handoff.md` in
-  full (102 lines). Zero `§18` references remain anywhere in the file — all four originally-flagged
-  citations (former lines 78, 81, 92, 99) now name the "Retired: shadow-pilot tracks" note directly, no
-  number, and the fifth instance the task flagged (former line 54, inside the "New file" section) also
-  reads correctly today (that line now cites "design §8," an unrelated, still-valid section, not §18) —
-  confirmed the 5th-instance fix landed. **RESOLVED**, confirmed by direct read, not by commit message.
-- **REV-029 (`docs/test-report.md:35`, dangling `§18`, owner qa).** Read `docs/test-report.md` in full.
-  Line 35 (renumbered slightly in the current file but the same sentence) now reads "...marked 'Phase 6 —
-  Shadow Pipeline' (P6-1..P6-5) RETIRED with a pointer to the 'Retired: shadow-pilot tracks' note in
-  `docs/design.md`" — no stale `§18` number. **RESOLVED**, confirmed by direct read.
-- **REV-030 (`qa/test-plan-full-codebase.md:103`, P4-5's stale `§4.6`, owner qa).** Read the P4-5 row
-  directly: now cites "`docs/design/components.md` §4.6," matching P1-2's already-correct form for the
-  identical fact exactly, as REV-030 asked for. **RESOLVED**, confirmed by direct read.
-- **REV-031 (`docs/runbook.md:86`, wrong-section CORS citation, owner release).** Read the §2.3 table row
-  directly: now cites "`docs/design/frontend.md` §11 and `docs/requirements.md` Decision #18" for the
-  CORS/`prices.json` workaround — the correct module and section (an exact content and Decision-number
-  match, as REV-031 specified). **RESOLVED**, confirmed by direct read.
-- **REV-032 (`README.md`, stale handoff/runbook claim, owner pm).** Read the "How to run" note in full: it
-  now correctly states `docs/runbook.md` exists, is "the dedicated deploy runbook, owned by release,
-  covering general deploy procedure — not to be confused with `docs/handoff.md`, which covers only the
-  shadow-tracks-removal increment." The SQL migration-order `(inferred)` marker is gone, replaced with a
-  direct citation to `docs/runbook.md` §2.3 and the exact apply order. The Python-version item, which
-  REV-032 said could "stay as-is or be resolved," was resolved: it now cites `python-version: "3.12"`
-  directly from the three cron-triggered workflow files, explicitly noting `docs/runbook.md` itself doesn't
-  state a Python version. **RESOLVED**, confirmed by direct read.
-
-All five are logged RESOLVED with today's date and commit citations in the closure disposition appended to
-the archived Pass 9 entry (`docs/archive/review-log-archive.md`).
-
-### 2. Fresh repo-wide grep for the two recurring defect classes
-
-Grepped the whole repo (excluding `.git/`, `docs/archive/`, `requirements_docs/`) for
-`design\.md.{0,10}§(1[3-8])` and `requirements\.md.{0,15}§11`:
-
-- **`design\.md.{0,10}§(1[3-8])`:** zero live hits. The only matches anywhere in the repo are inside
-  `docs/archive/review-log-archive.md` (historical narrative, out of scope) and `docs/review-log.md`'s own
-  Pass 9/10 narrative text describing the historical defect (not a live citation pointing a reader at a
-  dead section).
-- **`requirements\.md.{0,15}§11`:** zero live hits. The only matches are inside
-  `docs/archive/review-log-archive.md`/`docs/archive/test-report-archive.md` (historical, out of scope) and
-  `docs/requirements.md`'s own changelog describing its own history (an accepted exception carried since
-  Pass 9). `docs/review-log.md`'s own narrative text (this file, describing the historical defect) also
-  matches but is not a live citation.
-- **A broader unprefixed sweep** for bare `§1[3-8]` and `§11` (not requiring a `design.md`/`requirements.md`
-  prefix, to catch any citation whose wording drifted) turned up additional hits, all confirmed benign on
-  inspection: `pages/dashboard.html:71,171` and `sql/dashboard_latest_call_view.sql:2,43` cite **`SD §13`**
-  — the *Solution Design* document (`requirements_docs/SD.md`), a completely different, separate historical
-  document that was never renumbered as part of this chain (its own §13 genuinely still exists and is
-  correct); `docs/requirements.md:131` similarly cites `SD §13`, same story. `docs/requirements.md`'s own
-  changelog (lines 283–284) uses bare "§11" referring to its own past self, already an accepted exception.
-  `docs/design/frontend.md`, `docs/design/foundations.md`, `docs/design/non-functional-ops.md`, and
-  `docs/design.md` itself all correctly cite the **new**, correct `frontend.md §11` (CORS section,
-  post-split) — not stale. No genuine hit of either defect class found anywhere live.
-
-**Zero hits outside the already-accepted exceptions. This chain is done.**
-
-### 3. Broader sanity sweep — `design.md §<N>`, any section number
-
-Grepped the whole repo for `design\.md §` (any number) and spot-checked four hits not already checked in
-Pass 9's own sweep or in step 1/2 above:
-
-- `CLAUDE.md:53` and `.claude/commands/spin-up-team.md:65` — both contain the identical illustrative
-  example string "e.g., 'implement INC-3 per design.md §4; files: src/x.py, src/y.py'" inside the
-  pipeline-template documentation itself (describing how *any* subagent brief should cite a document, in
-  the abstract). Not a citation into this project's actual `docs/design.md` content and not asserting
-  current section state — not a stale citation, no defect.
-- `tests/test_state.py:3` — "docs/design.md §0 #1/#2" — §0 (load-bearing decisions) correctly stayed in the
-  thin index post-split and was never renumbered. Correct, already independently confirmed in Pass 9's own
-  read of this file (docstring/comment-only edits, no logic change since).
-- `docs/design.md:24` — the module map's own row for "this file": "§0, §15" — matches the file's actual
-  `## 0` and `## 15` headers exactly, already confirmed accurate in Pass 9's full read.
-
-No further staleness found in this broader sweep.
-
-### 4. Test suite — same standing method caveat as every prior pass
-
-No shell/execute tool was available this session, so `python3 -m pytest -q --tb=short` could not be run
-directly. No `tests/` files changed since Pass 9's last structural comparison (only `docs/`-tree files were
-touched by the REV-028/029/030/031/032 fixes, confirmed by which files were read/checked above), so Pass
-9's "still 144/144" conclusion stands unchanged; not re-derived independently this pass since nothing in
-its evidentiary basis (`scripts/`, `tests/` file listings) could have changed. Same standing recommendation
-carried since Pass 2: the orchestrator or qa should execute `pytest -q` directly for a machine-verified
-confirmation.
-
-### Chain closure
-
-**REV-023 through REV-032 — the entire template-conformance audit chain spanning Passes 7, 8, and 9 — is
-now fully resolved. Zero open items remain from this chain.** Pass 9 (with the REV-028–032 closure
-disposition appended) is archived in full to `docs/archive/review-log-archive.md` per `CLAUDE.md`'s
-doc-hygiene rule, alongside Passes 1–8 already archived there.
-
-### Pass 10 summary
-
-**New findings by tag:** none. Zero new `[BLOCKER]`/`[MAJOR]`/`[MINOR]` findings of any tag surfaced during
-this closing verification — the fresh sweep for both recurring defect classes and the broader sanity sweep
-both came back clean.
-
-**Resolved this pass:** REV-028 (dev, `6b0f077`+`45bb3b2`), REV-029 (qa, `6b0f077`), REV-030 (qa,
-`6b0f077`), REV-031 (release, `45bb3b2`), REV-032 (pm, `45bb3b2`) — all five independently re-confirmed by
-direct read of current file state, not taken on commit messages alone.
-
-**Open blocker count: 0.**
-**Open major count: 0.**
-**Open minor count: 0.**
-
-### Verdict — Pass 10
-
-**CLEAR. The REV-023–REV-032 chain (Passes 7 through 9) is genuinely, fully closed — 0 blockers, 0 majors,
-0 minors open from this chain or from any prior pass.** Nothing from before Pass 7 remains open either
-(confirmed by the archive's own header note, itself independently re-checked this pass by reading
-`docs/archive/review-log-archive.md`'s front matter). The review log (`docs/review-log.md`) currently holds
-only this Pass 10 entry, with zero open items — the pipeline is clear to continue with no reviewer-side
-blockers pending anywhere in the codebase.
+**Method caveat (standing, unchanged since Pass 2, and the same constraint qa worked under):** no
+shell/execute tool and no live Supabase access this session. `pytest -q` was not run by me; no
+`list_tables`/`pg_class` introspection was possible. Every finding is derived from direct file reads,
+cited by `file:line`. Arjun has explicitly deferred applying any SQL from this change request to the live
+project, so INC-3's AC1–AC5 are unverifiable by anyone — reviewer included — until apply time. That
+deferral is respected, not worked around.
 
 ---
 
-## Pass 11 — 2026-07-28 (proactive whole-system architecture & efficiency audit)
+### 1. Part 1 — REV-033 through REV-061: verification results
 
-**Requested by:** Arjun, via the orchestrator. **Nature:** deliberately broader than both the per-increment
-diff-scoped pass and the standard Phase-4 closure audit. In addition to the five standard passes, this one
-hunts for *inefficiencies, redundancies, over-engineering, silent-failure modes, and duplicated state that
-must be manually kept in sync* — the failure class Arjun caught personally during the 2026-07-27/28
-tunables design pass (a default value living in three places at once).
+**22 of 29 confirmed fully RESOLVED. 2 resolved-with-dependency. 5 still open.** Per-finding disposition
+is recorded in `docs/archive/review-log-archive.md` alongside the archived Pass 11 entry. The two the
+task singled out for extra scrutiny:
 
-**Scope read in full this pass:** every file under `scripts/` (8 modules), `sql/` (4 files), `tests/` (9
-files), `pages/` (3 files), `.github/workflows/` (4 files), `requirements.txt`, `.gitignore`, `README.md`;
-`docs/design.md` + all 8 modules under `docs/design/` (including the three DRAFT modules for INC-3–INC-7);
-`docs/requirements.md`, `docs/idea-brief.md`, `docs/runbook.md`, `docs/handoff.md`, `docs/test-report.md`.
+- **REV-033 (blocker, `[SECURITY]`) — RESOLVED 2026-07-28, verified by direct read of all five tables.**
+  - `kill_switch_state`: `alter table public.kill_switch_state enable row level security;`
+    (`sql/kill_switch.sql:33`, mirrored at `docs/design/operational-controls.md:65`), zero policies.
+  - `kill_switch_audit`: `enable row level security` (`:54`) **and** `force row level security` (`:55`)
+    **and** `revoke insert, update, delete on public.kill_switch_audit from public, anon, authenticated;`
+    (`:56`) — all three of REV-033's asks present, with the BYPASSRLS interaction and its
+    verify-at-apply-time caveat written into the file (`:57-82`).
+  - `admin_allowlist`: `alter table public.admin_allowlist enable row level security;`
+    (`docs/design/admin-portal.md:54`), zero policies, stated explicitly.
+  - `tunables`: `alter table public.tunables enable row level security;`
+    (`docs/design/admin-portal-tunables.md:53`).
+  - `monitor_alerts`: new `sql/enable_monitor_alerts_rls.sql:24`, with its apply-order position and
+    idempotency documented.
+  - **Zero anon policies exist anywhere on the new tables.** I re-derived this rather than trusting the
+    comments: a repo-wide grep of `sql/` and `docs/design/` for `create policy` returns exactly five
+    live policies — `anon_read_watchlist` and `anon_read_call_log` (`sql/schema.sql:59,112`, both
+    pre-existing production behaviour backing the public dashboard/detail page, correctly captured by
+    REV-035's extraction, not new), and `admin_write_watchlist` / `admin_write_holdings` /
+    `admin_write_tunables` / `admin_read_kill_switch` (all `to authenticated` **and** gated by
+    `using (public.is_admin())`). No new table grants `anon` anything.
 
-**Deliberately NOT re-flagged** (already found and fixed 2026-07-28, or already documented as an accepted
-risk): the `ALERTS_ENABLED` seed-value bug (`admin-portal-tunables.md` §16.4 "Seed migration"); the removed
-third hardcoded-literal fallback tier; idea-brief accepted risks #1–#8 as such (the Supabase SPOF, the
-client-side dashboard gate, holiday calendars, no spam control, the CORS/`prices.json` posture, Decision
-#17's ungated detail page). Where an accepted risk has a genuinely *new* dimension, that dimension is
-logged and the accepted part is explicitly excluded.
+- **REV-037 (major, `[DESIGN-GAP]`) — RESOLVED 2026-07-28 at all four cited locations; one residual
+  logged separately as REV-068.** All four originally-flagged statements now read two-tier + fail-loud:
+  `docs/design/non-functional-ops.md:59-60`, `:112-113` (the one that previously specified the *opposite*
+  of the decided behaviour — it now states the fail-loud `SystemExit` posture and defers the mechanism to
+  `tunables-fallback.md` rather than restating it), `:178-179` ("**no third, hardcoded-literal tier**"),
+  and `docs/design/admin-portal.md:123-124`. I then swept the whole repo for `3-tier|three-tier|third
+  tier|third-tier|hardcoded literal|tier 3` and checked **every** live hit by reading it in context:
+  each surviving occurrence is a *negation* of the third tier (`tunables-fallback.md:76,84,87,93`
+  explaining why it was removed; `tunables-workflow-writeback.md:165` "not the permanent third tier";
+  `admin-portal.md:128` "to a stale '3-tier' description once already, REV-037";
+  `increment-plan.md:30,149-150`; `requirements.md:387` "not a fixed hardcoded literal"), never an
+  assertion of it. One near-miss checked and cleared: `non-functional-ops.md:176` says the table is a
+  "**third tunables surface**" — that is surfaces (config.py env / workflow `vars` / Supabase table),
+  not fallback tiers, and is correct. Zero surviving stale third-tier references in design.
+  `docs/requirements.md` is the one document the correction never reached at all — REV-068.
 
-**Method caveat (standing, unchanged since Pass 2):** no shell/execute tool this session, so `pytest -q`
-was not run and no live Supabase introspection (`list_tables`, `get_advisors`) was possible. Every finding
-below is derived from direct file reads, cited by `file:line`. Findings REV-033 and REV-034 in particular
-should be **confirmed against the live project** before or alongside remediation — the repo alone cannot
-prove the live RLS posture, which is itself REV-035.
+**Module-split guideline — RESOLVED.** Every file under `docs/design/` is now comfortably under the ~400
+line guidance: `increment-plan.md` 279 (was flagged at 450), `tunables-fallback.md` 295,
+`operational-controls.md` 365, `components.md` 255, `admin-portal.md` 235, `design.md` 190,
+`non-functional-ops.md` 189, `tunables-workflow-writeback.md` 178, `data-and-flow.md` 119,
+`admin-portal-tunables.md` 120, `foundations.md` 87, `frontend.md` 51. Nothing over. No finding logged.
+(`docs/runbook.md` 429 and `docs/requirements.md` 414 are over 400 but the CLAUDE.md guidance names
+`design.md` specifically, and both are single-owner reference documents with no module structure to
+split into — not flagged.)
+
+---
+
+### 2. Part 2 — INC-3 diff-scoped audit
+
+**Traceability, requirements → code (pass 1).** FR24 → `operational-controls.md` §13.1/§13.2 → the pause
+guard at `sql/scheduler_pgcron.sql:52-58`, placed correctly *before* the Vault PAT lookup and the
+`net.http_post` call, so no HTTP request is constructed while paused. I independently re-derived qa's
+five-dispatch-path claim rather than accepting it: `dispatch_watchlist_if_open()`
+(`phase5_monitoring.sql:288-308`), `dispatch_watchlist_nse_if_open()` (`scheduler_pgcron.sql:135-154`),
+`discovery-dispatch` (`:113-117`), `discovery-dispatch-nse` (`:166-167`) and `publish-prices`
+(`:171-172`) all reach GitHub only via `dispatch_github_workflow`, and the only other `net.http_post`
+call site in the repo is `send_ntfy` (`phase5_monitoring.sql:40`), which is not a dispatch path. qa's
+claim holds. FR25 → §13.4 → `phase5_monitoring.sql:136-142`, early `return` before any
+`_raise_monitor`/`_clear_monitor`, and `send_ntfy` is only ever reached from inside those two, so zero
+alerts while paused is structural, not incidental. FR26 → §13.2/§13.3 → `sql/kill_switch.sql:47-53`
+(audit table) and `:94-108` (`set_kill_switch`, exactly one update + one insert per call). NFR2
+(extended) → §13.4 → `GREATEST(..., v_resume_baseline)` at `phase5_monitoring.sql:155, 183, 209, 231,
+255` — all four staleness checks plus the second watchlist-session branch, decision-only, with alert
+message text still interpolating the raw un-adjusted timestamp exactly as §13.4 requires.
+
+**BUG-002 — confirmed genuinely fixed.** `sql/kill_switch.sql:8-13` now reads "Apply order: this file
+FIRST, before sql/scheduler_pgcron.sql and sql/phase5_monitoring.sql", which agrees with
+`sql/scheduler_pgcron.sql:16-18`, `sql/phase5_monitoring.sql:15-17` and `docs/handoff.md:43-44`. All
+four sources now state the same order. Read directly, not taken from the fix report.
+
+**Traceability, code → requirements (pass 2) — clean.** Nothing in INC-3's SQL does anything outside
+FR24–FR26/NFR2. `p_source` supports FR26's "actor/source"; the INC-7 forward-reference comments describe
+future work without implementing it. No `[SCOPE-CREEP]`.
+
+**Hardcoding (pass 3) — clean for this increment.** `ruff.toml` now exists so `audit.yml`'s lint gate is
+live (REV-049a). INC-3 introduces no tunable literals: the `70 minutes` threshold and session bounds are
+pre-existing and already tracked by REV-048's linked table.
+
+**Leanness (pass 4) — clean for this increment.** The comment volume in `sql/kill_switch.sql` is high
+(~50 of 129 lines) but every block is load-bearing rationale — the BYPASSRLS interaction, the
+verify-at-apply-time instruction, the INC-7 forward contract. Not narration, not dead code, no
+commented-out SQL. Not flagged.
+
+**Security (pass 5) — clean for this increment.** No committed secret anywhere in the changed file set
+(re-swept independently). `set_kill_switch` is `SECURITY DEFINER` with `set search_path = ''`, fully
+qualifies every reference, and revokes `execute` from `public, anon, authenticated`
+(`sql/kill_switch.sql:110`) — consistent with every other definer function in the codebase. One
+behaviour worth recording, not a defect: `select paused into v_paused ... where id = true` leaves
+`v_paused` NULL if the row is absent, so `dispatch_github_workflow` **fails open** (dispatches) when
+`kill_switch_state` is missing. That matches the design as written and is the safer default for a
+trading pipeline; noted here so it is a recorded decision rather than an accident.
+
+**What qa's static-only review missed — see REV-062 below.** qa scoped its review to the three files the
+increment touched and did not consider that two *other* committed migrations redefine the same function.
+That is the one real defect this pass found.
 
 ---
 
 ### BLOCKER
 
-**REV-033 — `[SECURITY]` — blocker — every new table in the DRAFT increments creates RLS policies without
-ever enabling RLS.**
-Location: `docs/design/operational-controls.md:56-73` (`kill_switch_state`, `kill_switch_audit`);
-`docs/design/admin-portal.md:49-59` (`admin_allowlist`); `docs/design/admin-portal-tunables.md:40-67`
-(`tunables`). Live instance: `sql/phase5_monitoring.sql:17` (`monitor_alerts`).
-Description: none of the four new tables' DDL contains `alter table … enable row level security`. In
-Postgres a `create policy` is **inert** until RLS is enabled on the table, and Supabase's default grants
-expose every `public`-schema table to the `anon` and `authenticated` roles through PostgREST. The anon
-publishable key is published in this repo (`pages/dashboard.html:102`, `pages/detail.html:51`), so as
-drafted:
-- anyone could `update public.kill_switch_state set paused = true` and **silently pause the entire
-  pipeline** — FR25 then correctly suppresses the dead-man monitor, so the outage is invisible;
-- anyone could `insert into public.admin_allowlist` their own email and become "the admin", defeating
-  `is_admin()` and therefore **every** RLS policy in INC-5/6/7 at once (§16.2 calls `is_admin()` "the single
-  source of truth for who is allowed to write" — it is only as strong as the table it reads);
-- anyone could rewrite `public.tunables` (including `GEMINI_MODEL` and `ALERTS_ENABLED`);
-- `kill_switch_audit`'s "append-only, never updated/deleted" property (§13.2) is asserted in a comment and
-  enforced by nothing.
-The live `monitor_alerts` table has the same omission in its committed DDL, which contradicts
-`docs/design/data-and-flow.md:66` ("RLS is on for every table") — that claim cannot be verified from the
-repo (see REV-035) and should be checked against the live project.
-Note this is *not* a lapse of convention — the same files revoke `execute` from `public, anon,
-authenticated` on every `SECURITY DEFINER` function, correctly and consistently. The table-level equivalent
-was simply never written down.
-Suggested fix: for each new table, add `alter table … enable row level security;` (plus `force row level
-security` for the audit table), explicitly state that no `anon` policy exists, and `revoke insert, update,
-delete on public.kill_switch_audit from public, anon, authenticated` so the append-only claim is real.
-Owner: **tech-lead** (design), then dev at INC-3/5/6/7 build time; the live `monitor_alerts` check is
-tech-lead + orchestrator.
+**REV-062 — `[CODE-GAP]` / `[DESIGN-GAP]` — blocker — `check_pipeline_health()` now has three mutually
+exclusive definitions committed to the repo, and no apply order produces a correct one; the runbook's own
+instruction silently reverts FR25 and NFR2.**
+
+Location: `sql/phase5_monitoring.sql:104-267`; `sql/fix_missing_degraded_checks.sql:39-…`;
+`sql/dedup_watchlist_health_check.sql:35-166`; `docs/runbook.md:81`.
+
+Description: three files each contain a full `create or replace function public.check_pipeline_health`.
+Each is missing what the others have:
+
+- `sql/phase5_monitoring.sql` (INC-3's edit) **has** the kill-switch pause check (`:136-142`) and the
+  resume-baseline `GREATEST` on all four staleness comparisons, and **lacks** REV-042's degraded branches
+  (`disc_status` is still selected at `:206` and never read — the exact dead read REV-042 was filed
+  about) and REV-047's dedup.
+- `sql/dedup_watchlist_health_check.sql` **has** REV-042's three degraded branches (`:106, :129, :154`)
+  and REV-047's single parameterised watchlist branch, and **lacks** the kill switch entirely: no
+  `v_paused` declaration, no `select paused ... from public.kill_switch_state`, no
+  `if v_paused then return`, and all four staleness checks use the raw `wl_last`/`disc_last`/
+  `disc_in_last`/`pp_last` with **no** `GREATEST(..., v_resume_baseline)` (`:73, :100, :123, :148`).
+  Confirmed by reading the file in full and by grepping it for `v_paused|resume_baseline|kill_switch` —
+  zero matches.
+- `sql/fix_missing_degraded_checks.sql` — same omission; the same grep returns zero matches there too.
+
+The sharpest evidence that this was never reconciled is in the dedup file's own header
+(`:9-12`), which cites *INC-3's `GREATEST(last_run_at, resume_baseline)` change* as the motivating
+example of why the duplication is dangerous — and then ships a function body that does not contain it.
+Its header also claims it is "a complete, correct final state, not a partial diff that would regress"
+(`:21-28`); that claim is true against `fix_missing_degraded_checks.sql` and false against
+`phase5_monitoring.sql`.
+
+Impact, and why it is a blocker rather than a major:
+- `docs/runbook.md:81` actively instructs release to "apply **`dedup_watchlist_health_check.sql` alone**
+  when release schedules this." Following that instruction after INC-3's SQL is applied **silently
+  reverts FR25** (the monitor resumes firing stale/degraded alerts during a deliberate pause, which is
+  precisely the false-page FR25 exists to prevent) **and NFR2's resume-baseline fix** (which
+  `operational-controls.md:179` calls "load-bearing, not optional"). Nothing errors; the pause simply
+  stops being respected by the monitor half of the kill switch, while the dispatch half keeps working —
+  the hardest possible failure to notice.
+- The reverse order loses REV-042's degraded alerting and REV-047's dedup instead. **There is no apply
+  order that yields a correct final function.** The repo cannot currently produce a correct
+  `check_pipeline_health` at all.
+- It is latent rather than live only because Arjun has deferred all SQL application. That deferral is
+  what keeps it out of production today; it is not a mitigation, since the whole point of these files is
+  to be applied.
+
+Suggested fix: produce **one** authoritative `check_pipeline_health` containing all four changes (INC-3's
+pause check + resume baseline, REV-042's three degraded branches, REV-047's dedup), delete or clearly
+mark the superseded files as historical-only, and correct `docs/runbook.md:81` to name the single file to
+apply. Note the merge is not mechanical: REV-047's dedup collapses the two watchlist branches that INC-3
+edited, so the `GREATEST(wl_last, v_resume_baseline)` has to land inside the merged branch exactly once.
+Owner: **tech-lead** (reconcile the three bodies into one), then **release** (runbook §2.3 and the
+line-81 note). qa should re-test the merged function's four staleness paths against both AC3 and REV-042.
 
 ---
 
 ### MAJOR
 
-**REV-034 — `[SECURITY]` — major — INC-5 turns `authenticated` into an internet-reachable principal for the
-first time, with no audit of what that role can already reach.**
-Location: `docs/design/admin-portal.md:31-35` (Google OAuth, §16.1), `:41-76` (§16.2);
-`sql/dashboard_latest_call_view.sql:45`.
-Description: enabling Google OAuth means *any* Google account can obtain a valid `authenticated` JWT
-against this Supabase project. §16.2's UI-side rejection is explicitly "a UX improvement, not the security
-boundary" — correct, and correctly stated — but the design never checks what the `authenticated` role can
-*already* do today. That role is currently unused, so nothing has ever had to be safe against it:
-`latest_call_per_ticker` is granted to `anon, authenticated`, and the existing RLS policies on `call_log` /
-`watchlist` / `holdings` / `verdict_state` / `run_heartbeat` / `monitor_alerts` are not in version control
-(REV-035), so their role targeting cannot be reviewed. Any existing policy written `to authenticated` or
-`to public` with a permissive `using (true)` becomes world-reachable the moment INC-5 ships.
-Suggested fix: add an INC-5 acceptance criterion that enumerates every existing table/view grant and policy
-by role and proves an authenticated-but-not-allowlisted session can read/write nothing beyond what `anon`
-already could; and consider restricting sign-ups at the Auth layer as defence in depth, so an unauthorized
-JWT is never minted in the first place.
-Owner: **tech-lead** (design), with the live-grant enumeration to be executed at INC-5.
+**REV-063 — `[DESIGN-GAP]` — major — the runbook's fresh-deploy apply order never mentions
+`sql/kill_switch.sql`, and apply-order authority is now split across three files that don't reference
+each other.**
+Location: `docs/runbook.md:70-81`; `sql/kill_switch.sql:8-13`; `sql/schema.sql:32-37`.
+Description: `docs/runbook.md` §2.3 is the documented authority for apply order ("Apply SQL migrations in
+this exact order"), and it lists five files — `scheduler_pgcron.sql`, `schema.sql`,
+`phase5_monitoring.sql`, `dashboard_latest_call_view.sql`, `enable_monitor_alerts_rls.sql`. A repo-wide
+grep of `docs/runbook.md` for `kill_switch` returns **zero hits**: INC-3's SQL appears nowhere in the
+deploy procedure, not even in the line-81 "not yet part of this apply order" note that does cover
+`fix_missing_degraded_checks.sql` and `dedup_watchlist_health_check.sql`. Meanwhile
+`sql/kill_switch.sql:8` (as corrected by BUG-002) states it must be applied **first, before
+`scheduler_pgcron.sql`** — which is step 1 of the runbook's order — and `sql/schema.sql:32-37` states a
+third, independent version of the order that omits `kill_switch.sql` too. Three files each assert an
+apply order; none cites the others; the one an operator is told to follow is missing a file that another
+says must come first. This is the same defect class as BUG-002 (which qa caught and dev fixed at the
+three-file level) reappearing one level up, at the runbook level.
+Suggested fix: state the apply order **once**, in `docs/runbook.md` §2.3, including `sql/kill_switch.sql`
+at its correct position and its not-yet-applied status; have `sql/kill_switch.sql` and `sql/schema.sql`
+headers point at §2.3 instead of restating an order each (`CLAUDE.md`: "state anything once, reference by
+ID elsewhere" — restating it in three places is what let them diverge).
+Owner: **release** (runbook §2.3), then **dev** (the two SQL headers).
 
-**REV-035 — `[DESIGN-GAP]` — major — the core schema and all RLS policies are not in version control, and
-the runbook states the opposite.**
-Location: `sql/` (contains DDL for exactly one table, `phase5_monitoring.sql:17`, plus one view);
-`docs/runbook.md:70-76` and `:333-345`; `README.md:58-62`.
-Description: `watchlist`, `holdings`, `verdict_state`, `call_log`, `run_heartbeat` and every RLS policy in
-the system exist only inside the live Supabase project. `docs/runbook.md:335` claims "The four migrations
-in `sql/` define the complete control-plane schema and logic. No other DDL is needed"; §2.3 and README step
-1 present the same four files as a complete fresh-deploy procedure. Following that procedure produces a
-project with no tables for the pipeline to write to. This is the *identical* defect class the repo already
-fixed once for the scheduler — `sql/scheduler_pgcron.sql:4-10` exists precisely because "the DDL lived ONLY
-inside Supabase and was never committed" — left unfixed for the data plane. It also blocks review of
-REV-033/REV-034: the RLS posture asserted in `data-and-flow.md:66` cannot be checked against anything.
-Suggested fix: extract the live DDL (tables, CHECK constraints, `enable row level security`, every policy,
-every grant) into `sql/schema.sql` the same way the scheduler was captured, and correct the runbook/README
-apply order.
-Owner: **tech-lead** (extraction/design), **release** (runbook + fresh-deploy order).
+**REV-064 — `[HARDCODED]` — major — the REV-039 fix removed all model wiring from both workflow YAMLs but
+the runbook still tells the operator to create six GitHub Variables that are now completely dead.**
+Location: `docs/runbook.md:44-51` vs `.github/workflows/hourly-watchlist.yml:50-59` and
+`.github/workflows/daily-discovery.yml:47-55`.
+Description: the REV-038/REV-039 fix (correct, and confirmed resolved on the code side) deleted every
+model `env:` line from both workflows, making `scripts/config.py` the single source of truth. But
+`docs/runbook.md` §2.2 still instructs the operator to create `GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`,
+`NSE_GEMINI_MODEL`, `NSE_GEMINI_MODEL_BACKUP`, `DISCOVERY_GEMINI_MODEL` and `DISCOVERY_GEMINI_MODEL_BACKUP`
+as "Optional, User-Tunable" repo Variables with documented defaults. None of the six is read by anything
+any more. This is REV-039's own stated harm — "a control surface that still looks live in the GitHub UI
+and in `docs/runbook.md:44-51`, where an operator who edits the Variable will see no effect and get no
+warning" — and it is now strictly worse than when REV-039 was filed: previously four of the six were at
+least wired. REV-039's suggested fix explicitly included "update `runbook.md` §2.2"; the code half landed
+and the doc half did not. (The three rows immediately below, `GEMINI_MAX_RETRIES` /
+`GEMINI_RETRY_BASE_MS` / `GEMINI_TIMEOUT_MS`, **are** still wired in both workflows and are correct — do
+not remove those.)
+Suggested fix: delete the six model rows from `docs/runbook.md` §2.2 and replace them with a one-line
+pointer to `scripts/config.py` as the source of truth (and to the FR30 tunables table once INC-6 ships).
+Owner: **release**.
 
-**REV-036 — `[DESIGN-GAP]` — major — INC-6's tunables cache write-back is unvalidated and unconditional, so
-one bad portal edit destroys the "last-known-good" it exists to preserve.**
-Location: `docs/design/admin-portal-tunables.md:206-223` (`_tunable`), `:225-240`
-(`write_tunables_cache_if_fetched`).
-Description: `_tunable()` on a cast failure only prints and falls through to the next tier, while
-`write_tunables_cache_if_fetched()` serialises `_TUNABLES` — this run's raw fetch — verbatim, including the
-value that just failed to cast, and unconditionally overwrites the whole file. Concrete sequence: Arjun
-types `5%` into `DISCOVERY_GAINER_PCT`; the portal accepts it (no validation anywhere — no CHECK
-constraint, no per-key type in the schema, no portal-side check); run 1 casts it, fails, silently uses the
-cached `5`, then **writes `5%` into the cache**, destroying the last-known-good; every later run repeats
-this silently; the first Supabase blip after that finds tier 1 empty and tier 2 uncastable, and the new
-fail-loud `SystemExit` takes the entire pipeline down — from a typo made weeks earlier. The same call also
-shrinks the file if the fetch returned a partial key set (e.g. a row was deleted, see REV-044), silently
-discarding good values for the missing keys. The file's own docstring calls the mechanism "last
-successfully-fetched value" / "last-known-good", which is exactly what it fails to guarantee.
-Suggested fix: cast/validate every fetched value *before* persisting; write back only keys that validate;
-never write a key set smaller than the current cache; and make a tier-1 cast failure loud (it is a real,
-operator-caused error) rather than a silent fall-through — consistent with the fail-loud posture just
-adopted for the double-miss case.
-Owner: **tech-lead**.
+**REV-039 (carried from Pass 11) — `[HARDCODED]` — major — partially resolved.** Code side RESOLVED
+(verified: zero model literals remain in either workflow YAML; `scripts/config.py:26-27,109-110,123-124`
+is the sole home, with the reason recorded inline at `hourly-watchlist.yml:50-59`). Doc side OPEN — see
+REV-064. Owner: **release**.
 
-**REV-037 — `[DESIGN-GAP]` — major — the 2026-07-28 "two tiers, fail loud" correction is only half
-propagated; three surviving statements still specify the removed third tier, one of them contradicting the
-new behaviour outright.**
-Location: `docs/design/non-functional-ops.md:57-59` ("gains the 3-tier tunables fallback chain (Supabase
-table -> config/tunables_cache.json -> hardcoded literal)"), `:87-90` ("falls back to the existing hardcoded
-literals rather than hanging or **crashing process startup**"), `:157-158` ("a hardcoded Python literal is
-now only the third-tier floor"); `docs/design/admin-portal.md:106-112` ("the 3-tier `scripts/config.py`
-fallback chain").
-Description: the correction landed in `docs/design.md` and `admin-portal-tunables.md` §16.4 but not in the
-repo-structure/config-surface module or the §16.4 pointer stub. `non-functional-ops.md` §8 is precisely the
-file a dev opens to learn which files an increment touches, so INC-6 would plausibly be built with the
-third tier reinstated — re-creating the three-places-to-sync problem this correction was made to remove.
-`:87-90` is worse than stale: it states the design goal as *not* crashing process startup, which is the
-exact opposite of the decided `SystemExit` behaviour, so the two modules now specify contradictory
-requirements for the same function.
-Suggested fix: propagate the two-tier + fail-loud wording to all four locations; state the fallback chain
-once (in §16.4) and have the others reference it rather than restate it, per CLAUDE.md's "state anything
-once" rule — restating it in four places is what allowed three of them to drift in a single day.
-Owner: **tech-lead**.
-
-**REV-038 — `[HARDCODED]` — major — INC-6 silently breaks the documented NSE model inheritance, because the
-workflow's own literal fallback chain always wins.**
-Location: `.github/workflows/hourly-watchlist.yml:68-69`; `scripts/config.py:34-35`;
-`docs/requirements.md:315`; `docs/runbook.md:48-49`.
-Description: the YAML sets `NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL ||
-'gemini-2.5-flash' }}` — a three-tier chain that can never produce an empty string. `config.py:34`'s
-`os.environ.get("NSE_GEMINI_MODEL", GEMINI_MODEL)` default therefore never fires today (dead code), and
-after INC-6 makes `GEMINI_MODEL` table-driven the consequences become behavioural: editing `GEMINI_MODEL`
-in the admin portal changes the US/TSX watchlist model while the **NSE watchlist stays pinned to the YAML
-literal**, with no warning. `requirements.md:315` and `runbook.md:48` both promise "inherit US/TSX pair".
-Note the asymmetry that makes this easy to miss: `NSE_GEMINI_MODEL_BACKUP` (line 69) has *no* literal tail,
-so the backup keeps inheriting correctly while the primary stops — the pair silently splits across two
-sources of truth.
-Suggested fix: drop the literal tail (and ideally the whole `vars.` chain, see REV-039) so the Python-level
-inheritance is the single mechanism; add an INC-6 acceptance criterion that edits `GEMINI_MODEL` in the
-table and asserts the NSE group's `model_used` follows.
-Owner: **tech-lead** (design), dev at INC-6.
-
-**REV-039 — `[HARDCODED]` — major — model-name defaults are duplicated across `config.py` and two workflow
-files today, and this exact duplication has already drifted once in production.**
-Location: `scripts/config.py:26-27` and `:109-110`; `.github/workflows/hourly-watchlist.yml:60,68`;
-`.github/workflows/daily-discovery.yml:48-49`. Related: `docs/design/admin-portal-tunables.md:301-303`.
-Description: `'gemini-2.5-flash'` / `'gemini-2.5-flash-lite'` are written as literals in five places across
-three files, each of which must be edited together. The repo's own comments record the drift event:
-`hourly-watchlist.yml:56-59` explains that the 3.5→2.5 correction had to be applied to the YAML literal
-*as well as* `config.py`, and `requirements.md:337-343` documents the period when code and live operation
-disagreed. INC-6 adds two more copies (the SQL seed and `config/tunables_cache.json`) — which its own
-acceptance criteria #1/#2 have to guard with a byte-for-byte diff, itself evidence of the cost.
-Compounding it, `admin-portal-tunables.md:301-303` decides to *leave* the now-unread `${{ vars.GEMINI_MODEL
-|| '…' }}` wiring in place as "a harmless, unread vestige". It is not harmless: it is a control surface
-that still looks live in the GitHub UI and in `docs/runbook.md:44-51`, where an operator who edits the
-Variable will see no effect and get no warning.
-Suggested fix: pick one home per key. For the two keys moving to the table, delete the `vars.`/literal
-wiring from `hourly-watchlist.yml` inside INC-6 (a four-line diff, strictly smaller than leaving it) and
-update `runbook.md` §2.2; for `DISCOVERY_GEMINI_MODEL*`, drop the YAML literals and keep `config.py` as the
-single default. Where a literal must exist twice (SQL seed vs cache seed), keep the existing byte-diff
-acceptance criterion — that one is genuinely unavoidable.
-Owner: **tech-lead** (design), dev at INC-6, **release** (runbook table).
-
-**REV-040 — `[DESIGN-GAP]` / `[SECURITY]` — major — INC-6 creates a second workflow that pushes to `main` on
-an overlapping cadence, and grants repo-write to the workflow with the largest blast radius.**
-Location: `docs/design/admin-portal-tunables.md:254-276`; `.github/workflows/publish-prices.yml:17-18,43-54`;
-`.github/workflows/hourly-watchlist.yml` (no `permissions:` block today).
-Description: two issues, one mechanism.
-(a) **Race.** `publish-prices.yml` already commits and pushes to `main` on `*/30 3-10,13-21` — the same
-cadence window `hourly-watchlist.yml` runs on. The two have *different* `concurrency` groups, so they run
-concurrently, and the copied step guards only the rebase (`git pull --rebase … || true`) — the `git push`
-itself is unguarded, so a lost race fails the step and red-Xs the **trading** workflow after its real work
-has already completed (alarming, and it trains the operator to ignore failures on the most important
-workflow). The tunables cache changes rarely, so this is intermittent — the worst kind to debug.
-(b) **Privilege.** `hourly-watchlist.yml` is the workflow that holds every production secret and processes
-third-party input (Yahoo headlines, model output). Giving its `GITHUB_TOKEN` `contents: write` is the
-largest privilege increase in the whole change request.
-Worth weighing: `publish-prices.yml` **already** has `contents: write`, already has the commit-on-change
-step, already runs `*/30` across both sessions, and is already a read-only tunables consumer that fetches
-the same table — making it the sole cache writer would mean zero new permissions, zero new commit steps,
-and one committer instead of two. Decision #28 recorded `hourly-watchlist.yml` as a *proposal* for Arjun to
-"confirm or override" (`requirements.md:296`) and he confirmed it, so this is flagged as a trade-off to
-re-put to him via pm, not as a defect in the decision.
-Suggested fix (whichever writer is chosen): share one `concurrency` group between the two committing
-workflows, or add a bounded retry around the push; and scope the new permission to the job, not the file,
-if the writer stays in `hourly-watchlist.yml`.
-Owner: **pm** (to re-put the trade-off to Arjun), then **tech-lead**.
-
-**REV-041 — `[DESIGN-GAP]` — major — INC-6 adds an unbounded network call at `config.py` import time; the
-design's own claim that it is short-timeout is not met by the design's own code.**
-Location: `docs/design/admin-portal-tunables.md:180-204`; `docs/design/non-functional-ops.md:87-90` ("…
-short-timeout and exception-wrapped so a Supabase hiccup falls back … rather than hanging").
-Description: the sketched `_fetch_tunables()` calls `create_client(...)` and `.select().execute()` with no
-timeout argument; supabase-py's default PostgREST timeout is not short. `config.py` is imported by every
-module and every entry point, so a hung or slow Supabase connection stalls the start of every scheduled
-run, on the module the design explicitly notes has never made a network call before. Secondary and
-immediate: `tests/test_config.py:24-46`'s `reload_config` fixture reloads `config` roughly fifteen times
-per suite run, so INC-6 turns the unit-test suite into ~15 live connection attempts against
-`https://example.invalid.supabase.co` (`tests/conftest.py:24`), with stdout noise on each — slower CI,
-new flakiness, and a fetch path with no test seam.
-Suggested fix: pass an explicit `ClientOptions(postgrest_client_timeout=…)` (and make it a tunable of the
-non-curated kind); provide an explicit offline/skip path so tests and local runs deterministically use tier
-2; expose the fetch behind a patchable seam (`_fetch_tunables`) and say so in the INC-6 acceptance criteria
-so qa can mock it, mirroring how `ai_judge._client` is already the single patched seam.
-Owner: **tech-lead**.
-
-**REV-042 — `[CODE-GAP]` — major — the dead-man monitor never alerts on a *degraded* discovery or
-publish-prices run, although both compute a degraded status and the runbook documents the alert.**
-Location: `sql/phase5_monitoring.sql:180-193` (`disc_status` selected, never read), `:201-216`, `:224-240`;
-`scripts/run_discovery.py:59-66,114-118`; `scripts/publish_prices.py:71-72`; `docs/runbook.md:149-155`.
-Description: only the two watchlist branches implement the `status <> 'ok'` degraded check. The discovery
-branch **selects** `disc_status` into a variable and then never uses it — a dead read that reads as if the
-check existed. So the deliberate work `run_discovery.py` does to distinguish "quiet day" from "screener
-failure" (`status='partial'` when `screens_errored`, the issue #2 principle applied to discovery) and
-`publish_prices.py`'s `partial` status both terminate in a table nobody watches. `docs/runbook.md:153-155`
-promises exactly these alerts ("Degraded alert: when `run_heartbeat.workflow_name='daily-discovery'` shows
-`status != 'ok'`"), so the operator believes coverage exists. NFR2 requires alerting on a run that
-"completes degraded", without limiting it to the watchlist.
-Suggested fix: add the `elsif … status <> 'ok'` branch to the discovery-NA, discovery-IN and publish-prices
-checks (each is ~6 lines, mirroring the watchlist branch), or correct the runbook — but the requirement
-says alert, so the SQL is the side to change.
-Owner: **tech-lead** (SQL design), **release** (runbook table once fixed).
-
-**REV-043 — `[BLOAT]` — major (efficiency) — `publish_prices.py` runs the full ingest pipeline every 30
-minutes to publish four fields.**
-Location: `scripts/publish_prices.py:47-54`; `scripts/ingest.py:217-288`.
-Description: `ingest.get_market_data()` fetches three months of price history, `tk.fast_info`, the full
-`tk.info` scrape, and `tk.news`, then runs headline relevance filtering and the session-aware
-volume pro-rating — and `publish_prices` uses `price`, `pct_change_1d`, `market`, and
-`fundamentals.currency`. That is roughly four Yahoo requests per ticker where one would do, on ~32 dispatch
-slots per weekday across both sessions (`sql/scheduler_pgcron.sql:152`) — on the order of a thousand
-avoidable requests a day against an unofficial API that has already rate-limited this pipeline in
-production (issue #1), degrading the *watchlist* runs that share it and the `YF_PACING_SECONDS` budget.
-It is reuse in the right spirit (one ingest wrapper, `components.md` §4.2) applied at the wrong grain.
-Suggested fix: add a narrow `ingest.get_price_only(ticker)` (history `period='5d'` + `fast_info`, no
-`info`, no news) and have `publish_prices` call it; keep `get_market_data` untouched for the AI paths. Also
-worth confirming with pm whether `publish-prices` needs a market-open gate at all — it is the only
-dispatch path with none, so it currently also fires through the 11:00–13:00 UTC gap between sessions.
-Owner: **tech-lead** (design call), then dev.
+**REV-043 (carried from Pass 11) — `[BLOAT]` — major (efficiency) — design done, code not written.**
+tech-lead made the design call (`docs/design/components.md:86-95`: add
+`ingest.get_price_only(ticker) -> dict`, `period='5d'` history + `fast_info`, no `info`, no news) and
+recorded the file-level impact in `non-functional-ops.md:65-66,80-81`. But `scripts/ingest.py` contains
+no `get_price_only` (grepped) and `scripts/publish_prices.py:45` still calls
+`ingest.get_market_data(ticker)`. The ~1000 avoidable Yahoo requests/day are still being made. Owner:
+**dev** (implement per `components.md` §4.2).
 
 ---
 
 ### MINOR
 
-**REV-044 — `[SECURITY]` — minor — the `tunables` write policy is broader than FR30 needs, and the stamping
-trigger doesn't cover what the policy allows.** Location: `docs/design/admin-portal-tunables.md:59-66`. The
-policy is `for all` (insert/update/delete) while the trigger is `before update` only. FR30 needs UPDATE on
-ten migration-seeded rows — nothing more. A stray DELETE from the portal silently pins that key to the
-cache value forever (no error is possible: tier 2 still resolves it), and an INSERT creates an unstamped
-row no code reads. Suggest `for select, update` only, plus a `check (key in (…))` or FK to a key registry.
-Owner: **tech-lead**.
+**REV-065 — `[DESIGN-GAP]` — minor — `non-functional-ops.md` §9 now describes a workflow-Variable
+convention the REV-038/039 fix deliberately abandoned, and documents wiring that no longer exists.**
+Location: `docs/design/non-functional-ops.md:155-163` and `:186-189`. (a) `:159-161` states "This repo's
+established convention for workflow knobs an operator may need to change **without a commit** is a repo
+**Variable with a literal fallback** — `${{ vars.X || '<default>' }}` — used throughout
+`hourly-watchlist.yml` (`GEMINI_MODEL`, `GEMINI_MAX_RETRIES`, …)". Neither half is true today: the
+`GEMINI_MODEL` wiring was deleted outright, and the surviving `GEMINI_MAX_RETRIES`/`RETRY_BASE_MS`/
+`TIMEOUT_MS` lines use plain `${{ vars.X }}` with **no** literal fallback, on purpose and with the
+rationale written into the YAML (`hourly-watchlist.yml:60-66`). (b) `:186-189` says "The pre-existing
+`${{ vars.GEMINI_MODEL || '...' }}` / `_BACKUP` Variable wiring **already in** `hourly-watchlist.yml`
+becomes a harmless, unread vestige … safe to leave, not required to remove" — that wiring is already
+gone, so the paragraph documents non-existent code and gives INC-6 a stale instruction. Owner:
+**tech-lead**.
 
-**REV-045 — `[DESIGN-GAP]` — minor — a persistently failing tunables fetch degrades silently, against this
-project's own established precedent.** Location: `docs/design/admin-portal-tunables.md:188-190,199-201`. A
-failed fetch prints one line into a run log nobody reads and continues on cache values indefinitely; the
-NFR2 monitor sees healthy runs. The codebase already decided this question twice in the other direction —
-issue #35 made the FR18 topic fallback operator-visible (`scripts/notify.py:63-68`), and issue #2 made a
-degraded run write `status='partial'` so the monitor surfaces it. Suggest the same: when tier 2 is used,
-write the heartbeat as `partial` (or an equivalent monitor-visible signal), so weeks of frozen tunables
-cannot pass unnoticed. Owner: **tech-lead**.
+**REV-066 — `[HARDCODED]` — minor — `NTFY_BASE_URL` and `NTFY_TIMEOUT_SECONDS` exist in code but not in
+the config audit baseline, against that baseline's own rule.** Location: `scripts/config.py:113-114` vs
+`docs/design/non-functional-ops.md:127-146` and `docs/requirements.md` §10. REV-052's code half is
+RESOLVED — `notify.py:98,100` now reads both from config, and the SQL-side duplicate at
+`phase5_monitoring.sql:41` is inherent to the SQL layer, not a new defect. But REV-052 routed the
+config-surface half to tech-lead and it did not land: a grep of the whole `docs/` tree for
+`NTFY_BASE_URL|NTFY_TIMEOUT_SECONDS` returns **zero hits**. `non-functional-ops.md:146` states the rule
+these two now violate: "**no tunable may live only in code**." Owner: **tech-lead** (§9 baseline),
+**pm** (`requirements.md` §10 baseline).
 
-**REV-046 — `[BLOAT]` — minor — the new repo-root `config/` directory collides with the `config` module
-name every script imports.** Location: `docs/design/admin-portal-tunables.md:178`;
-`docs/design/non-functional-ops.md:49-53`; `tests/conftest.py:15-17`. `scripts/` is a flat, non-package
-directory placed on `sys.path`, so `import config` resolves by path order; a repo-root `config/` directory
-with no `__init__.py` is a valid implicit namespace package that shadows `scripts/config.py` whenever the
-repo root precedes `scripts/` on `sys.path` (e.g. a bare `python -c "import config"` from the root, or any
-future tooling change). Free to avoid before the file exists: name it `tunables_cache.json` at the repo
-root, or put it under an existing non-importable directory. Owner: **tech-lead**.
+**REV-067 — `[DESIGN-GAP]` — minor — every SQL citation in the new REV-048 constants table is wrong, in a
+table whose entire purpose is making drift trackable.** Location: `docs/design/components.md:50-56`. The
+table is a good addition and closes REV-048's design half, but: rows 1–2 cite
+`scheduler_pgcron.sql:279` for `dispatch_watchlist_if_open()` — that file is 184 lines long and the
+function is defined in `phase5_monitoring.sql:288-308` (wrong file *and* a nonexistent line); rows 3–4
+cite `scheduler_pgcron.sql:132` where the actual bounds are at `:151`; rows 5–6 cite
+`phase5_monitoring.sql:125` and `:153` where the actual guards are at `:151` and `:179`; row 7 cites
+`:129,157,229` where the three `interval '70 minutes'` copies are at `:155,183,255`. The monitor
+citations are all short by ~26 lines — the exact number INC-3 added to that file — so they were written
+against the pre-INC-3 file and never re-checked. Owner: **tech-lead**.
 
-**REV-047 — `[BLOAT]` — minor — `check_pipeline_health`'s ET and IST watchlist branches are ~25 duplicated
-lines differing only in one message string.** Location: `sql/phase5_monitoring.sql:118-176`. Identical
-threshold, identical priorities, identical cooldowns, identical recovery text; a future change to the
-staleness rule (e.g. REV-042's degraded branch, or INC-3's `GREATEST(last_run_at, resume_baseline)` change,
-which `operational-controls.md:146` already says must touch all four checks) must be made twice, correctly,
-in both. Suggest one branch parameterised by a `session_label` variable. Owner: **tech-lead**.
+**REV-068 — `[REQUIREMENTS-GAP]` — minor — the 2026-07-28 two-tier/fail-loud decision never reached
+`docs/requirements.md` at all, and the cache path there is stale.** Location:
+`docs/requirements.md:306` (Decision #27), `:307` (Decision #28), `:385-388` (§10 FR30 note).
+(a) A grep of `docs/requirements.md` for `two-tier|fail loud|fail-loud|SystemExit` returns **zero hits**.
+The decision that the pipeline now hard-exits when a curated tunable cannot be resolved from either tier
+is a real behavioural change to FR30's fail-safe semantics, and it exists only in the design modules —
+no Decision entry, no changelog row, no §10 update. Decision #27's own text still says `config.py`
+"fetches them at run start with a **fallback to hardcoded Python defaults** if the fetch fails", the one
+surviving assertion of the removed tier anywhere outside a negation; Decision #24 got an explicit
+"SUPERSEDED" marker for a comparable reversal, #27's clause got none. (b) `:307` and `:386` both still
+name `config/tunables_cache.json`, the path REV-046 moved to the repo root — `increment-plan.md:146-147`
+and `non-functional-ops.md:178` correctly say repo-root. Owner: **pm**.
 
-**REV-048 — `[HARDCODED]` — minor — market-session constants are duplicated across the Python and SQL
-layers with nothing detecting drift.** Location: `scripts/config.py:164-166,201-203`;
-`sql/scheduler_pgcron.sql:132`; `sql/phase5_monitoring.sql:125,153,224-225,279`. The open bounds (09:30 /
-09:15), the base close bounds (16:00 / 15:30), the monitor's grace windows (10:15 / 10:00) and the
-`70 minutes` staleness threshold (three copies) exist independently in both layers. To be explicit: this is
-**not** a request to merge the two close bounds — `docs/design.md` §0 #9 deliberately keeps SQL at close+5
-and Python at close+`RUNTIME_CLOSE_GRACE_MIN`, and that decision is sound and well documented. The gap is
-that changing `MARKET_OPEN`/`MARKET_CLOSE` in `config.py` (a documented tunable, `requirements.md:333-334`)
-would leave five SQL sites silently disagreeing. Suggest documenting the set as one linked table in
-`components.md` §4.1, and a cheap test that reads the SQL files and asserts the documented relationship
-(the suite already parses workflow YAML in `docs/handoff.md`'s verify block, so the pattern exists).
-Owner: **tech-lead** (design), **qa** (the drift test).
+**REV-069 — `[DESIGN-GAP]` — minor — `docs/runbook.md` §5 says "the four migrations" and lists four,
+where §2.3 lists five.** Location: `docs/runbook.md:346-347` vs `:70-77`. REV-035's fix correctly added
+`sql/schema.sql` and `sql/enable_monitor_alerts_rls.sql` to §2.3 (which now says "These five migrations"
+at `:77`), but §5's parallel statement — "The four migrations in `sql/` (`scheduler_pgcron.sql`,
+`schema.sql`, `phase5_monitoring.sql`, `dashboard_latest_call_view.sql` — §2.3's apply order) define the
+complete control-plane schema and logic. **No other DDL is needed**" — omits
+`enable_monitor_alerts_rls.sql` and asserts completeness. Same "state it once" issue as REV-063; §5
+should reference §2.3 rather than re-enumerate. Owner: **release**.
 
-**REV-049 — `[BLOAT]` — minor — `audit.yml`'s lint gate never actually runs, its Node half is dead today
-and breaks at INC-5, and it tests on a different Python than production.** Location:
-`.github/workflows/audit.yml:34,36-44,57-81`. (a) `ruff check` runs only if a ruff config exists; none does
-(no `ruff.toml`, no `pyproject.toml`), so every push logs "No ruff config found, skipping lint" — the
-project's automated hardcoding/leanness gate, which this review process is supposed to consult first, is a
-no-op. (b) The ESLint/Node branches are dead config in a Python-only repo — and become an active hazard at
-INC-5, when `admin-portal/package.json` appears: the detector looks for `package.json` at the **repo root**,
-so it will still skip, meaning the portal ships with no lint or test coverage in CI at all. (c) `3.x` here
-vs the pinned `3.12` in all three production workflows means CI never exercises the production interpreter.
-Suggest: add a minimal `ruff.toml`, pin `3.12`, and decide the portal's CI story as part of INC-5 rather
-than discovering it after. Owner: **release**.
+**REV-070 — `[TEST-GAP]` — minor — FR24, FR25 and FR26 have design coverage and implementation but zero
+verification of any kind, and the record of that should not depend on this log.** Location:
+`docs/test-report.md:25-74` (AC1–AC5 all "pending live verification"); `tests/` (no SQL-targeting file).
+This is not a criticism of qa — the deferral is Arjun's explicit call, qa correctly refused to fake or
+simulate the live checks, and its static review was genuine and independently re-derived correct by me
+above. It is logged so the gap is a tracked item rather than a footnote: at Phase-4 closure, three FRs
+and one NFR extension will otherwise be marked delivered on the strength of a code read alone. The
+INC-3 ACs already specify exactly what to run; they simply have not been run. Owner: **qa** (execute
+AC1–AC5 at apply time), **release** (schedule the apply window; AC2/AC3 need a live pg_cron project, so
+a low-traffic window per `docs/handoff.md:70-72`).
 
-**REV-050 — `[SECURITY]` — minor — three of four workflows declare no `permissions:` block.** Location:
-`.github/workflows/hourly-watchlist.yml`, `daily-discovery.yml`, `audit.yml` (cf. `publish-prices.yml:17-18`,
-which does it correctly). They inherit the repository default `GITHUB_TOKEN` scope, which on older repo
-settings is write-all. None of the three needs any repo write today. Suggest `permissions: contents: read`
-on each (and the minimum gitleaks needs on `audit.yml`) — which also makes REV-040's new grant an explicit,
-reviewable delta rather than an invisible one. Owner: **release**.
+**REV-048 (carried from Pass 11) — `[HARDCODED]` — minor — design half done, test half not.** The linked
+constants table now exists (`components.md:48-57`, closing the design ask, though see REV-067 for its
+citations). The drift test is explicitly deferred — `components.md:59` "Suggested (not built in this
+pass, qa's to schedule)". Owner: **qa**.
 
-**REV-051 — `[BLOAT]` — minor — `publish_prices.py` re-implements the required-secrets check instead of
-reusing `config.require_secrets()`.** Location: `scripts/publish_prices.py:34-36`; `scripts/config.py:214-222`.
-Two implementations of one concern with the same error string, because `require_secrets()` hardcodes a
-three-secret list including `GEMINI_API_KEY`, which this entry point doesn't need. Suggest
-`require_secrets(*names)` defaulting to the current three. Owner: **dev** (after tech-lead confirms the
-signature change is in scope). 
+**REV-049 (carried from Pass 11) — `[BLOAT]` — minor — (a) and (c) resolved, (b) still open.** (a)
+`ruff.toml` now exists (`line-length = 100`, `target-version = "py312"`, `select = ["E","F","W"]`), so
+`audit.yml:42-47`'s gate actually runs `ruff check .` instead of logging "No ruff config found" — the
+lint half of this review process's tooling-first posture is live for the first time. (c) `audit.yml:37`
+is pinned to `'3.12'`, matching all three production workflows. (b) OPEN: the ESLint/Node branches
+(`:60-84`) are still dead config, and the detector at `:29-31` still looks for `package.json` at the
+**repo root**, so `admin-portal/package.json` at INC-5 will still be skipped and the portal will ship
+with no lint or test coverage in CI. Nothing in `increment-plan.md`'s INC-5 acceptance criteria covers
+portal CI. Owner: **release** (decide the portal CI story before INC-5 starts, per REV-049's original
+suggestion).
 
-**REV-052 — `[HARDCODED]` — minor — declared tunables are restated as literals outside `config.py`.**
-Location: `pages/detail.html:142` (`.slice(0,5)` duplicates `HEADLINES_LIMIT`, `config.py:96`);
-`scripts/textutil.py:4-6` (docstring states "280" and "150" for `RATIONALE_MAX`/`NOTIF_BODY_MAX`, both now
-env-tunable, `config.py:101-102`); `scripts/notify.py:98` (`https://ntfy.sh/` base URL and `timeout=10`,
-neither in the `requirements.md` §10 baseline; the same base URL is hardcoded again in
-`sql/phase5_monitoring.sql:37`). Raising `HEADLINES_LIMIT` today changes what the AI sees but not what the
-detail page shows, silently. Per `docs/design/non-functional-ops.md:123`, "no tunable may live only in
-code". Owner: **dev** (page + notify), **tech-lead** (adding the ntfy endpoint/timeout to the config
-surface).
-
-**REV-053 — `[BLOAT]` — minor — the two static pages duplicate their config, helpers and styles, in two
-different shapes.** Location: `pages/dashboard.html:101-102,118-155` vs `pages/detail.html:50-57,91-123`.
-Duplicated: the Supabase URL, the publishable key, `esc()`, the `VERDICT` colour map, `_TZSHORT`/`tzLabel`/
-`clockIn`, and the entire CSS `:root` block. Worse than plain duplication: the currency mapping exists in
-two *different* representations — `CUR` keyed by **market** in the dashboard (`{US:"$"}`) and `CUR` keyed by
-**currency code** plus `MKT_CUR_CODE` in the detail page (`{USD:"$"}`) — so adding a fourth market means
-two edits in two shapes, and a key rotation means two edits with no test to catch a miss. Suggest a shared
-`pages/common.js` + `pages/common.css`; both pages are same-origin so this costs nothing. Owner: **dev**
-(with tech-lead confirming the frontend module boundary, `frontend.md` §10).
-
-**REV-054 — `[BLOAT]` — minor — `httpx` is a direct import but an undeclared dependency.** Location:
-`scripts/ai_judge.py:13`; `requirements.txt`. It resolves today only transitively via `google-genai` /
-`supabase`. A transitive bump that drops or majors it breaks `_is_retryable`'s client-timeout
-classification (`ai_judge.py:204`) — the exact path that fixed load-bearing decision #3 — or breaks import
-outright, in an environment where every other dependency is pinned. Suggest pinning `httpx` explicitly.
-Owner: **dev**.
-
-**REV-055 — `[TEST-GAP]` — minor — no automated coverage for the orchestrators' own decision logic.**
-Location: `tests/test_import_smoke.py:34-42` is the only coverage of `run_hourly.py`, `run_discovery.py`,
-`publish_prices.py`, and it asserts only that they import and expose `main()`. Untested: `_sessions()` /
-which market group runs (`run_hourly.py:34-49`), the `FORCE_RUN`-with-everything-closed branch
-(`:130-134`), the both-sessions-open warning (`:113-117`), the `partial`-vs-`ok` heartbeat rule
-(`:154-156`), and `run_discovery`'s quiet-day-vs-screener-failure distinction (`:55-66`). Every one of
-those exists because of a specific past production defect (issues #2, #7, #8) — precisely the logic that
-should have a regression net. The pure modules underneath are well covered; this is the seam that isn't.
-Owner: **qa**.
-
-**REV-056 — `[BLOAT]` — minor — leftover scraps from the retired shadow-pilot track.** Location:
-`.gitignore:4-6` (`.shadow-pilot-session-state.md`, flagged as ambiguous-ownership in `docs/handoff.md:57-59`
-on 2026-07-16 and never actioned since); `sql/drop_shadow_tables_migration.sql`, which is a one-time,
-already-applied migration still listed as a required step of the **fresh-deploy** procedure in
-`docs/runbook.md:74` and `README.md:62` — a fresh project never had those tables. Suggest deleting the
-`.gitignore` entry and moving the drop migration out of the fresh-deploy apply order (it can stay in the
-repo as history). Otherwise the retirement is genuinely clean: no `shadow` references remain anywhere in
-`scripts/`, `sql/` (beyond that file), `.github/workflows/`, or `pages/` — independently re-confirmed by
-repo-wide grep this pass. Owner: **release** (runbook/apply order), **pm** (README), **dev** (`.gitignore`).
-
-**REV-057 — `[DESIGN-GAP]` — minor — the `data_snapshot` contract documents values the code never
-produces.** Location: `docs/design/data-and-flow.md:42,45` vs `scripts/ai_judge.py:294,297,386` and
-`scripts/state.py:86`. `parse_status` is documented as `ok | retried | failed | api_error | no_data`, but
-`retried` is written by nothing (the retry path returns `ok`). `fallback_from` is documented as a short
-token set (`timeout | 503 | 429-rpd | parse`) while the code writes a full
-`"<model>: <ExcType>: <message[:200]>"` string — anyone writing a query or a future analytics view against
-the documented shape gets nothing back. This is the load-bearing consumer contract, so it should match the
-writer exactly. Owner: **tech-lead**.
-
-**REV-058 — `[REQUIREMENTS-GAP]` — minor — NFR3 is cited as the security NFR in the design, but
-`requirements.md` defines it as the disclaimer NFR.** Location: `docs/requirements.md:240-241` (NFR3 =
-Disclaimer) and `:251` (NFR6 citing "NFR3's 'secrets never in code' posture") vs
-`docs/design/non-functional-ops.md:18-20` (§7.2 titled "Security (NFR3)") and `docs/design.md:338` (the
-coverage map's NFR3 row). There is in fact no core security NFR — the security posture (RLS, Vault, no
-brokerage credentials, UUID detail-page URLs) is real and well implemented, but traces to a requirement ID
-that says something else. Either add a security NFR or fix the three citations; with NFR6 now introducing a
-real security requirement, the ambiguity gets more expensive, not less. Owner: **pm** (ID decision), then
-**tech-lead** (citations).
-
-**REV-059 — `[DESIGN-GAP]` — minor — three self-consistency defects in the CR documents.** Location:
-(a) `docs/design.md:351-352` still says "INC-6 has one open design gap pending confirmation", contradicting
-the same file's header at `:14-16` ("No open design questions remain") and `admin-portal-tunables.md:320`
-("No open question remains for INC-6") — *owner: tech-lead*; (b) `docs/requirements.md:377-378` still
-records the cache write-ownership as "a design-level call left to tech-lead", though Decision #28's proposed
-shape was confirmed by Arjun and is now stated as settled in `design.md:159-167` — *owner: pm*;
-(c) `docs/design/admin-portal.md:26-27` carries a stray sentence fragment ("…is not a new exposure.
-deploy.") left from an edit — *owner: tech-lead*. Each is small; together they make it hard for a reader to
-tell which statement in the CR is current, which is the same condition that produced REV-037.
-
-**REV-060 — `[DESIGN-GAP]` — minor — the runbook's fresh-deploy dispatch smoke test cannot fail, and points
-at a workflow that cannot be dispatched.** Location: `docs/runbook.md:267-271`. `SELECT
-public.dispatch_github_workflow('audit.yml')` targets the one workflow with no `workflow_dispatch` trigger
-(`.github/workflows/audit.yml:3-5`), so GitHub rejects it; and `pg_net.http_post` returns a request id
-immediately regardless of the eventual HTTP status, so the documented pass criterion ("should return a
-request ID (a bigint)") is satisfied even with an expired or wrong PAT — exactly the failure this check
-exists to catch (and the top suspect in the runbook's own §4 stale-alert triage list). Suggest targeting a
-dispatchable workflow and asserting on the matching `net._http_response` row. Two smaller inaccuracies in
-the same document: `:286` tells the operator to find the dashboard passcode in `pages/index.html`, which
-does not exist (the dashboard is `pages/dashboard.html`), and `:142` describes the monitor as running ":20
-and :50 past each hour" when the schedule is `20,50 4-11,14-23`. Owner: **release**.
-
-**REV-061 — `[DESIGN-GAP]` — minor — two documents still describe Gemini as free-tier after the 2026-07-13
-paid-tier correction.** Location: `docs/idea-brief.md:95` ("Gemini free tier may train on submitted
-prompts") and `:98` ("Free-tier quotas move"); `docs/runbook.md:214` ("Free-tier models may train…").
-The correction was applied to NFR1, `foundations.md` §2 items 1/3, `README.md`, and the idea-brief's own
-Constraints section — the Open-risks list at the bottom of the idea-brief was missed. Since the accepted
-risk is about *data handling terms*, the tier statement is load-bearing for the risk, not cosmetic.
-Owner: **pm** (idea-brief), **release** (runbook).
+**REV-052 (carried from Pass 11) — `[HARDCODED]` — minor — code half resolved, config-baseline half
+open.** See REV-066. `pages/detail.html`'s `.slice(0,5)` is gone (`:109-111` now notes headlines are
+already capped at `config.HEADLINES_LIMIT` upstream; the remaining `.slice(0,8)` at `:172` is UUID
+display truncation, not a tunable), and `scripts/textutil.py:1-7` no longer states 280/150. Owner:
+**tech-lead**, **pm**.
 
 ---
 
-### What is genuinely in good shape (calibration)
+### Carried forward — the five Pass-11 items still open
 
-Reported deliberately, so the findings above are read at the right weight — this is not a codebase in
-trouble, and several parts of it are better than the norm:
+REV-039 (major, release — see REV-064), REV-043 (major, dev), REV-048 (minor, qa), REV-049(b) (minor,
+release), REV-052 (minor, tech-lead + pm — see REV-066). Full current text is in the MAJOR/MINOR sections
+above; none is carried as a bare ID.
 
-- **The alerting core.** The single-rule state machine (`scripts/state.py:208-267`) and its fail-safe
-  guards are clean, and `tests/test_state.py` covers the load-bearing cases directly, including the one
-  that matters most (a fail-safe Hold can never fabricate a change alert). The "a bug can only miss a
-  signal, never fabricate one" property holds on inspection of every path.
-- **Observability discipline.** The discovery funnel counters, the `partial`-vs-`ok` heartbeat rule, the
-  `[gate]` audit line, the `[FR18 fallback]` line, and `fallback_from`/`retry_count` in the snapshot are a
-  coherent, deliberate posture — degradations are made visible rather than swallowed. REV-042 and REV-045
-  are gaps *in* that posture, not exceptions to it.
-- **SQL function security.** Every `SECURITY DEFINER` function sets `search_path = ''`, qualifies its
-  references, reads secrets from Vault, and revokes `execute` from `public, anon, authenticated`. That
-  discipline is consistent and correct; REV-033 is the table-level counterpart that was simply never
-  written, not a contradiction of it.
-- **Secrets.** No committed secret found anywhere in the repo. The two client-side keys are the publishable
-  anon key, correctly identified as public-by-design and RLS-scoped; the `latest_call_per_ticker` view's
-  `security_invoker = true` (and its column narrowing away from `raw_model_response`) is exactly right.
-- **The INC-4 LiteLLM-vs-hand-rolled analysis** (`operational-controls.md` §14.1) is the strongest piece of
-  design writing in the set: five specific, falsifiable reasons grounded in this system's own incident
-  history, plus an explicit revisit condition. No changes suggested.
-- **INC-3's kill-switch** correctly identifies the single dispatch choke point instead of patching five
-  callers, and the resume-baseline refinement (§13.4) catches a false-alarm mode most designs would ship
-  into production and discover the hard way.
-- **INC-6's move to a Supabase table** is a genuine net simplification (one fewer secret store, one fewer
-  code path, one authorization mechanism), correctly justified by falsifying Decision #24's premise. The
-  concerns above are about its edges, not its direction.
-- **Doc-to-code fidelity is high overall.** The pre-existing modules (`foundations.md`, `data-and-flow.md`,
-  `components.md`, `non-functional-ops.md`) were checked line-by-line against the live code and are
-  accurate; REV-057 is the only content drift found in them.
+REV-042 and REV-047 are recorded as **resolved-with-dependency**: the corrective SQL is written and, read
+on its own terms, correct — but it is not deployable until REV-062 is closed, because applying it as the
+runbook currently instructs would revert INC-3. They are not counted as open findings and not counted as
+clean either.
 
 ---
 
-### Pass 11 summary
+### What is in good shape (calibration)
 
-**New findings by tag:** `[SECURITY]` 5 (REV-033, 034, 040 shared, 044, 050); `[DESIGN-GAP]` 11 (REV-035,
-036, 037, 040, 041, 045, 046, 057, 059, 060, 061); `[CODE-GAP]` 1 (REV-042); `[HARDCODED]` 4 (REV-038, 039,
-048, 052); `[BLOAT]` 7 (REV-043, 047, 049, 051, 053, 054, 056); `[TEST-GAP]` 1 (REV-055);
-`[REQUIREMENTS-GAP]` 1 (REV-058). No `[SCOPE-CREEP]` found — pass 2 (code → requirements) came back clean:
-every live behaviour traces to an FR/NFR or a numbered Decision, and the DRAFT increments stay inside
-FR24–FR33.
+- **The REV-033 remediation is better than the minimum asked for.** Two independent layers on
+  `kill_switch_audit` (REVOKE *and* enable+force RLS), with an explicit written statement of which one
+  covers which threat, and an honest "dev must confirm at apply time whether `postgres` carries
+  BYPASSRLS" instead of an assumption presented as fact. That is the right way to write a security fix
+  that cannot be tested yet.
+- **BUG-002's fix propagated to all four sources**, not just the one qa named. Checked directly.
+- **qa's INC-3 static review holds up under independent re-derivation.** Every substantive claim I
+  re-checked — the five dispatch paths, the pre-PAT-lookup guard placement, the `send_ntfy`-only-inside-
+  the-helpers argument, the `GREATEST`-NULL degradation, decision-vs-display-text separation — is
+  correct. Its one gap was scope (the two sibling migration files), not rigour.
+- **`tests/test_run_orchestration.py` (REV-055) covers all five named gaps**, not a subset: `_sessions()`
+  model selection, the `FORCE_RUN`-with-everything-closed branch, the both-sessions-open warning, the
+  `partial`-vs-`ok` heartbeat rule (three cases including mid-run error), and discovery's
+  quiet-day-vs-screener-failure distinction. 13 tests, each traceable to a specific past production
+  defect.
+- **`pages/common.js` (REV-053) resolved the harder half properly** — the currency map is now genuinely
+  one shape (`CUR` by ISO code plus `MKT_CUR_CODE`, with `curSymByCode`/`curSymByMarket` accessors),
+  not two representations moved into one file.
+- **`sql/schema.sql` (REV-035) is honest about its own limits** — its header states plainly that it was
+  not re-verified against the live project this session and that dev/release must confirm
+  column-for-column before treating it as authoritative. That caveat is worth more than the file.
 
-**Resolved this pass:** none logged — Passes 1–10 had zero open items on entry, independently re-confirmed.
+---
 
-**Open blocker count: 1** (REV-033).
-**Open major count: 10** (REV-034 through REV-043).
-**Open minor count: 18** (REV-044 through REV-061).
+### Pass 12 summary
 
-**Distribution note:** 21 of the 29 findings are in DRAFT design for INC-3–INC-7 and cost nothing but an
-edit to fix now, before GATE 3. Only 8 touch live production code or docs, and none of those is a
-correctness defect in the alerting path.
+**New findings by tag:** `[CODE-GAP]`/`[DESIGN-GAP]` 1 blocker (REV-062); `[DESIGN-GAP]` 1 major
+(REV-063) + 3 minor (REV-065, 067, 069); `[HARDCODED]` 1 major (REV-064) + 1 minor (REV-066);
+`[REQUIREMENTS-GAP]` 1 minor (REV-068); `[TEST-GAP]` 1 minor (REV-070). No `[SCOPE-CREEP]`, no
+`[SECURITY]`, no committed secrets — pass 2 and pass 5 both came back clean across the whole diff.
 
-### Verdict — Pass 11
+**Resolved this pass:** 22 of Pass 11's 29 findings independently confirmed RESOLVED by direct read
+(REV-033, 034, 035, 036, 037, 038, 040, 041, 044, 045, 046, 050, 051, 053, 054, 055, 056, 057, 058, 059,
+060, 061), plus BUG-002. 2 resolved-with-dependency (REV-042, 047). 5 remain open (REV-039, 043, 048,
+049, 052). The module-split guideline concern is resolved — no design file exceeds ~400 lines.
 
-**NOT CLEAR — one blocker.** REV-033 (RLS never enabled on the four new tables) must be resolved in design
-before INC-3 or INC-5 starts; as drafted it would put a world-writable pause switch and a world-writable
-admin allowlist into a financial-adjacent system, and it invalidates the authorization model that INC-5,
-INC-6 and INC-7 all rest on. It is a one-line-per-table fix at this stage.
+**Open blocker count: 1** (REV-062).
+**Open major count: 4** (REV-063, 064, 039, 043).
+**Open minor count: 9** (REV-065, 066, 067, 068, 069, 070, 048, 049, 052).
 
-The nine other majors are all pre-build or non-urgent: REV-034/035 should be closed alongside REV-033 as a
-single "database security posture" work item; REV-036/037/038/039/040/041 are INC-6 design corrections to
-land before GATE 3; REV-042 and REV-043 are live-system improvements that can be scheduled independently of
-the change request. No finding requires halting anything currently running.
+### Verdict — INC-3
 
-**Routing:** REV-033–042, 044–048, 057, 059(a/c) → tech-lead. REV-040 (write-ownership trade-off), 058,
-059(b), 061 (idea-brief) → pm. REV-043, 051, 052, 053, 054, 056 (`.gitignore`) → dev. REV-049, 050, 056
-(runbook), 060, 061 (runbook) → release. REV-055 → qa.
+**NOT CLEAR — one blocker (REV-062).** INC-3's own three files are correct: the SQL traces cleanly to
+FR24/FR25/FR26/NFR2, BUG-002 is genuinely fixed, qa's static review holds up under independent
+re-derivation, and passes 2–5 are clean across the increment. But INC-3 delivered FR25 and NFR2's
+resume-baseline into a repo that already contains two other committed, runbook-endorsed migrations which
+redefine the same function without them. As the repo stands, applying the documented sequence undoes what
+this increment was built to guarantee, and no alternative order is correct either. That is a defect in
+INC-3's delivered state, not merely an adjacent one, so it blocks clearance. REV-062 is the only thing
+standing between INC-3 and a clear verdict, and it is a single-file reconciliation.
+
+### Verdict — Pass 12
+
+**NOT CLEAR — one blocker.** Route REV-062 to tech-lead (reconcile the three `check_pipeline_health`
+bodies into one) and then release (runbook §2.3 + line 81) before INC-4 starts, per `CLAUDE.md`'s
+"blockers halt the pipeline" rule. REV-063 and REV-064 should be batched into the same release-side pass
+since all three touch the runbook's SQL/Variables sections. The remaining majors and minors are
+schedulable and none requires halting anything currently running — noting again that nothing from this
+change request is applied to the live project, so the live system's behaviour is unchanged by everything
+above.
+
+**Routing:** REV-062 → **tech-lead**, then **release**, then **qa** (re-test). REV-063, 064, 069,
+049(b) → **release**. REV-065, 066, 067, 052 → **tech-lead**. REV-068, 066 (§10 half) → **pm**. REV-043 →
+**dev**. REV-048, 070 → **qa**.
