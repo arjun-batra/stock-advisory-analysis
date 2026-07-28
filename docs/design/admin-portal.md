@@ -23,8 +23,7 @@ carefully, not by analogy to the read-only surfaces.
 - **Frontend + backend:** Next.js (App Router) app in a new `admin-portal/` directory in this same
   repo, deployed to **Vercel** with the project root set to `admin-portal/`. Same repo as the rest of
   the system (not a separate repo) — consistent with the existing "public repo, $0 hosting" posture; no
-  secrets live in the portal's client-side code (NFR6), so a public repo is not a new exposure.
-  deploy. **As of Decision #27 (2026-07-27), no feature in this portal needs a server-only secret** —
+  secrets live in the portal's client-side code (NFR6), so a public repo is not a new exposure. **As of Decision #27 (2026-07-27), no feature in this portal needs a server-only secret** —
   including the FR30 tunables editor, which now writes directly to Supabase under RLS (§16.4) — so
   Next.js's serverless API routes are used only for the standard Supabase Auth OAuth callback exchange
   (§16.8), not for any secret-holding proxy.
@@ -52,6 +51,18 @@ create table public.admin_allowlist (
 -- Seeded once, manually, with Arjun's Google account email (an ops step at INC-5
 -- rollout — the email itself isn't a secret, but it's not a literal baked into
 -- migration SQL either; insert it via the SQL editor at deploy time).
+alter table public.admin_allowlist enable row level security;
+-- REV-033 fix, 2026-07-28: no policy is created for this table. With RLS
+-- enabled and zero policies, anon/authenticated get zero rows via PostgREST —
+-- correct, since nothing outside this table's own migration/ops-seed step and
+-- is_admin() (below, a SECURITY DEFINER function that reads it as the table
+-- owner, exempt from RLS the same way every other SECURITY DEFINER function
+-- in this codebase already is) should ever read or write it. Without this,
+-- Supabase's default public-schema grants would let ANY signed-in Google
+-- account (or even anon) read the allowlist and, worse, INSERT their own
+-- email into it — which would make them "the admin" and defeat is_admin()
+-- for every RLS policy in INC-5/6/7 at once, since it is their single source
+-- of truth (see the paragraph below).
 
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -105,11 +116,15 @@ CHECK constraints 1:1; no new validation rules invented beyond what the DB alrea
 
 **Moved to `docs/design/admin-portal-tunables.md`** (2026-07-27 — this subsection grew past the point
 where INC-6 should have to load the rest of the portal's design to build against it; doc hygiene, see
-`docs/design.md`'s split threshold). Covers: the `tunables` table schema, `is_admin()`-gated RLS policy,
-seed migration (including the `ALERTS_ENABLED` seed-value correctness note), the Decision #28 cache-file
-fail-safe mechanism (`config/tunables_cache.json`, the 3-tier `scripts/config.py` fallback chain,
-`hourly-watchlist.yml`'s new write-back step), and the `ALERTS_ENABLED` AND-gate logic. INC-6 reads that
-file; INC-5 and INC-7 don't need to.
+`docs/design.md`'s split threshold). Covers: the `tunables` table schema, `is_admin()`-gated RLS policy
+(narrowed to `select`/`update` only, REV-044), seed migration (including the `ALERTS_ENABLED` seed-value
+correctness note), the Decision #28 cache-file fail-safe mechanism (`tunables_cache.json`, the **two-tier**
+`scripts/config.py` fallback chain — table then cache, fails loud via `SystemExit` if both tiers miss a
+key — `hourly-watchlist.yml`'s new write-back step), and the `ALERTS_ENABLED` AND-gate logic. The exact
+fallback-chain mechanism is stated once, in `admin-portal-tunables.md` §16.4 — this stub intentionally
+doesn't restate it (CLAUDE.md's "state anything once" rule; restating it is what let this exact stub drift
+to a stale "3-tier" description once already, REV-037). INC-6 reads that file; INC-5 and INC-7 don't need
+to.
 
 ### 16.5 Track-record view (FR31)
 
@@ -215,3 +230,4 @@ library files for the GitHub-PAT proxy alone).
 | FR32 (kill-switch UI) | §16.6 |
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
+| NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |

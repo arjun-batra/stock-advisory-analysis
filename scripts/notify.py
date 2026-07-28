@@ -95,8 +95,9 @@ class NtfyNotifier:
         if self.detail_base and log_id:
             headers["Click"] = f"{self.detail_base}?log_id={log_id}"
         try:
-            requests.post(f"https://ntfy.sh/{topic}",
-                          data=_compose_body(rationale, market).encode("utf-8"), headers=headers, timeout=10)
+            requests.post(f"{config.NTFY_BASE_URL.rstrip('/')}/{topic}",
+                          data=_compose_body(rationale, market).encode("utf-8"), headers=headers,
+                          timeout=config.NTFY_TIMEOUT_SECONDS)
         except Exception as e:
             print(f"[notify error] {ticker}: {type(e).__name__}: {e}")
 

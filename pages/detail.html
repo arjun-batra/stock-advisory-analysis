@@ -139,7 +139,10 @@
       : (snap.parse_status === "failed" || snap.parse_status === "api_error")
       ? `<div class="note">Model response couldn't be parsed — showing fail-safe Hold.</div>` : "";
 
-    const heads = (snap.headlines || []).slice(0,5)
+    // No client-side re-cap here (REV-052): the pipeline already limits
+    // snap.headlines to config.HEADLINES_LIMIT before it's stored, so
+    // re-slicing here would silently drift from that tunable.
+    const heads = (snap.headlines || [])
       .map(h => `<p class="headline-item">${esc(h)}</p>`).join("") ||
       `<p class="stat-label">No headlines captured.</p>`;
 
