@@ -34,20 +34,43 @@ Section numbers below (§7–§9) are unchanged from the pre-split monolithic `d
   hourly-watchlist.yml   # workflow_dispatch only; concurrency group
                          #   (former shadow steps removed 2026-07-16 — see docs/design.md's
                          #    "Retired: shadow-pilot tracks" note)
-  daily-discovery.yml    # workflow_dispatch only; concurrency group
-  publish-prices.yml     # writes pages/prices.json (CORS fallback, frontend.md §11)
+                         #   DRAFT (INC-6, admin-portal.md §16.4): gains `permissions: contents: write`
+                         #   (this workflow has NONE today — confirmed by reading the file directly, not
+                         #   assumed) + a new "Commit tunables cache if changed" step, mirroring
+                         #   publish-prices.yml's existing commit-on-change step exactly. Sole writer of
+                         #   config/tunables_cache.json (Decision #28).
+  daily-discovery.yml    # workflow_dispatch only; concurrency group — DRAFT: no changes for INC-6;
+                         #   reads config/tunables_cache.json read-only via config.py's fallback chain,
+                         #   same as every script, no permissions change needed for a read.
+  publish-prices.yml     # writes pages/prices.json (CORS fallback, frontend.md §11); already has
+                         #   `permissions: contents: write` and the exact commit-on-change pattern INC-6's
+                         #   tunables-cache step mirrors (admin-portal.md §16.4) — DRAFT: no changes for
+                         #   INC-6 itself; read-only consumer of the tunables cache like daily-discovery.yml.
+config/
+  tunables_cache.json    # DRAFT (INC-6): last-known-good cache for the 10 FR30 curated tunables,
+                         #   seeded at cutover with the same 10 values as the `tunables` table's seed
+                         #   migration; written back only by hourly-watchlist.yml, read by every script
+                         #   via config.py's fallback chain (admin-portal.md §16.4, Decision #28)
 scripts/
   config.py              # market hours/gates, model Variables, discovery gates — all tunables
                          #   (shadow vars removed 2026-07-16 — see "Retired: shadow-pilot tracks")
+                         #   DRAFT (INC-6): gains the 3-tier tunables fallback chain (Supabase table ->
+                         #   config/tunables_cache.json -> hardcoded literal) and
+                         #   write_tunables_cache_if_fetched() (admin-portal.md §16.4) — the first
+                         #   module-level network call and first local-file write this file has ever had.
   ingest.py              # yfinance wrapper; market-agnostic; headline filter; session-aware price/vol
   prefilter.py           # Yahoo live screener + quality gates + signals + funnel; region-aware
   ai_judge.py            # Gemini batched judge_batch(models=...); BATCH_SYSTEM_PROMPT; schema + confidence
   state.py               # Supabase read/write; single-rule change machine; _snapshot()
   notify.py              # ntfy dispatch (provider-agnostic); per-market topic + timestamp
   textutil.py            # shared clip()
-  run_hourly.py          # hourly watchlist orchestrator (per-market gate) — thin entry point
-  run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point
-  publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point
+  run_hourly.py          # hourly watchlist orchestrator (per-market gate) — thin entry point.
+                         #   DRAFT (INC-6): gains one line, config.write_tunables_cache_if_fetched(),
+                         #   called early in main() — the only entry point that does.
+  run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point. DRAFT: no
+                         #   change for INC-6 — remains a pure read-only tunables-cache consumer.
+  publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point. DRAFT: no
+                         #   change for INC-6 — remains a pure read-only tunables-cache consumer.
 sql/
   scheduler_pgcron.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
   kill_switch.sql, admin_portal_rls.sql, admin_portal_tunables.sql,
@@ -124,21 +147,27 @@ Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action 
 > the `AIProvider` implementation `judge_batch()` uses; see `operational-controls.md` §14.4. Not on the
 > admin portal's curated list (FR30) — single-valued today, nothing to edit.
 >
-> **DRAFT — REVISED 2026-07-27, Decision #27 (supersedes the prior GitHub-Variable-AND-gate plan
+> **DRAFT — REVISED 2026-07-27, Decisions #27 (supersedes the prior GitHub-Variable-AND-gate plan
 > recorded here; superseded text is preserved in git history, not here — doc hygiene, don't restate
-> retired plans verbatim):** the 10 FR30-curated keys (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`,
-> `ALERTS_ENABLED`, and the seven `DISCOVERY_*` gate/signal/shortlist/cooldown keys) no longer come from
-> a GitHub Actions Variable at all — **no workflow YAML change of any kind** is part of INC-6. Instead,
-> `scripts/config.py` fetches all 10 from a new Supabase `tunables` table at process start
-> (`_fetch_tunables()`/`_tunable()`, fail-safe to the existing hardcoded literal on any fetch failure —
-> full detail in `admin-portal.md` §16.4). `ALERTS_ENABLED` is the one key with a second live input to
-> reconcile (the pre-existing `workflow_dispatch` `inputs.alerts_enabled` manual-dry-run override, env
-> var unchanged); resolved as a pure `scripts/config.py` AND (table value can only *suppress*, never
-> force on, over an explicit manual dry-run) — see `admin-portal.md` §16.4 for the exact logic. This is
-> **not on this section's config-surface list** as a `${{ vars.X }}` workflow-Variable tunable the way
-> `GEMINI_MAX_RETRIES` etc. are — it's a `config.py`-internal fetch against Supabase, a third tunables
-> surface alongside "`config.py` env-var defaults" and "workflow-YAML `vars.X`" described above. The
-> pre-existing `${{ vars.GEMINI_MODEL || '...' }}` / `_BACKUP` Variable wiring already in
-> `hourly-watchlist.yml` becomes a harmless, unread vestige once the table takes precedence for those two
-> keys (`_tunable()` no longer consults that env var) — safe to leave, not required to remove for
-> correctness; noted as an optional future cleanup, not INC-6 scope.
+> retired plans verbatim) and #28 (refines #27's failed-fetch fallback):** the 10 FR30-curated keys
+> (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`, `ALERTS_ENABLED`, and the seven `DISCOVERY_*`
+> gate/signal/shortlist/cooldown keys) no longer come from a GitHub Actions Variable at all. Instead,
+> `scripts/config.py` fetches all 10 from a new Supabase `tunables` table at process start, falling back
+> — on a failed fetch — to the last-known-good value cached in the repo-committed
+> `config/tunables_cache.json` (a hardcoded Python literal is now only the third-tier floor for a
+> missing/corrupted cache file, not the primary fallback; full detail in `admin-portal.md` §16.4).
+> `ALERTS_ENABLED` is the one key with a second live input to reconcile (the pre-existing
+> `workflow_dispatch` `inputs.alerts_enabled` manual-dry-run override, env var unchanged); resolved as a
+> pure `scripts/config.py` AND (table/cache value can only *suppress*, never force on, over an explicit
+> manual dry-run) — see `admin-portal.md` §16.4 for the exact logic. **One workflow YAML change is now
+> part of INC-6** (Decision #28's write-back mechanism, not Decision #27's read path): `hourly-watchlist.
+> yml` gains a `permissions: contents: write` block (it has none today) and a "commit tunables cache if
+> changed" step mirroring `publish-prices.yml`'s existing pattern — it is the sole writer of
+> `config/tunables_cache.json`; `daily-discovery.yml` and `publish-prices.yml` remain unchanged, read-only
+> consumers. This is **not on this section's config-surface list** as a `${{ vars.X }}` workflow-Variable
+> tunable the way `GEMINI_MAX_RETRIES` etc. are — it's a `config.py`-internal fetch against Supabase (with
+> a file-based fallback), a third tunables surface alongside "`config.py` env-var defaults" and
+> "workflow-YAML `vars.X`" described above. The pre-existing `${{ vars.GEMINI_MODEL || '...' }}` /
+> `_BACKUP` Variable wiring already in `hourly-watchlist.yml` becomes a harmless, unread vestige once the
+> table/cache chain takes precedence for those two keys (`_tunable()` never consults that env var) — safe
+> to leave, not required to remove for correctness; noted as an optional future cleanup, not INC-6 scope.

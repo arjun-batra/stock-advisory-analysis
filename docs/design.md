@@ -2,12 +2,15 @@
 
 **Owner:** tech-lead. **Status:** DESCRIPTIVE / as-built for FR1–FR23, NFR1–NFR4 (core, live). **DRAFT**
 for the 2026-07-26 change request — kill-switch (FR24–FR26), admin portal (FR27–FR32, NFR5–6), AI
-provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and two new module
-files. **Not yet implemented; no dev work starts before the user approves this plan at GATE 3**, per
-CLAUDE.md's pipeline gates. One open design gap needs Arjun's/pm's sign-off before INC-6 specifically —
-see `docs/design/admin-portal.md` §16.4. Split into per-module files under `docs/design/` (2026-07-25,
-REV-024) — **this file is a thin index; read the module file(s) your increment actually touches, not the
-whole tree.**
+provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and three new module
+files (`operational-controls.md`, `admin-portal.md`, `admin-portal-tunables.md`). Revised twice since:
+2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves from a GitHub-PAT proxy to a
+Supabase table) and again 2026-07-27 (Decision #28, refines #27 — the failed-fetch fallback moves from a
+hardcoded literal to a repo-committed cache file). **Not yet implemented; no dev work starts before the
+user approves this plan at GATE 3**, per CLAUDE.md's pipeline gates. **No open design questions remain**
+as of Decision #28 — see the increment plan below and `docs/design/admin-portal-tunables.md` §16.4.
+Split into per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index;
+read the module file(s) your increment actually touches, not the whole tree.**
 
 **Provenance:** Originally produced during the 2026-07-12 multi-agent-template adoption pass by condensing
 the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into this
@@ -33,7 +36,8 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/non-functional-ops.md` | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(DRAFT)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
-| `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, tunables editor, track-record view, kill-switch UI, secrets inventory | §16 |
+| `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
+| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table + RLS, seed data, Decision #28 cache-file fail-safe (`config/tunables_cache.json`, 3-tier `config.py` fallback chain, `hourly-watchlist.yml` write-back), `ALERTS_ENABLED` AND-gate. Split out of `admin-portal.md` 2026-07-27 — INC-6 reads only this file, not the rest of §16. | §16.4 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -140,12 +144,22 @@ production workflow YAML files). Design-time investigation found Decision #24's 
 of the 10 curated keys were actually wired from a GitHub Variable into the live workflows — and Arjun
 approved moving the tunables source of truth to a new Supabase `tunables` table instead, reusing INC-5's
 `is_admin()`/RLS mechanism directly rather than a separate GitHub-API code path. **INC-6 is now smaller
-than originally planned, not larger: no GitHub API integration, no server-only secret, no workflow-YAML
-changes, and the open design gap is resolved (not just deferred).** INC-6 now also has a **direct,
-literal dependency on INC-5's `is_admin()`/`admin_allowlist` objects** (not just a shared pattern it
-happens to reuse) — the `tunables` table's write policy calls the exact same function INC-5 creates for
-watchlist/holdings, so INC-6 cannot be built or even meaningfully designed against a stub. See
-`docs/design/admin-portal.md` §16.4 for the full mechanism.
+than originally planned, not larger: no GitHub API integration, no server-only secret, and the original
+open design gap is resolved (not just deferred).** INC-6 now also has a **direct, literal dependency on
+INC-5's `is_admin()`/`admin_allowlist` objects** (not just a shared pattern it happens to reuse) — the
+`tunables` table's write policy calls the exact same function INC-5 creates for watchlist/holdings, so
+INC-6 cannot be built or even meaningfully designed against a stub.
+
+**2026-07-27 revision, second pass (Decision #28, refines #27):** the failed-Supabase-fetch fallback for
+these 10 keys is no longer a fixed hardcoded Python literal — it's a repo-committed cache file
+(`config/tunables_cache.json`) holding the last successfully-fetched value per key, reusing
+`publish-prices.yml`'s already-proven commit-on-change mechanism. Arjun confirmed the write-ownership
+shape tech-lead proposed: `hourly-watchlist.yml` (runs most frequently) is the **sole** writer;
+`daily-discovery.yml` and `publish-prices.yml` remain read-only consumers, as they already are for the
+Supabase table itself. **This does add one small workflow-YAML change** — `hourly-watchlist.yml` gains a
+`permissions: contents: write` block (absent today) and one new commit-on-change step — but it's a
+direct copy of a pattern already live and working in this exact repo, not new risk surface. See
+`docs/design/admin-portal-tunables.md` §16.4 for the full mechanism.
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
@@ -211,38 +225,67 @@ Keep the migration's function signature stable once INC-6 is built against it.
    in the built client bundle or any browser network request; the portal's only "credential" is the
    signed-in user's own Supabase session, which is expected and RLS-gated.
 
-### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27, Decision #27 (supersedes #24)
-**Design:** `docs/design/admin-portal.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
+### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines #27)
+**Design:** `docs/design/admin-portal-tunables.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
 (`tunables` table, `_stamp_tunable_update()` trigger, `admin_write_tunables` RLS policy, 10-row seed);
-`admin-portal/app/tunables/` (portal UI); one small addition to `scripts/config.py`
-(`_fetch_tunables()`/`_tunable()` and the `ALERTS_ENABLED` AND-gate, §16.4). **No workflow YAML files are
-touched.** **Depends on INC-5's `admin_allowlist`/`is_admin()` already existing.**
-**Simplification note:** this increment is now **smaller** than the original plan — no GitHub API
-integration, no PAT, no Vercel API route/proxy, no production-workflow-YAML risk. The open design gap
-from the original pass (8 of 10 keys not actually wired to a GitHub Variable) is resolved structurally,
-not deferred: all 10 keys now take effect purely through `scripts/config.py`'s new table fetch.
+new `config/tunables_cache.json` (10-key seed file, identical values to the SQL seed); new
+`admin-portal/app/tunables/` (portal UI); additions to `scripts/config.py` (3-tier fallback chain —
+Supabase table → `config/tunables_cache.json` → hardcoded literal — plus
+`write_tunables_cache_if_fetched()` and the `ALERTS_ENABLED` AND-gate, §16.4); one line added to
+`run_hourly.py`'s entry point; **`.github/workflows/hourly-watchlist.yml`** gains a `permissions:
+contents: write` block (it has none today) and a new "Commit tunables cache if changed" step mirroring
+`publish-prices.yml`'s existing commit-on-change step. `daily-discovery.yml` and `publish-prices.yml` are
+**not** touched (read-only cache consumers, same as every script). **Depends on INC-5's
+`admin_allowlist`/`is_admin()` already existing.**
+**Simplification note (still holds after Decision #28):** this increment remains **smaller** than the
+original GitHub-PAT-proxy plan — no GitHub API integration, no PAT, no Vercel API route/proxy. Decision
+#28 adds exactly one small, well-precedented workflow change (the tunables-cache commit step, copied
+from a pattern already live and proven in `publish-prices.yml`), not a new category of risk. Both open
+questions from earlier passes — the GitHub-Variable wiring gap, and now the failed-fetch fallback +
+write-ownership question — are resolved structurally, not deferred.
 **Acceptance criteria:**
 1. `tunables` table exists, seeded with exactly the 10 FR30 keys at their current default
    value/description/example (matches `requirements.md` §10's per-key defaults — no behavior change at
    cutover, confirmed by diffing a fresh run's `data_snapshot`/discovery output against the pre-INC-6
-   baseline for an unedited row).
-2. Writing to `tunables` with the anon key and **no** authenticated admin session is rejected by RLS
+   baseline for an unedited row). **`ALERTS_ENABLED`'s seed value is `"true"`** (today's actual live
+   default via the `workflow_dispatch` input), not `config.py`'s bare `"false"` literal — verify this
+   specific row explicitly, since seeding it wrong would silently break production alerting.
+2. `config/tunables_cache.json` is committed with **exactly** the same 10 key/value pairs as the SQL
+   seed above (byte-for-byte value match per key, including `ALERTS_ENABLED: "true"`) — diff the two
+   seed sources directly, don't just eyeball them.
+3. Writing to `tunables` with the anon key and **no** authenticated admin session is rejected by RLS
    (`curl` returns a permissions error) — same proof pattern as INC-5 item 5.
-3. Updating a row via the portal stamps `updated_at`/`updated_by` correctly (server-side, via the
+4. Updating a row via the portal stamps `updated_at`/`updated_by` correctly (server-side, via the
    trigger — not client-supplied) and is visible on next read; `select * from tunables` after an edit
    confirms the new `value` and the signed-in admin's email in `updated_by`.
-4. `scripts/config.py`'s `_tunable()`-derived values (e.g. `GEMINI_MODEL`, `DISCOVERY_GAINER_PCT`) pick
+5. `scripts/config.py`'s `_tunable()`-derived values (e.g. `GEMINI_MODEL`, `DISCOVERY_GAINER_PCT`) pick
    up a table edit on the **next process start** (import-time fetch — not live/hot-reloaded mid-run,
    confirmed by editing a row, then re-running a script and observing the new value in its `[config]`
    startup log line).
-5. With the Supabase project temporarily unreachable (or the table renamed/dropped in a scratch test),
-   every one of the 10 keys falls back to its exact pre-INC-6 hardcoded literal — confirmed against the
-   existing `test-report.md` config-default assertions, zero regressions.
-6. `ALERTS_ENABLED`: with the `tunables` row set to `false`, a scheduled (no-`inputs`) run sends no real
-   push even though the `workflow_dispatch` input defaults to `true` (table suppresses). With the table
-   row `true` and a manual dry-run (`inputs.alerts_enabled=false`), no real push is sent either (input
-   still wins as a floor) — proves the AND-gate direction is correct, not just "some interaction exists."
-7. `git diff` shows **zero** changes to `hourly-watchlist.yml` / `daily-discovery.yml` for this increment.
+6. **Cache write-back, unchanged case:** running `hourly-watchlist.yml` (or `run_hourly.py` locally
+   against a live Supabase connection) when no `tunables` row has changed since the last run produces
+   **zero** git commits — `git log` before/after shows no new commit touching
+   `config/tunables_cache.json`.
+7. **Cache write-back, changed case:** editing one `tunables` row via the portal, then triggering
+   `hourly-watchlist.yml`, produces **exactly one** new commit authored by `github-actions[bot]`, message
+   `chore: refresh tunables cache [skip ci]`, touching only `config/tunables_cache.json`, containing the
+   new value and nothing else changed.
+8. **Read-only workflows never write:** simulating a Supabase fetch failure (e.g. temporarily wrong
+   `SUPABASE_URL`/blocked network) during a `daily-discovery.yml` or `publish-prices.yml` run — (a) the
+   run falls back to `config/tunables_cache.json`'s values correctly (confirmed via the `[config]`
+   startup log line naming the fallback tier used) and completes normally; (b) `git status`/`git log`
+   shows **no** attempt to write or commit `config/tunables_cache.json` from either workflow — grep
+   `run_discovery.py` and `publish_prices.py` for `write_tunables_cache_if_fetched` and confirm zero
+   matches.
+9. With the Supabase project unreachable **and** `config/tunables_cache.json` deleted/corrupted in a
+   scratch test, every one of the 10 keys falls back to its hardcoded literal floor (tier 3) —
+   confirmed against the existing `test-report.md` config-default assertions, zero regressions.
+10. `ALERTS_ENABLED`: with the `tunables` row set to `false`, a scheduled (no-`inputs`) run sends no real
+    push even though the `workflow_dispatch` input defaults to `true` (table/cache suppresses). With the
+    row `true` and a manual dry-run (`inputs.alerts_enabled=false`), no real push is sent either (input
+    still wins as a floor) — proves the AND-gate direction is correct, not just "some interaction exists."
+11. `git diff` shows **zero** changes to `daily-discovery.yml` / `publish-prices.yml` for this increment;
+    `hourly-watchlist.yml`'s diff is limited to the new `permissions:` block and the one new commit step.
 
 ### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
@@ -294,5 +337,5 @@ layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
 remain in `docs/requirements.md` for historical traceability only. **FR24–FR33 and NFR5–NFR6 (current,
 2026-07-26 CR) are DRAFT design**, covered by the Increment Plan above (INC-3–INC-7) and the two new
 module files; not yet implemented, and INC-6 has one open design gap pending confirmation
-(`admin-portal.md` §16.4). No dev work starts on any of INC-3–INC-7 before the user approves this plan
+(`admin-portal-tunables.md` §16.4). No dev work starts on any of INC-3–INC-7 before the user approves this plan
 at GATE 3.
