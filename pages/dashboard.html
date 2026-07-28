@@ -4,20 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stock advisor — dashboard</title>
+<link rel="stylesheet" href="common.css">
 <style>
-  :root {
-    --bg-page:#faf9f6; --bg-surface:#fff; --bg-subtle:#f1efe8;
-    --text-primary:#1a1a18; --text-secondary:#6b6a64; --text-tertiary:#9a988f;
-    --border:#e5e3da;
-    --buy-bg:#eaf3de; --buy-text:#27500a;
-    --sell-bg:#fcebeb; --sell-text:#791f1f;
-    --hold-bg:#f1efe8; --hold-text:#444441;
-    --info-bg:#e6f1fb; --info-text:#0c447c;
-    --candidate-bg:#eeedfe; --candidate-text:#3c3489;
-    --amber-bg:#faeeda; --amber-text:#854f0b;
-    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  }
   *{box-sizing:border-box;}
   body{margin:0;font-family:var(--font);background:var(--bg-page);color:var(--text-primary);line-height:1.5;}
   .wrap{max-width:480px;margin:0 auto;padding:24px 18px 60px;}
@@ -88,6 +76,7 @@
   <div class="footer">Informational only — not financial advice</div>
 </main>
 
+<script src="common.js"></script>
 <script>
   // ─── Build-time config ──────────────────────────────────────────────────────
   // Auto-refresh cadence (FR22) — configurable here, NOT hardcoded in the loop below.
@@ -96,10 +85,8 @@
   const ACCESS_PASSCODE_SHA256 =
     "1a7b50114acc73148e2751ce49815288ad63ec1718408d53faa162e6879d5ad9";
 
-  // Publishable (anon) key is client-safe by design: RLS scopes it to read-only
-  // call_log + watchlist. Requires the watchlist SELECT policy (#16) to be applied.
-  const SUPABASE_URL = "https://ikghqdtlbwifwnooytmm.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1CNiVwpI_NV7MzOvi_XucA_nQ47FKjG";
+  // SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, esc(), VERDICT, and the currency
+  // helpers come from common.js (REV-053).
 
   // Live-ish prices come from a same-origin prices.json published by a GitHub
   // Actions runner (issue #18: the browser CANNOT fetch Yahoo directly — every
@@ -114,16 +101,7 @@
     {label:"US & Canada", markets:["US","TSX"]},
     {label:"India (NSE)",  markets:["NSE"]},
   ];
-  const CUR = {US:"$", TSX:"CA$", NSE:"₹"};        // native symbol per market, no FX
-  const VERDICT = {
-    Buy:  {bg:"var(--buy-bg)",  text:"var(--buy-text)"},
-    Sell: {bg:"var(--sell-bg)", text:"var(--sell-text)"},
-    Hold: {bg:"var(--hold-bg)", text:"var(--hold-text)"},
-  };
-
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
-    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-  const curSym = m => CUR[m] || "";
+  const curSym = curSymByMarket;   // this page only ever has a market, not a currency code
   const fmtPrice = (v, m) => (typeof v === "number") ? curSym(m)+v.toFixed(2) : "—";
   const pctSpan = v => (typeof v === "number")
     ? `<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${v.toFixed(2)}%</span>` : `<span class="muted">—</span>`;
@@ -137,15 +115,7 @@
     return Math.floor(h/24)+"d ago";
   }
   // FR23 absolute dual-tz secondary: device tz primary + IST in brackets; single ts if device is IST.
-  const _TZSHORT = {EST:"ET",EDT:"ET",CST:"CT",CDT:"CT",MST:"MT",MDT:"MT",PST:"PT",PDT:"PT"};
-  function tzLabel(iso, tz){
-    const p = new Intl.DateTimeFormat("en-US",{timeZone:tz,timeZoneName:"short"})
-      .formatToParts(new Date(iso)).find(x => x.type === "timeZoneName");
-    const raw = p ? p.value : "";
-    return _TZSHORT[raw] || raw;
-  }
-  const clockIn = (iso, tz) =>
-    new Date(iso).toLocaleString("en-US", {timeZone:tz, hour:"numeric", minute:"2-digit"});
+  // tzLabel()/clockIn() come from common.js.
   function fmtAbs(iso){
     if(!iso) return "";
     const dev = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "America/New_York";

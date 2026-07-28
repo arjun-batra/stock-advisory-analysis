@@ -38,13 +38,19 @@ authorization mechanism for every write the portal makes.
 
 ```sql
 create table public.tunables (
-  key         text primary key,           -- e.g. 'GEMINI_MODEL'
+  key         text primary key check (key in (           -- REV-044: fixed FR30 key registry — the
+    'GEMINI_MODEL', 'GEMINI_MODEL_BACKUP', 'ALERTS_ENABLED',                 -- portal can never widen
+    'DISCOVERY_GAINER_PCT', 'DISCOVERY_LOSER_PCT', 'DISCOVERY_VOL_SPIKE',    -- its own reach by
+    'DISCOVERY_MIN_MARKET_CAP', 'DISCOVERY_MIN_MARKET_CAP_INR',             -- inserting a row for a
+    'DISCOVERY_SHORTLIST_MAX', 'DISCOVERY_PUSH_COOLDOWN_DAYS'                -- key nothing reads
+  )),
   value       text not null,               -- stored as text; scripts/config.py casts per key
   description text not null,               -- human-readable purpose (FR30: never a bare input box)
   example     text not null,               -- an example legal value
   updated_at  timestamptz not null default now(),
   updated_by  text
 );
+alter table public.tunables enable row level security;
 
 -- actor stamped server-side on every write, same "never trust the client's
 -- self-reported identity" principle as kill_switch_audit (operational-controls.md §13.3):
@@ -60,16 +66,30 @@ create trigger tunables_stamp_update
   before update on public.tunables
   for each row execute function public._stamp_tunable_update();
 
+-- REV-044 fix, 2026-07-28: narrowed from `for all` to `for select, update` only.
+-- FR30 needs UPDATE on the ten migration-seeded rows — nothing more. `for all`
+-- (the original draft) also granted INSERT/DELETE, which nothing in the
+-- portal UI uses; a stray DELETE would silently pin that key to whatever the
+-- cache/hardcoded-seed-time value was forever (no error surfaces — tier 2
+-- still resolves it, see the fallback chain below), and an INSERT could add a
+-- row for a key `scripts/config.py` never reads. The CHECK constraint above is
+-- the second half of this fix — even a same-admin UPDATE (the only op this
+-- policy allows) cannot rename a row's `key` to something outside the fixed
+-- 10, since `key` is the primary key and any UPDATE that changed it would
+-- have to satisfy the CHECK on the new value.
 create policy "admin_write_tunables" on public.tunables
-  for all to authenticated
+  for select, update to authenticated
   using (public.is_admin())
   with check (public.is_admin());
 ```
 
 `is_admin()` is defined in INC-5 (`admin-portal.md` §16.2) — this policy is a direct, literal caller of
-it, not a re-implementation. No anon/public policy — only the authenticated admin (portal) reads/writes
-this table; `scripts/config.py` reads it with the existing `SUPABASE_SECRET_KEY` (service role, bypasses
-RLS, same posture every other Python module already uses — no new grant needed there).
+it, not a re-implementation. **No anon/public policy exists, and no `insert`/`delete` policy exists for
+any role, including `authenticated`** (REV-033/REV-044) — with RLS enabled, that means insert/delete on
+this table is denied to everyone except the table owner (the seed migration below, which inserts the 10
+rows as the owner, is unaffected). `scripts/config.py` reads it with the existing `SUPABASE_SECRET_KEY`
+(service role, bypasses RLS, same posture every other Python module already uses — no new grant needed
+there).
 
 **Seed migration (INC-6):** one `insert` per curated key, at the value/description/example already
 documented for these keys in `requirements.md` §10 / `scripts/config.py`'s existing comments — **no
@@ -96,9 +116,10 @@ table above):** a fixed hardcoded Python literal as the *only* fallback would si
 whatever value happened to be in the code the last time that line was edited, drifting stale from
 whatever's actually been curated via the portal in day-to-day use — defeating the point of a
 portal-editable source of truth. Instead, `scripts/config.py` falls back to the **last
-successfully-fetched value**, read from a **repo-committed cache file**, `config/tunables_cache.json` —
-reusing the exact "commit only if changed" mechanism `.github/workflows/publish-prices.yml` already uses
-for `pages/prices.json` (verified directly against that file's current content, not assumed):
+successfully-fetched value**, read from a **repo-committed cache file**, `tunables_cache.json` at the
+**repo root** (REV-046, see naming note below) — reusing the exact "commit only if changed" mechanism
+`.github/workflows/publish-prices.yml` already uses for `pages/prices.json` (verified directly against
+that file's current content, not assumed):
 
 ```
 git add pages/prices.json
@@ -116,7 +137,17 @@ default `GITHUB_TOKEN` is otherwise read-only for repo contents. **`hourly-watch
 `permissions:` block at all today** (confirmed by reading the file directly) — INC-6 must add the same
 `permissions: contents: write` block to it, or the new commit step will fail with a 403 on push.
 
-**Seed file (`config/tunables_cache.json`, committed at INC-6 time):** must contain **exactly** the same
+**Naming/location — REV-046 fix, 2026-07-28:** the cache file is `tunables_cache.json` at the **repo
+root**, not inside a `config/` subdirectory as an earlier draft of this section had it. `scripts/` is a
+flat, non-package directory placed directly on `sys.path` (no `__init__.py`), so `import config` resolves
+`scripts/config.py` by path order; a repo-root `config/` directory with no `__init__.py` is a valid
+implicit Python namespace package that would **shadow `scripts/config.py`** whenever the repo root
+precedes `scripts/` on `sys.path` — a real risk for a bare `python -c "import config"` from the repo root,
+or any future tooling change, and one that costs nothing to avoid before the file exists. Repo-root
+placement (alongside `README.md`, `requirements.txt`) is not importable as a package and cannot collide
+with the `config` module name.
+
+**Seed file (`tunables_cache.json`, committed at INC-6 time):** must contain **exactly** the same
 10 key/value pairs as the `tunables` table's seed migration above — including `ALERTS_ENABLED: "true"`,
 not `config.py`'s bare `"false"` literal, for the same cutover-safety reason. Any mismatch between the
 two seeds would show up as a spurious "changed" commit the moment the first real Supabase fetch

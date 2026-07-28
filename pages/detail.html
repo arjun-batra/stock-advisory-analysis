@@ -4,20 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stock advisor — call detail</title>
+<link rel="stylesheet" href="common.css">
 <style>
-  :root {
-    --bg-page:#faf9f6; --bg-surface:#fff; --bg-subtle:#f1efe8;
-    --text-primary:#1a1a18; --text-secondary:#6b6a64; --text-tertiary:#9a988f;
-    --border:#e5e3da;
-    --buy-bg:#eaf3de; --buy-text:#27500a;
-    --sell-bg:#fcebeb; --sell-text:#791f1f;
-    --hold-bg:#f1efe8; --hold-text:#444441;
-    --info-bg:#e6f1fb; --info-text:#0c447c;
-    --candidate-bg:#eeedfe; --candidate-text:#3c3489;
-    --amber-bg:#faeeda; --amber-text:#854f0b;
-    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  }
   *{box-sizing:border-box;}
   body{margin:0;font-family:var(--font);background:var(--bg-page);color:var(--text-primary);line-height:1.5;}
   .wrap{max-width:480px;margin:0 auto;padding:24px 18px 60px;}
@@ -45,19 +33,11 @@
 <main class="wrap">
   <div id="content"><p class="msg">Loading…</p></div>
 </main>
+<script src="common.js"></script>
 <script>
-  // Publishable key is client-safe by design (RLS restricts it to read-only call_log).
-  const SUPABASE_URL = "https://ikghqdtlbwifwnooytmm.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_1CNiVwpI_NV7MzOvi_XucA_nQ47FKjG";
-
-  const VERDICT = {
-    Buy:  {bg:"var(--buy-bg)",  text:"var(--buy-text)"},
-    Sell: {bg:"var(--sell-bg)", text:"var(--sell-text)"},
-    Hold: {bg:"var(--hold-bg)", text:"var(--hold-text)"},
-  };
-
-  const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
-    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  // SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY (client-safe by design -- RLS
+  // restricts it to read-only call_log), esc(), and VERDICT come from
+  // common.js (REV-053).
 
   function headlineText(row){
     if(row.label === "new-candidate") return row.verdict;
@@ -87,33 +67,19 @@
   const range52 = r => (Array.isArray(r) && r.length===2) ? `${r[0]} – ${r[1]}` : "—";
   const num = v => (v ?? "—");
 
-  // Q10: render a currency symbol ($ / CA$ / ₹) from the currency code, not "USD".
-  const CUR = {USD:"$", CAD:"CA$", INR:"₹"};
-  const curSym = c => CUR[c] || (c ? c + " " : "");
-  // UI-handoff v3: the price currency symbol is derived from the MARKET
-  // ($ US / CA$ TSX / ₹ NSE), not the ticker suffix and not a possibly-missing
-  // fundamentals currency code (no FX). Map market -> currency code and reuse
-  // curSym; fall back to the snapshot's own currency for legacy rows with no market.
-  const MKT_CUR_CODE = {US:"USD", TSX:"CAD", NSE:"INR"};
+  // Q10 / UI-handoff v3: render a currency symbol ($ / CA$ / ₹) from a currency
+  // code, not "USD". CUR and MKT_CUR_CODE come from common.js (REV-053) -- ONE
+  // shape shared with dashboard.html, keyed by currency code with a market ->
+  // code lookup, since this page needs both (marketCur below, and p.currency /
+  // f.currency, which are already currency codes).
+  const curSym = curSymByCode;
   const money = (v, c) => (typeof v === "number" || (typeof v === "string" && v !== ""))
     ? curSym(c) + v : "—";
 
   // FR23: device timezone primary + IST secondary in brackets, deduped when the
   // device is already IST. Push notifications are stamped server-side (notify.py);
   // this client-rendered surface can read the device tz, so it shows both.
-  const _TZSHORT = {EST:"ET",EDT:"ET",CST:"CT",CDT:"CT",MST:"MT",MDT:"MT",PST:"PT",PDT:"PT"};
-  function tzLabel(iso, tz){
-    const p = new Intl.DateTimeFormat("en-US",{timeZone:tz,timeZoneName:"short"})
-      .formatToParts(new Date(iso)).find(x => x.type === "timeZoneName");
-    const raw = p ? p.value : "";
-    return _TZSHORT[raw] || raw;   // "EST"->"ET"; leaves e.g. "GMT+5:30" as-is
-  }
-  function clockIn(iso, tz, withDate){
-    const opt = withDate
-      ? {timeZone:tz, month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}
-      : {timeZone:tz, hour:"numeric", minute:"2-digit"};
-    return new Date(iso).toLocaleString("en-US", opt);
-  }
+  // tzLabel()/clockIn() come from common.js.
   function fmtTs(iso){
     if(!iso) return "";
     const dev = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "America/New_York";
