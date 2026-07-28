@@ -2293,3 +2293,39 @@ non-applyability and every live reference to them. It logged 2 new minors (REV-0
   INC-4's changed-file set except REV-065, whose cited line numbers shifted with INC-4's
   `non-functional-ops.md` §9 edit and were re-derived at Pass 14. Full carried text lives in
   `docs/review-log.md` Pass 14's "Carried forward" section.
+
+---
+
+## Pass 14 — 2026-07-28 (INC-4 diff-scoped audit: AI provider abstraction, FR33) — ARCHIVED 2026-07-28
+
+Archived at Pass 15's close, per `CLAUDE.md`'s doc-hygiene rule. Pass 14 was the diff-scoped audit of
+INC-4 (`5fc452a..284e950`): `scripts/ai_provider.py`, `scripts/ai_judge.py`, `scripts/config.py`,
+`tests/conftest.py`, `docs/design/non-functional-ops.md`, `docs/handoff.md`, `docs/test-report.md`. It
+verified FR33 end to end, re-derived qa's retry/backoff and untouched-entry-point claims from independent
+sources, and issued **CLEAR** for INC-4 with 6 new minors and zero blockers. Full finding text is in git
+history at the Pass-15 commit.
+
+**Closing disposition (Pass 15, 2026-07-28) — each verified against current file content, not against
+commit messages or agent self-reports:**
+
+- **RESOLVED (5):**
+  - **REV-073** `[DESIGN-GAP]` — `non-functional-ops.md` self-contradiction about `ai_provider.py`.
+    Fixed at `:68-70` (repo map now lists it, IMPLEMENTED INC-4), `:71-73` (`ai_judge.py` line rewritten
+    to the provider-neutral description), `:113-115` (stub now IMPLEMENTED). Both out-of-scope siblings
+    also fixed: `data-and-flow.md:64-65` now attributes the `fallback_from` format to
+    `ai_provider.GeminiProvider.generate` with the pre-INC-4 note; `operational-controls.md:238-242` now
+    reads "at decision time (pre-INC-4) all three lived in `ai_judge.py`" with a post-refactor parenthetical.
+  - **REV-074** `[REQUIREMENTS-GAP]` — `AI_PROVIDER` now in `requirements.md` §10 Core system
+    (`:326`), with a changelog entry (`:414`). Runbook §7 half remains open under REV-064.
+  - **REV-076** `[DESIGN-GAP]` — decided AND implemented. `operational-controls.md` §14.3 `:365-403`
+    records the cadence delta and the caching decision; `ai_provider.py:140-157` implements it.
+  - **REV-077** `[TEST-GAP]` — `tests/test_ai_provider.py` (12 tests) covers explicit-arg, config-default,
+    and both bogus-name `SystemExit` paths. One-line residual logged as REV-080.
+  - **REV-078** `[HARDCODED]` — `config.AI_TEMPERATURE` (`config.py:99-102`) consumed at
+    `ai_provider.py:162`, and present in **both** baselines: `requirements.md:334` and
+    `non-functional-ops.md:148-150`. The REV-074-shaped repeat was avoided.
+- **PARTIALLY RESOLVED (1):** **REV-075** — the dangling `ai_judge._client` symbol is gone, but the
+  replacement is also wrong; carried into Pass 15 as an open minor, re-scoped there.
+- **STILL OPEN, carried into Pass 15 (14 IDs):** REV-039, REV-043, REV-048, REV-049(b), REV-052,
+  REV-063 (residual), REV-064, REV-065, REV-066, REV-067, REV-068, REV-070, REV-071, REV-072, plus
+  REV-075 above. Full carried text lives in `docs/review-log.md` Pass 15's "Carried forward" section.
