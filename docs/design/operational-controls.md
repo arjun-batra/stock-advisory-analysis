@@ -5,9 +5,13 @@ load-bearing decisions, increment plan, and requirement coverage map — read th
 orientation. Section numbers below (§13–§14) continue the pre-split numbering; §15 (coverage map)
 stays in `docs/design.md` itself, so this file skips it.
 
-**Status: DRAFT** — covers the 2026-07-26 change request (kill-switch, FR24–FR26; AI provider
-abstraction, FR33). Not yet implemented; increments INC-3 (kill-switch) and INC-4 (AI provider
-abstraction) build this. Pending GATE 3 (user approval of `docs/design.md`'s increment plan).
+**Status: IMPLEMENTED** — covers the 2026-07-26 change request (kill-switch, FR24–FR26; AI provider
+abstraction, FR33). Both increments have shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction)
+were dev-built, qa-tested, and reviewer-cleared with zero blockers through Pass 14
+(`docs/review-log.md`). This file is now as-built documentation for §13–§14, not draft design. Two
+deployment/verification items remain open and are tracked in `docs/review-log.md`, not here: INC-3's
+`sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's deferral, REV-070), and
+INC-4's AC6 (live-Gemini smoke test) is deferred pending real credentials (`docs/handoff.md`).
 
 ---
 
