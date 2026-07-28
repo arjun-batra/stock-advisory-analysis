@@ -84,7 +84,7 @@ MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 # Variable is an EMPTY string, not absent — a plain `os.environ.get(name,
 # default)` default would never apply, so `or` is used instead to resolve the
 # empty string to the intended default. The effective values are logged at
-# call setup (ai_provider._client).
+# call setup (ai_judge.judge_batch).
 GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES") or "3")
 GEMINI_RETRY_BASE_MS = int(os.environ.get("GEMINI_RETRY_BASE_MS") or "10000")
 # Per-request timeout for the Gemini call, in MILLISECONDS, honored on EVERY
