@@ -2236,3 +2236,34 @@ state, not taken on commit messages or agent self-reports):**
   code not written), REV-048 (linked table added, drift test not built, citations wrong — see REV-067),
   REV-049 (portal CI story still undecided), REV-052 (code side done, config-audit-baseline side not).
   Full carried text lives in `docs/review-log.md` Pass 12, §"Carried forward".
+
+---
+
+## Pass 12 — 2026-07-28 (Pass-11 closing verification + INC-3 diff-scoped clearance) — ARCHIVED 2026-07-28
+
+Archived at Pass 13's close, per `CLAUDE.md`'s doc-hygiene rule. Pass 12 was diff-scoped to the 42 files
+changed since Pass 10's clearance (`d8e3988..HEAD`) and did two jobs: independently re-verifying Pass 11's
+29 findings (REV-033–REV-061, disposition recorded above), and a diff-scoped INC-3 audit
+(kill-switch, FR24/FR25/FR26/NFR2). It logged 9 new findings — 1 blocker (REV-062), 2 majors (REV-063,
+REV-064), 6 minors (REV-065, 066, 067, 068, 069, 070). Verdict was **NOT CLEAR — one blocker** (REV-062:
+three mutually incompatible committed bodies of `check_pipeline_health()`, with no apply order producing a
+correct function, and a runbook instruction that silently reverted FR25/NFR2). Full finding text is in git
+history at the Pass-13 commit.
+
+**Closing disposition (Pass 13, 2026-07-28 — independently re-verified by direct read of current file
+state, not taken on the fix commit's own claims):**
+
+- **RESOLVED (4):** REV-062 (blocker — `sql/phase5_monitoring.sql:123` is now the sole definition
+  repo-wide; the reconciled body carries the kill-switch pause check, `GREATEST(..., v_resume_baseline)` on
+  all four staleness branches, all three REV-042 degraded branches, and the REV-047 ET/IST dedup with the
+  resume-baseline fix landing exactly once inside the merged branch; both sibling files reduced to
+  non-applyable `SUPERSEDED — DO NOT APPLY` markers; `docs/runbook.md` §2.3 corrected). REV-069 (§5 now
+  enumerates all six migrations and references §2.3). REV-042 and REV-047 — promoted from
+  resolved-with-dependency to fully RESOLVED now that both fixes are live in the single reconciled
+  function and the blocking dependency is closed.
+- **PARTIALLY RESOLVED (1):** REV-063 — runbook half resolved (`sql/kill_switch.sql` now listed first in
+  §2.3 with rationale); SQL-header half still open, downgraded to minor and carried into Pass 13.
+- **STILL OPEN, carried into Pass 13 (8):** REV-064 (six dead model Variables still in runbook §2.2, and
+  the finding is broader than first logged), REV-065, REV-066, REV-067 (worse after the reconciliation),
+  REV-068, REV-070, plus Pass-11 carryovers REV-039 (doc half), REV-043, REV-048, REV-049(b), REV-052.
+  Full carried text lives in `docs/review-log.md` Pass 13.
