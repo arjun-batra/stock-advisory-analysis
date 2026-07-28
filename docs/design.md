@@ -2,18 +2,22 @@
 
 **Owner:** tech-lead. **Status:** DESCRIPTIVE / as-built for FR1–FR23, NFR1–NFR4 (core, live). **DRAFT**
 for the 2026-07-26 change request — kill-switch (FR24–FR26), admin portal (FR27–FR32, NFR5–6), AI
-provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and three new module
-files (`operational-controls.md`, `admin-portal.md`, `admin-portal-tunables.md`). Revised twice since:
-2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves from a GitHub-PAT proxy to a
-Supabase table), again 2026-07-27 (Decision #28, refines #27 — the failed-fetch fallback moves from a
-hardcoded literal to a repo-committed cache file), and again 2026-07-28 (tech-lead correction, no new
-Decision # — the fallback chain narrowed to two tiers only, table then cache file; a permanent third
-hardcoded-literal tier added during design elaboration is removed, and a simultaneous double-failure of
-both tiers now fails loud via `SystemExit` instead of guessing — see
-`docs/design/admin-portal-tunables.md` §16.4). **Not yet implemented; no dev work starts before the
-user approves this plan at GATE 3**, per CLAUDE.md's pipeline gates. **No open design questions remain**
-as of the 2026-07-28 revision — see the increment plan below and `docs/design/admin-portal-tunables.md`
-§16.4.
+provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and four new module
+files (`operational-controls.md`, `admin-portal.md`, `admin-portal-tunables.md`, `tunables-fallback.md`).
+Revised several times since: 2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves
+from a GitHub-PAT proxy to a Supabase table); 2026-07-27 (Decision #28, refines #27 — the failed-fetch
+fallback moves from a hardcoded literal to a repo-committed cache file, and *proposes*
+`hourly-watchlist.yml` as sole cache writer, for Arjun to confirm or override); 2026-07-28 (tech-lead
+correction, no new Decision # — the fallback chain narrowed to two tiers only, table then cache file; a
+permanent third hardcoded-literal tier added during design elaboration is removed, and a simultaneous
+double-failure of both tiers now fails loud via `SystemExit` instead of guessing); and 2026-07-28 again
+(reviewer REV-040 + **Decision #29**, pm — REV-040 flagged Decision #28's write-ownership proposal as a
+race/privilege trade-off to re-put to Arjun, who confirmed `hourly-watchlist.yml` stays sole writer *on
+condition of* REV-040's two mitigations — a shared `concurrency` group with `publish-prices.yml` and a
+bounded retry around the cache-commit `git push` — both now part of this design, see
+`docs/design/tunables-fallback.md` §16.4). **Not yet implemented; no dev work starts before the user
+approves this plan at GATE 3**, per CLAUDE.md's pipeline gates. **No open design questions remain** as of
+Decision #29 — see the increment plan below and `docs/design/tunables-fallback.md` §16.4.
 Split into per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index;
 read the module file(s) your increment actually touches, not the whole tree.**
 
@@ -43,7 +47,7 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/operational-controls.md` **(DRAFT)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
 | `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
 | `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
-| `docs/design/tunables-fallback.md` **(DRAFT)** | Tunables editor (FR30) runtime half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier `config.py` fallback chain — table then cache, fails loud via `SystemExit` if both miss a key, explicit fetch timeout + offline test seam (REV-041), cache write-back validation (REV-036), `TUNABLES_DEGRADED` heartbeat signal (REV-045), `hourly-watchlist.yml` write-back, `ALERTS_ENABLED` AND-gate. Split out of `admin-portal-tunables.md` 2026-07-28 — INC-6 reads both tunables files, not the rest of §16. | §16.4 |
+| `docs/design/tunables-fallback.md` **(DRAFT)** | Tunables editor (FR30) runtime half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier `config.py` fallback chain — table then cache, fails loud via `SystemExit` if both miss a key, explicit fetch timeout + offline test seam (REV-041), cache write-back validation (REV-036), `TUNABLES_DEGRADED` heartbeat signal (REV-045), `hourly-watchlist.yml` write-back with REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `admin-portal-tunables.md` 2026-07-28 — INC-6 reads both tunables files, not the rest of §16. | §16.4 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -158,14 +162,28 @@ INC-6 cannot be built or even meaningfully designed against a stub.
 
 **2026-07-27 revision, second pass (Decision #28, refines #27):** the failed-Supabase-fetch fallback for
 these 10 keys is no longer a fixed hardcoded Python literal — it's a repo-committed cache file
-(`tunables_cache.json`) holding the last successfully-fetched value per key, reusing
-`publish-prices.yml`'s already-proven commit-on-change mechanism. Arjun confirmed the write-ownership
-shape tech-lead proposed: `hourly-watchlist.yml` (runs most frequently) is the **sole** writer;
-`daily-discovery.yml` and `publish-prices.yml` remain read-only consumers, as they already are for the
-Supabase table itself. **This does add one small workflow-YAML change** — `hourly-watchlist.yml` gains a
-`permissions: contents: write` block (absent today) and one new commit-on-change step — but it's a
-direct copy of a pattern already live and working in this exact repo, not new risk surface. See
-`docs/design/tunables-fallback.md` (§16.4, split 2026-07-28) for the full mechanism.
+(`tunables_cache.json`) holding the last successfully-fetched value per key, reusing (in spirit)
+`publish-prices.yml`'s already-proven commit-on-change mechanism. Decision #28 *proposed*
+`hourly-watchlist.yml` (runs most frequently) as the **sole** writer, for Arjun to confirm or override;
+`daily-discovery.yml` and `publish-prices.yml` were proposed as read-only consumers, as they already are
+for the Supabase table itself. This adds one small workflow-YAML change to `hourly-watchlist.yml` — see
+the 2026-07-28/REV-040 paragraph directly below for how that change actually landed, which is **not** a
+verbatim copy of `publish-prices.yml`'s step, contrary to what an earlier draft of this paragraph said.
+
+**2026-07-28, reviewer REV-040 + Decision #29 (pm, confirms #28's write-ownership proposal):** reviewer
+found the verbatim-copy plan above race-prone (`hourly-watchlist.yml` and `publish-prices.yml` push to
+`main` on the same `*/30` cadence window under *different* concurrency groups, so a lost push race would
+red-X the trading workflow *after* its real work had already completed) and over-privileged
+(`contents: write` at the workflow level on the file holding every production secret). REV-040 flagged
+the write-ownership choice itself as a trade-off to re-put to Arjun rather than a defect in Decision #28.
+**Arjun confirmed `hourly-watchlist.yml` stays the sole writer** — it's the workflow actually triggered
+off the Supabase-scheduled jobs, the natural place to write state back — **on condition of** REV-040's
+two mitigations, both now part of this design: (a) `hourly-watchlist.yml` and `publish-prices.yml` share
+one `concurrency` group (`repo-commit`, renamed from their two separate groups) so their commit steps can
+never be scheduled concurrently; (b) the new commit step's `permissions: contents: write` is scoped to
+the job, not the workflow file, and its `git push` is wrapped in a bounded 3-attempt retry (the original
+draft guarded only the `git pull --rebase`, leaving the push itself to fail the whole step outright on a
+lost race). See `docs/design/tunables-fallback.md` §16.4 for the full mechanism and exact YAML diff.
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
@@ -184,8 +202,14 @@ direct copy of a pattern already live and working in this exact repo, not new ri
    re-running immediately (heartbeat still stale purely from the pause duration) still produces **no**
    false "stale" alert — confirms the resume-baseline fix (§13.4).
 4. Each `set_kill_switch` call inserts exactly one `kill_switch_audit` row with the correct `action`
-   (`pause`/`resume`), a non-null `actor`, and `changed_at` — verified across ≥2 toggles.
-5. Full existing test suite passes unmodified; no `scripts/*.py` file is touched by this increment (grep
+   (`pause`/`resume`), a non-null `actor`, and `changed_at` — verified across ≥2 toggles. This also
+   proves RLS didn't break the audit insert (`operational-controls.md` §13.2, REV-033: both tables have
+   RLS enabled and zero anon/authenticated policies; `kill_switch_audit` is additionally `force`d).
+5. `select relrowsecurity, relforcerowsecurity from pg_class where relname in ('kill_switch_state',
+   'kill_switch_audit')` shows RLS enabled on both and forced on `kill_switch_audit`; a direct REST call
+   with the anon key (no session) to either table returns zero rows / a permissions error, not data
+   (REV-033).
+6. Full existing test suite passes unmodified; no `scripts/*.py` file is touched by this increment (grep
    confirms zero diff outside `sql/`).
 
 ### INC-4 — AI provider abstraction (FR33)
@@ -227,29 +251,55 @@ Keep the migration's function signature stable once INC-6 is built against it.
    session are rejected by RLS (`curl` returns a permissions error) — proves NFR6's "no unauthenticated
    write path."
 6. `admin_allowlist`/`is_admin()` exist and are used by both new RLS policies (grep the migration).
+   `admin_allowlist` itself has RLS enabled with zero anon/authenticated policies (REV-033) — a direct
+   REST call to it with the anon key returns zero rows, and a direct `insert` attempt (an unauthenticated
+   caller trying to self-register as admin) is rejected.
 7. No secret of any kind (there is none in this design — no GitHub PAT, no server-only credential) appears
    in the built client bundle or any browser network request; the portal's only "credential" is the
    signed-in user's own Supabase session, which is expected and RLS-gated.
+8. **(REV-034) Existing-schema grant/policy audit, executed against the live Supabase project before
+   INC-5 ships:** enumerate every grant and RLS policy on `watchlist`, `holdings`, `verdict_state`,
+   `call_log`, `run_heartbeat`, `monitor_alerts`, and the `latest_call_per_ticker` view, by role (`select *
+   from pg_policies where schemaname='public'` plus `information_schema.role_table_grants`), and record
+   the result in `docs/handoff.md` or a scratch note for reviewer's traceability audit. Confirm an
+   `authenticated`-but-not-allowlisted session (a signed-in Google account not in `admin_allowlist`, once
+   INC-5's OAuth is live) can read/write **nothing beyond what the `anon` key already could** — i.e. no
+   pre-existing policy is written `to authenticated`/`to public` with a permissive `using (true)` that
+   INC-5's OAuth rollout would newly make reachable. This is a **verify-against-reality** criterion, not a
+   design claim — `sql/schema.sql` (REV-035, `non-functional-ops.md`/`data-and-flow.md`) is the
+   version-controlled starting point, but INC-5 must re-check the live project directly since it's the
+   first increment that makes `authenticated` an internet-reachable principal at all.
 
-### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines #27)
-**Design:** `docs/design/admin-portal-tunables.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
-(`tunables` table, `_stamp_tunable_update()` trigger, `admin_write_tunables` RLS policy, 10-row seed);
-new `tunables_cache.json` (10-key seed file, identical values to the SQL seed); new
-`admin-portal/app/tunables/` (portal UI); additions to `scripts/config.py` (two-tier fallback chain —
-Supabase table → `tunables_cache.json`, no third hardcoded-literal tier; fails loud via
-`SystemExit` if both tiers miss a key, see `admin-portal-tunables.md` §16.4's 2026-07-28 revision — plus
-`write_tunables_cache_if_fetched()` and the `ALERTS_ENABLED` AND-gate, §16.4); one line added to
-`run_hourly.py`'s entry point; **`.github/workflows/hourly-watchlist.yml`** gains a `permissions:
-contents: write` block (it has none today) and a new "Commit tunables cache if changed" step mirroring
-`publish-prices.yml`'s existing commit-on-change step. `daily-discovery.yml` and `publish-prices.yml` are
-**not** touched (read-only cache consumers, same as every script). **Depends on INC-5's
-`admin_allowlist`/`is_admin()` already existing.**
-**Simplification note (still holds after Decision #28):** this increment remains **smaller** than the
-original GitHub-PAT-proxy plan — no GitHub API integration, no PAT, no Vercel API route/proxy. Decision
-#28 adds exactly one small, well-precedented workflow change (the tunables-cache commit step, copied
-from a pattern already live and proven in `publish-prices.yml`), not a new category of risk. Both open
-questions from earlier passes — the GitHub-Variable wiring gap, and now the failed-fetch fallback +
-write-ownership question — are resolved structurally, not deferred.
+### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
+**Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI) and
+`docs/design/tunables-fallback.md` §16.4 (runtime fallback chain, cache file, timeout, workflow
+write-back, REV-040's race/privilege mitigations — split out 2026-07-28). **Files:** new
+`sql/admin_portal_tunables.sql` (`tunables` table with key-registry CHECK, `_stamp_tunable_update()`
+trigger, `admin_write_tunables` RLS policy scoped to `select, update` only, 10-row seed); new
+`tunables_cache.json` at the **repo root** (10-key seed file, identical values to the SQL seed —
+REV-046, not inside a `config/` subdirectory); new `admin-portal/app/tunables/` (portal UI); additions to
+`scripts/config.py` (two-tier fallback chain — Supabase table → `tunables_cache.json`, no third
+hardcoded-literal tier; fails loud via `SystemExit` if both tiers miss a key, or if a tier-1 value fails
+to cast, see `tunables-fallback.md`'s 2026-07-28 revision — plus
+`TUNABLES_FETCH_TIMEOUT_MS`/`SKIP_TUNABLES_FETCH`, validated `write_tunables_cache_if_fetched()`,
+`TUNABLES_DEGRADED`, and the `ALERTS_ENABLED` AND-gate); one line added to `run_hourly.py`'s entry point;
+**`.github/workflows/hourly-watchlist.yml`** gains a **job-scoped** `permissions: contents: write` block
+(it has none today, REV-040b), its `concurrency.group` **renamed** from `hourly-watchlist` to
+`repo-commit` (REV-040a), and a new "Commit tunables cache if changed" step with a **bounded 3-attempt
+retry around the push** (REV-040, not a verbatim copy of `publish-prices.yml`'s step). **`publish-prices.yml`
+also gets touched — one line**: its `concurrency.group` renamed from `publish-prices` to the same
+`repo-commit` (REV-040a) — it stays a read-only tunables-cache consumer otherwise, gaining no commit
+step, no new permission, no retry loop. `daily-discovery.yml` is the only workflow with **zero** changes.
+**Depends on INC-5's `admin_allowlist`/`is_admin()` already existing.**
+**Simplification note (still holds after Decisions #28/#29):** this increment remains **smaller** than
+the original GitHub-PAT-proxy plan — no GitHub API integration, no PAT, no Vercel API route/proxy.
+Decisions #28/#29 add a small, well-precedented workflow change (the tunables-cache commit step, adapted
+— not copied verbatim — from a pattern already live and proven in `publish-prices.yml`, per REV-040's two
+mitigations), not a new category of risk. All open questions from earlier passes — the GitHub-Variable
+wiring gap, the failed-fetch fallback, and now the write-ownership trade-off REV-040 raised — are
+resolved structurally, not deferred: Decision #29 keeps `hourly-watchlist.yml` as sole writer (Arjun's
+reasoning: it's the workflow actually triggered off the Supabase-scheduled jobs) on condition of the two
+REV-040 mitigations, both incorporated above.
 **Acceptance criteria:**
 1. `tunables` table exists, seeded with exactly the 10 FR30 keys at their current default
    value/description/example (matches `requirements.md` §10's per-key defaults — no behavior change at
@@ -261,7 +311,11 @@ write-ownership question — are resolved structurally, not deferred.
    seed above (byte-for-byte value match per key, including `ALERTS_ENABLED: "true"`) — diff the two
    seed sources directly, don't just eyeball them.
 3. Writing to `tunables` with the anon key and **no** authenticated admin session is rejected by RLS
-   (`curl` returns a permissions error) — same proof pattern as INC-5 item 5.
+   (`curl` returns a permissions error) — same proof pattern as INC-5 item 5. RLS is enabled on
+   `tunables` (`select relrowsecurity from pg_class where relname='tunables'`); the write policy is
+   `select, update` only — a signed-in admin's `insert`/`delete` attempt against `tunables` is rejected
+   too (REV-044, not just an anon check), and inserting/updating a row with a `key` outside the fixed 10
+   fails the CHECK constraint.
 4. Updating a row via the portal stamps `updated_at`/`updated_by` correctly (server-side, via the
    trigger — not client-supplied) and is visible on next read; `select * from tunables` after an edit
    confirms the new `value` and the signed-in admin's email in `updated_by`.
@@ -297,8 +351,48 @@ write-ownership question — are resolved structurally, not deferred.
     push even though the `workflow_dispatch` input defaults to `true` (table/cache suppresses). With the
     row `true` and a manual dry-run (`inputs.alerts_enabled=false`), no real push is sent either (input
     still wins as a floor) — proves the AND-gate direction is correct, not just "some interaction exists."
-11. `git diff` shows **zero** changes to `daily-discovery.yml` / `publish-prices.yml` for this increment;
-    `hourly-watchlist.yml`'s diff is limited to the new `permissions:` block and the one new commit step.
+11. `git diff` shows **zero** changes to `daily-discovery.yml` for this increment. `publish-prices.yml`'s
+    diff is limited to the one-line `concurrency.group` rename (REV-040a) — no other line changes.
+    `hourly-watchlist.yml`'s diff is limited to: the `concurrency.group` rename (REV-040a), the new
+    job-scoped `permissions:` block (REV-040b), and the one new commit step with its retry loop.
+12. **(REV-036) Cache write-back validates and never shrinks.** With `SKIP_TUNABLES_FETCH` unset and a
+    live fetch that returns 9 of the 10 keys (simulate by deleting one row), `write_tunables_cache_if_
+    fetched()` leaves the 10th key's previously-cached value untouched in `tunables_cache.json` — the
+    file's key count never decreases. Separately, editing a curated key via direct SQL to a value that
+    fails its cast (e.g. `DISCOVERY_GAINER_PCT = '5%'`) and re-running an entry point raises `SystemExit`
+    naming that key at import time (tier-1 cast failure, not a silent fall-through to cache) — confirms
+    the bad value never reaches `tunables_cache.json`.
+13. **(REV-041) Fetch timeout and offline seam.** `TUNABLES_FETCH_TIMEOUT_MS` is read from the
+    environment (default present in `scripts/config.py` and the config audit baseline, `non-functional-
+    ops.md` §9) and passed into the Supabase client options; with `SKIP_TUNABLES_FETCH=true`, importing
+    `config.py` makes **zero** network calls (confirm via a network-call assertion/mock in the qa test)
+    and resolves every curated key from `tunables_cache.json`. `qa` mocks `config._fetch_tunables`
+    directly to exercise both the double-miss (AC9) and tier-2-degraded (AC14) paths deterministically.
+14. **(REV-045) Degraded-tunables signal is monitor-visible.** Forcing tier-2 resolution for at least one
+    curated key (e.g. via `SKIP_TUNABLES_FETCH=true` with a populated cache) and running
+    `run_hourly.py`/`run_discovery.py`/`publish_prices.py` writes `run_heartbeat.status = 'partial'` (or
+    the entry point's existing degraded value) even when no ticker-level error occurred — confirms
+    `config.TUNABLES_DEGRADED` reaches the heartbeat write at all three entry points.
+15. **(REV-040a) Shared concurrency group actually prevents the race.** `hourly-watchlist.yml` and
+    `publish-prices.yml` both declare `concurrency: { group: repo-commit, cancel-in-progress: false }`
+    (`grep concurrency -A2` both files — same group name, confirm neither still says `hourly-watchlist`
+    or `publish-prices`). Dispatch both workflows at (near-)the same time (two manual `workflow_dispatch`
+    calls back to back, or during a real overlapping `*/30` window) and confirm via the Actions run
+    queue/logs that the second one visibly **waits** for the first rather than running concurrently — the
+    primary defense is that their commit steps are never scheduled to overlap in the first place.
+    Separately, confirm the pre-existing guarantee didn't regress: two overlapping `hourly-watchlist.yml`
+    dispatches still serialize against each other (unchanged behavior, `non-functional-ops.md` §7.4) —
+    the group rename must not have silently dropped this.
+16. **(REV-040b) Push retry actually fires on a lost race, and permissions are job-scoped.** Simulate a
+    lost race deterministically — e.g. push a throwaway commit to the branch between the step's `git
+    pull --rebase` and its `git push` in a scratch test, or stub `git push` to fail on its first 1–2
+    invocations — and confirm the step's log contains at least one `push attempt N/3 failed … retrying
+    in`, followed by a successful push on a later attempt and a clean final commit graph (no
+    duplicate/orphaned commits, no leftover local-only commit). Confirm a permanent failure (all 3
+    attempts fail) exits non-zero with the `::error::` message naming the attempt count, rather than
+    hanging or silently succeeding. Separately, confirm `permissions: contents: write` is declared under
+    `jobs.watchlist`, not at the workflow's top level (`yq`/`grep` the YAML structure) — no top-level
+    `permissions:` block exists in the file.
 
 ### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
@@ -336,8 +430,9 @@ layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
 | FR23 | `components.md` §4.6 (notifications), §4.7 (detail page); `frontend.md` §10 (dashboard, client dual-tz); `data-and-flow.md` §5 UTC contract |
 | NFR1 | `components.md` §4.4 batched call; `non-functional-ops.md` §7.1 cost |
 | NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor |
-| NFR3 | `components.md` §4.6, §4.7; `non-functional-ops.md` §7.2 |
+| NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
+| NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |
 | FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
@@ -345,10 +440,11 @@ layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
 | FR27, FR28, FR29, FR30, FR31, FR32 (admin portal, 2026-07-26 CR), NFR5, NFR6 | **DRAFT** — `admin-portal.md` §16. INC-5/INC-6/INC-7. |
 | FR33 (AI provider abstraction, 2026-07-26 CR) | **DRAFT** — `operational-controls.md` §14. INC-4. |
 
-**Coverage:** FR1–FR23 and NFR1–NFR4 (core, live) are covered as-built across the module files above.
-**FR24–FR31/NFR5 and FR32–FR39/NFR6 (old numbering) are retired (2026-07-16)** — the requirement IDs
-remain in `docs/requirements.md` for historical traceability only. **FR24–FR33 and NFR5–NFR6 (current,
-2026-07-26 CR) are DRAFT design**, covered by the Increment Plan above (INC-3–INC-7) and the two new
-module files; not yet implemented, and INC-6 has one open design gap pending confirmation
-(`admin-portal-tunables.md` §16.4). No dev work starts on any of INC-3–INC-7 before the user approves this plan
-at GATE 3.
+**Coverage:** FR1–FR23, NFR1–NFR4, and NFR7 (core, live) are covered as-built across the module files
+above — NFR7 added 2026-07-28 (pm, REV-058) to give the system's pre-existing security posture its own
+ID, previously mis-cited as NFR3 (Disclaimer). **FR24–FR31/NFR5 and FR32–FR39/NFR6 (old numbering) are
+retired (2026-07-16)** — the requirement IDs remain in `docs/requirements.md` for historical traceability
+only. **FR24–FR33 and NFR5–NFR6 (current, 2026-07-26 CR) are DRAFT design**, covered by the Increment
+Plan above (INC-3–INC-7) and the module files listed above; not yet implemented. **No open design
+questions remain for any of INC-3–INC-7.** No dev work starts on any of INC-3–INC-7 before the user
+approves this plan at GATE 3.
