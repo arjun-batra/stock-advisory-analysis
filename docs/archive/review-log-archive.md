@@ -2267,3 +2267,29 @@ state, not taken on the fix commit's own claims):**
   the finding is broader than first logged), REV-065, REV-066, REV-067 (worse after the reconciliation),
   REV-068, REV-070, plus Pass-11 carryovers REV-039 (doc half), REV-043, REV-048, REV-049(b), REV-052.
   Full carried text lives in `docs/review-log.md` Pass 13.
+
+---
+
+## Pass 13 — 2026-07-28 (independent re-verification of REV-062 + INC-3 clearance) — ARCHIVED 2026-07-28
+
+Archived at Pass 14's close, per `CLAUDE.md`'s doc-hygiene rule. Pass 13 was a narrow re-verification pass
+over `sql/phase5_monitoring.sql`, `sql/fix_missing_degraded_checks.sql`,
+`sql/dedup_watchlist_health_check.sql`, `sql/kill_switch.sql`, `sql/schema.sql`, `docs/runbook.md`,
+`docs/design/components.md`, `docs/design/non-functional-ops.md` and both workflow YAMLs. It tested
+Pass 12's blocker against six explicit acceptance conditions (sole definition; pause check; resume
+baseline on all four staleness branches; all three degraded branches; ET/IST dedup with the resume
+baseline landing exactly once; NULL semantics for a never-paused system), plus the two superseded files'
+non-applyability and every live reference to them. It logged 2 new minors (REV-071, REV-072) and issued
+**CLEAR** for INC-3 and for the pass. Full finding text is in git history at the Pass-14 commit.
+
+**Closing disposition (Pass 14, 2026-07-28):**
+
+- **RESOLVED at Pass 13 (4), unchanged since:** REV-062 (blocker), REV-069, and REV-042 / REV-047
+  (promoted to fully resolved).
+- **PARTIALLY RESOLVED (1):** REV-063 — runbook half closed at Pass 13; SQL-header half still open as a
+  minor and carried into Pass 14.
+- **STILL OPEN, carried into Pass 14 (14 IDs):** REV-039, REV-043, REV-048, REV-049(b), REV-052,
+  REV-063 (residual), REV-064, REV-065, REV-066, REV-067, REV-068, REV-070, REV-071, REV-072. None is in
+  INC-4's changed-file set except REV-065, whose cited line numbers shifted with INC-4's
+  `non-functional-ops.md` §9 edit and were re-derived at Pass 14. Full carried text lives in
+  `docs/review-log.md` Pass 14's "Carried forward" section.
