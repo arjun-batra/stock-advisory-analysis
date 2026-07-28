@@ -39,10 +39,10 @@ multi-MB `raw_model_response` per refresh (FR21, NFR1).
   "headlines": ["[2026-06-30] ...", "..."],
   "raw_model_response": "<verbatim>",
   "confidence": "high | medium | low | null",
-  "parse_status": "ok | retried | failed | api_error | no_data",
+  "parse_status": "ok | failed | api_error | no_data",
   "model_used": "<gemini model string>",
   "tokens": { "prompt": 0, "output": 0, "thoughts": 0, "total": 0 },
-  "fallback_from": "<null | timeout | 503 | 429-rpd | parse | ...>",
+  "fallback_from": "<null | '<model>: <ExcType>: <message[:200]>' | '<model1>: ...; <model2>: ...' | ...>",
   "discovery_signals": ["mover", "volume", "52w-high"],
   "rate_limited": false,
   "position": { "shares": 0, "cost_basis": 0.0, "currency": "USD", "pl_pct": 0.0 }
@@ -54,6 +54,14 @@ multi-MB `raw_model_response` per refresh (FR21, NFR1).
   written on both write paths by `state._snapshot()`.
 - `confidence` is `null` on any fail-safe path, never a guessed default; not yet read by any consumer
   (`frontend.md` §12).
+- **REV-057 fix, 2026-07-28:** this contract previously listed `parse_status` values `ok | retried |
+  failed | api_error | no_data` and a short `fallback_from` token set (`timeout | 503 | 429-rpd | parse`);
+  neither matched what the code actually writes. `retried` is written by nothing — the retry path
+  (`components.md` §4.4's "parse & retry") returns `ok` on a successful retry, so `retried` is removed
+  from the documented set (reserved/unused, not a live value). `fallback_from` is a full string built by
+  `ai_judge._generate`/`judge_batch`, `"; ".join(f"{model}: {type(exc).__name__}: {str(exc)[:200]}" for
+  each attempted model)` — corrected above to match. Any future query/analytics view against this jsonb
+  shape should match the writer, not the previously-stale contract.
 
 **Timestamps stored in UTC; rendering per-surface (FR23):** notifications = one market timezone
 (server); detail page + dashboard = device primary + IST secondary (client); relative time computed

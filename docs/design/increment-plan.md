@@ -28,14 +28,29 @@ INC-6 cannot be built or even meaningfully designed against a stub.
 
 **2026-07-27 revision, second pass (Decision #28, refines #27):** the failed-Supabase-fetch fallback for
 these 10 keys is no longer a fixed hardcoded Python literal — it's a repo-committed cache file
-(`tunables_cache.json`) holding the last successfully-fetched value per key, reusing
-`publish-prices.yml`'s already-proven commit-on-change mechanism. Arjun confirmed the write-ownership
-shape tech-lead proposed: `hourly-watchlist.yml` (runs most frequently) is the **sole** writer;
-`daily-discovery.yml` and `publish-prices.yml` remain read-only consumers, as they already are for the
-Supabase table itself. **This does add one small workflow-YAML change** — `hourly-watchlist.yml` gains a
-`permissions: contents: write` block (absent today) and one new commit-on-change step — but it's a
-direct copy of a pattern already live and working in this exact repo, not new risk surface. See
-`docs/design/tunables-fallback.md` (§16.4, split 2026-07-28) for the full mechanism.
+(`tunables_cache.json`) holding the last successfully-fetched value per key, reusing (in spirit)
+`publish-prices.yml`'s already-proven commit-on-change mechanism. Decision #28 *proposed*
+`hourly-watchlist.yml` (runs most frequently) as the **sole** writer, for Arjun to confirm or override;
+`daily-discovery.yml` and `publish-prices.yml` were proposed as read-only consumers, as they already are
+for the Supabase table itself. This adds one small workflow-YAML change to `hourly-watchlist.yml` — see
+the 2026-07-28/REV-040 paragraph directly below for how that change actually landed, which is **not** a
+verbatim copy of `publish-prices.yml`'s step, contrary to what an earlier draft of this paragraph said.
+
+**2026-07-28, reviewer REV-040 + Decision #29 (pm, confirms #28's write-ownership proposal):** reviewer
+found the verbatim-copy plan above race-prone (`hourly-watchlist.yml` and `publish-prices.yml` push to
+`main` on the same `*/30` cadence window under *different* concurrency groups, so a lost push race would
+red-X the trading workflow *after* its real work had already completed) and over-privileged
+(`contents: write` at the workflow level on the file holding every production secret). REV-040 flagged
+the write-ownership choice itself as a trade-off to re-put to Arjun rather than a defect in Decision #28.
+**Arjun confirmed `hourly-watchlist.yml` stays the sole writer** — it's the workflow actually triggered
+off the Supabase-scheduled jobs, the natural place to write state back — **on condition of** REV-040's
+two mitigations, both now part of this design: (a) `hourly-watchlist.yml` and `publish-prices.yml` share
+one `concurrency` group (`repo-commit`, renamed from their two separate groups) so their commit steps can
+never be scheduled concurrently; (b) the new commit step's `permissions: contents: write` is scoped to
+the job, not the workflow file, and its `git push` is wrapped in a bounded 3-attempt retry (the original
+draft guarded only the `git pull --rebase`, leaving the push itself to fail the whole step outright on a
+lost race). See `docs/design/tunables-workflow-writeback.md` §16.4 for the full mechanism and exact YAML
+diff (and `docs/design/tunables-fallback.md` §16.4 for `scripts/config.py`'s fetch/fallback side).
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
@@ -123,9 +138,10 @@ Keep the migration's function signature stable once INC-6 is built against it.
    first increment that makes `authenticated` an internet-reachable principal at all.
 
 ### INC-6 — Admin portal: tunables editor (FR30) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
-**Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI) and
-`docs/design/tunables-fallback.md` §16.4 (runtime fallback chain, cache file, timeout, workflow
-write-back, REV-040's race/privilege mitigations — split out 2026-07-28). **Files:** new
+**Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI),
+`docs/design/tunables-fallback.md` §16.4 (`scripts/config.py`'s fetch/cache-fallback chain, timeout), and
+`docs/design/tunables-workflow-writeback.md` §16.4 (which workflow commits the cache, REV-040's
+race/privilege mitigations — split out 2026-07-28). **Files:** new
 `sql/admin_portal_tunables.sql` (`tunables` table with key-registry CHECK, `_stamp_tunable_update()`
 trigger, `admin_write_tunables` RLS policy scoped to `select, update` only, 10-row seed); new
 `tunables_cache.json` at the **repo root** (10-key seed file, identical values to the SQL seed —

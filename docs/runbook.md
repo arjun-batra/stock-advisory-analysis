@@ -69,12 +69,16 @@ Create a Supabase project if one doesn't exist. Then:
 
 3. **Apply SQL migrations in this exact order** (via Supabase SQL Editor or via the Supabase CLI `supabase db push`):
    - `sql/scheduler_pgcron.sql` (creates `dispatch_github_workflow()` function and base cron jobs for watchlist/discovery/prices)
+   - `sql/schema.sql` **(added 2026-07-28, reviewer REV-035)** — creates `watchlist`, `holdings`, `verdict_state`, `call_log`, and `run_heartbeat`, with RLS enabled and the anon-read policies on `watchlist`/`call_log`. **This step was previously missing from this list entirely** — the old three-migration order, run against a fresh project, produced no tables for the pipeline to write to. Must be applied before `phase5_monitoring.sql`, since `check_pipeline_health()` reads `run_heartbeat`, defined here.
    - `sql/phase5_monitoring.sql` (creates health-monitor function `check_pipeline_health()`, dispatch gates for market hours, monitor alert state table, and schedules the health check itself)
    - `sql/dashboard_latest_call_view.sql` (creates the `latest_call_per_ticker` view, used by the dashboard and detail page for fast read-only queries)
+   - `sql/enable_monitor_alerts_rls.sql` **(added 2026-07-28, reviewer REV-033/REV-035)** — one-line RLS-enable for `monitor_alerts`, which `phase5_monitoring.sql`'s `create table` never included even though the live table has RLS enabled. Must come after `phase5_monitoring.sql` (the table doesn't exist yet before that).
 
-These migrations set up the entire control plane. They will create the `run_heartbeat` and `monitor_alerts` tables automatically, and the cron jobs will start firing immediately on the schedules defined below.
+These five migrations set up the entire control plane (`sql/schema.sql`'s five tables plus `monitor_alerts`, created by `phase5_monitoring.sql`, plus the `latest_call_per_ticker` view). The cron jobs will start firing immediately on the schedules defined below.
 
 **Note:** `sql/drop_shadow_tables_migration.sql` is a one-time migration that was already applied to this project; it is not part of the fresh-deploy procedure (a fresh project never had those tables to drop). It remains in the repo as a historical record.
+
+**Not yet part of this apply order (reviewed, not yet applied to production):** `sql/fix_missing_degraded_checks.sql` and `sql/dedup_watchlist_health_check.sql` (reviewer Pass 11, REV-042/REV-047) are corrective migrations for the live `check_pipeline_health()` function — apply **`dedup_watchlist_health_check.sql` alone** when release schedules this (it is the later, complete version incorporating both fixes; applying both files would just have the second one win, so there's no reason to apply the first). Neither is required for a fresh deploy to function correctly, only to get the degraded-run alerting (discovery/publish-prices) and de-duplicated SQL that production is currently missing.
 
 ### Workflows and Their Schedules
 
@@ -339,15 +343,24 @@ See `docs/requirements.md` §10 (Configuration audit baseline) for the full tabl
 
 ### SQL Migrations and Schema
 
-The four migrations in `sql/` define the complete control-plane schema and logic. No other DDL is needed; the tables and functions they create persist:
+The four migrations in `sql/` (`scheduler_pgcron.sql`, `schema.sql`, `phase5_monitoring.sql`,
+`dashboard_latest_call_view.sql` — §2.3's apply order) define the complete control-plane schema and
+logic. No other DDL is needed; the tables and functions they create persist:
 
-- `watchlist` — user's tickers and per-market settings.
-- `holdings` — user's position data (shares, cost basis).
-- `verdict_state` — the last-seen verdict for each ticker, used to detect changes.
-- `call_log` — every check result: verdict, rationale, timestamp, data snapshot (JSON).
-- `run_heartbeat` — per-workflow metadata for monitoring staleness/degradation.
-- `monitor_alerts` — state machine for the health monitor's alert dedup.
-- `latest_call_per_ticker` (view) — dashboard read, filtered to only the most recent verdict per ticker.
+- `watchlist` — user's tickers and per-market settings (`sql/schema.sql`).
+- `holdings` — user's position data (shares, cost basis) (`sql/schema.sql`).
+- `verdict_state` — the last-seen verdict for each ticker, used to detect changes (`sql/schema.sql`).
+- `call_log` — every check result: verdict, rationale, timestamp, data snapshot (JSON) (`sql/schema.sql`).
+- `run_heartbeat` — per-workflow metadata for monitoring staleness/degradation (`sql/schema.sql`).
+- `monitor_alerts` — state machine for the health monitor's alert dedup (`sql/phase5_monitoring.sql`).
+- `latest_call_per_ticker` (view) — dashboard read, filtered to only the most recent verdict per ticker
+  (`sql/dashboard_latest_call_view.sql`).
+
+**RLS posture (REV-035, confirmed live via `list_tables` 2026-07-28):** all six tables above show
+`rls_enabled: true`. `watchlist` and `call_log` have an anon/authenticated SELECT policy each (the
+dashboard/detail-page read path); `holdings`, `verdict_state`, and `run_heartbeat` have RLS enabled with
+zero policies — no anon/authenticated access at all, read/written only by the secret-key workflows or a
+`SECURITY DEFINER` function. `sql/schema.sql` is this posture captured in version control.
 
 All modifications to this schema must be applied as new SQL migrations (or via Supabase's migration UI), never by direct ALTER commands.
 

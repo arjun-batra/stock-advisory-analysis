@@ -36,6 +36,32 @@ Section numbers below (§4, subsections 4.1–4.8) are unchanged from the pre-sp
 
 SQL lives at `sql/scheduler_pgcron.sql` (dispatch fns + all cron jobs, matches live cron).
 
+**REV-048, 2026-07-28 — market-session constants duplication, made visible (not merged).** The open
+bounds, base close bounds, monitor grace windows, and the staleness threshold each exist independently in
+both the Python and SQL layers. **This is not a request to merge the two close bounds** — load-bearing
+decision #9 (`docs/design.md` §0) deliberately keeps SQL at close+5 and Python at close+
+`RUNTIME_CLOSE_GRACE_MIN`, and that split is sound and stays as-is. The gap REV-048 flags is narrower:
+changing `MARKET_OPEN`/`MARKET_CLOSE` in `scripts/config.py` (a documented tunable, `requirements.md` §10)
+would leave the SQL sites below silently disagreeing, since nothing currently reads `config.py`'s value
+into SQL or vice versa. Documented here as one linked table so the duplication is trackable, not merged:
+
+| Constant | Python (`scripts/config.py`) | SQL |
+|---|---|---|
+| US/TSX open | `MARKET_OPEN` (09:30 ET) | `dispatch_watchlist_if_open()`, `t >= '09:30'` (`scheduler_pgcron.sql:279`) |
+| US/TSX base close | `MARKET_CLOSE` (16:00 ET) | `dispatch_watchlist_if_open()`, `t <= '16:05'` — close+5 (`scheduler_pgcron.sql:279`) |
+| NSE open | `NSE_MARKET_OPEN` (09:15 IST) | `dispatch_watchlist_nse_if_open()`, `t >= '09:15'` (`scheduler_pgcron.sql:132`) |
+| NSE base close | `NSE_MARKET_CLOSE` (15:30 IST) | `dispatch_watchlist_nse_if_open()`, `t <= '15:35'` — close+5 (`scheduler_pgcron.sql:132`) |
+| Monitor grace after US/TSX open | n/a (Python has no monitor) | `check_pipeline_health()`, `et >= '10:15'` (`phase5_monitoring.sql:125`) |
+| Monitor grace after NSE open | n/a | `check_pipeline_health()`, `ist >= '10:00'` (`phase5_monitoring.sql:153`) |
+| Monitor watchlist/publish-prices staleness threshold | n/a | `interval '70 minutes'`, three copies (`phase5_monitoring.sql:129,157,229`) |
+| Runtime close grace (execution-time defense-in-depth) | `RUNTIME_CLOSE_GRACE_MIN` (10 min), added to `MARKET_CLOSE`/`NSE_MARKET_CLOSE` in `is_market_open()`/`is_nse_open()` | n/a (SQL's own +5 jitter slack is separate, load-bearing #9) |
+
+Suggested (not built in this pass, qa's to schedule): a cheap test that reads `sql/scheduler_pgcron.sql`
+and `sql/phase5_monitoring.sql` as text and asserts their literal time constants match `config.py`'s
+`MARKET_OPEN`/`NSE_MARKET_OPEN` (open bounds only — the close-bound split is intentional and the test
+should not flag it) — the suite already parses workflow YAML in `docs/handoff.md`'s verify block, so the
+pattern exists.
+
 ### 4.2 Data ingestion — `yfinance` (FR1, FR9, non-functional-ops.md §7 data sources)
 
 Single wrapper module (`ingest.py`) used by all workflows. Pulls price/volume, basic fundamentals
@@ -56,6 +82,29 @@ Two data-quality behaviors (v18/v20, feed the prompt correctly):
 **Skip-with-log:** a ticker returning no usable data is skipped, never fatal (FR17, `non-functional-ops.md`
 §7.5). New listings (<~20 sessions) are *not* skipped — compute what history supports, mark 20d fields
 `n/a (newly listed)`.
+
+**REV-043 design call, 2026-07-28 — a narrow price-only path for `publish_prices.py`.**
+`publish_prices.py` (the */30 dashboard-snapshot publisher, `non-functional-ops.md` §8) currently calls
+the same `get_market_data()` every AI-judgment path uses, but only reads four fields
+(`price`/`pct_change_1d`/`market`/`fundamentals.currency`) — `get_market_data()` still does the full
+3-month history fetch, `tk.fast_info`, the full `tk.info` scrape, and `tk.news` + headline filtering for
+every one of those calls, roughly four Yahoo requests per ticker where one would do, on ~32 dispatch slots
+a weekday across both sessions (`sql/scheduler_pgcron.sql`'s `publish-prices` cron). That's avoidable load
+against an unofficial API this pipeline has already been rate-limited by (issue #1), and it shares the
+`YF_PACING_SECONDS` budget with the watchlist runs that actually need the AI-facing data.
+**Decision: add `ingest.get_price_only(ticker) -> dict`** — `period='5d'` history (enough for `price` and
+`pct_change_1d`) plus `tk.fast_info` for `market`/currency context, **no `tk.info` scrape, no `tk.news`
+call**. `publish_prices.py` switches to this function; `get_market_data()` is **untouched** and remains
+the only path the AI-judgment code (`run_hourly.py`/`run_discovery.py`) uses — this is reuse at the wrong
+grain being narrowed, not a second ingestion module. Implementation (the actual function body, field
+mapping, and yfinance call shape) is dev's at INC-time; this is a design decision, not code. Not gated
+behind any of INC-3–INC-7 — an independent live-system fix `pm`/`release` can schedule separately.
+
+**Related, not addressed here (pm question, not a design gap):** `publish_prices.py` is currently the only
+dispatch path with no market-open gate (`sql/scheduler_pgcron.sql:152`'s `publish-prices` cron fires
+`*/30 3-10,13-21` with no `dispatch_..._if_open()` gate wrapping it), so it also fires through the
+11:00–13:00 UTC gap between the NSE and US/TSX sessions. Worth confirming with pm whether that's
+intentional; not changed by this fix.
 
 ### 4.3 Candidate sourcing & prefilter — discovery only (FR4, FR5, Decisions #4/#9/#14/#16)
 

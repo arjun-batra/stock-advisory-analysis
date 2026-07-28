@@ -1,0 +1,28 @@
+-- =====================================================================
+-- Fix: monitor_alerts is missing its RLS-enable statement in committed DDL
+-- (reviewer Pass 11, REV-033/REV-035)
+-- =====================================================================
+-- `monitor_alerts` (sql/phase5_monitoring.sql's `create table`) is confirmed
+-- `rls_enabled: true` on the LIVE project (verified via `list_tables`,
+-- 2026-07-28), but the committed `create table` statement has no
+-- `alter table ... enable row level security` line — the same doc-vs-live
+-- gap REV-035 exists to close, for the one table whose base DDL was already
+-- committed elsewhere. Not folded into sql/schema.sql because `monitor_alerts`
+-- doesn't exist yet at the point sql/schema.sql runs in the apply order (it's
+-- created by sql/phase5_monitoring.sql, which schema.sql must precede, since
+-- check_pipeline_health() — in phase5_monitoring.sql — reads run_heartbeat,
+-- defined in schema.sql). This file is a separate, tiny, LAST step.
+--
+-- Apply order: after sql/phase5_monitoring.sql (any point after that is
+-- fine, including immediately after, or batched with the REV-042/047 fixes
+-- below in the same session). Idempotent — enabling RLS that is already
+-- enabled is a no-op, safe to run against the live project.
+--
+-- NOT APPLIED. dev/release coordinate actual deployment separately.
+-- =====================================================================
+
+alter table public.monitor_alerts enable row level security;
+-- No anon/authenticated policy — internal monitor-dedup state, read/written
+-- only by the SECURITY DEFINER functions in sql/phase5_monitoring.sql
+-- (_raise_monitor, _clear_monitor), which are exempt from RLS as the table
+-- owner (same posture as every other internal-only table in sql/schema.sql).

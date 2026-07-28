@@ -107,10 +107,12 @@ create policy "admin_write_holdings" on public.holdings
 **additional** `authenticated`-role policy, not a replacement. `holdings` currently has RLS enabled with
 **no** policies at all, i.e. zero anon/authenticated access — this is the first policy it gets.)
 
-**Fields (from `data-and-flow.md` §5):** `watchlist` — ticker, market (US/TSX/NSE), type
-(held/watch-only), status; `holdings` — ticker, shares (>0), cost_basis (>0), currency
+**Fields (from `data-and-flow.md` §5, corrected 2026-07-28 — the values below were previously swapped):**
+`watchlist` — ticker, market (US/TSX/NSE), type (`stock`/`ETF`, default `stock`), status
+(`held`/`watch-only`); `holdings` — ticker, shares (>0), cost_basis (>0), currency
 (USD/CAD/INR — matches the ticker's market). The portal's forms mirror these columns and their existing
-CHECK constraints 1:1; no new validation rules invented beyond what the DB already enforces.
+CHECK constraints 1:1 (see `sql/schema.sql`, REV-035, for the exact constraints); no new validation rules
+invented beyond what the DB already enforces.
 
 ### 16.4 Tunables editor (FR30)
 
