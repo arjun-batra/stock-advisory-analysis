@@ -135,7 +135,9 @@ Variables; nothing sensitive hardcoded. This mirrors the Configuration section o
 (the reviewer's audit baseline). Core: `GEMINI_MODEL`/`_BACKUP`, `NSE_GEMINI_MODEL`/`_BACKUP`,
 `DISCOVERY_GEMINI_MODEL`/`_BACKUP`, `GEMINI_TIMEOUT_MS` (180000), `GEMINI_MAX_RETRIES` (3),
 `GEMINI_RETRY_BASE_MS` (10000), `NTFY_TOPIC`, `NSE_NTFY_TOPIC` (falls back to `NTFY_TOPIC`),
-`DETAIL_PAGE_BASE`, `ALERTS_ENABLED` (false), `FORCE_RUN` (false), `MIN_HISTORY_ROWS` (21),
+`DETAIL_PAGE_BASE`, `ALERTS_ENABLED` (false), `FORCE_RUN` (false), `AI_PROVIDER` (`"gemini"` — selects the
+`AIProvider` implementation `ai_judge.judge_batch()` uses, `operational-controls.md` §14.4; not on the
+admin portal's curated list, FR30 — single-valued today), `MIN_HISTORY_ROWS` (21),
 `YF_PACING_SECONDS` (2 — unified yfinance/screener call spacing; as of REV-007 this **also** governs
 prefilter's live-screener call pacing, replacing five formerly-hardcoded `sleep(1)` sites, so inter-screen
 pacing there is now 2s, not 1s — a deliberate low-risk timing change), `YF_BACKOFF_SECONDS` (10),
@@ -170,9 +172,10 @@ Genuinely fixed toolchain/structural facts (`runs-on`, `python-version`, action 
 > on the two shadow workflow steps were removed along with those steps. No replacement is needed — there
 > is no shadow work left to bound.
 
-> **DRAFT (2026-07-26 CR, INC-4, not yet implemented):** `AI_PROVIDER` (default `"gemini"`) — selects
-> the `AIProvider` implementation `judge_batch()` uses; see `operational-controls.md` §14.4. Not on the
-> admin portal's curated list (FR30) — single-valued today, nothing to edit.
+> **IMPLEMENTED (INC-4, 2026-07-28):** `AI_PROVIDER` is now listed in the core baseline paragraph above,
+> alongside the rest of `config.py`'s tunables — this stub is retained only as a pointer to
+> `operational-controls.md` §14 (the hand-rolled-vs-LiteLLM decision and the `AIProvider`/`GeminiProvider`
+> interface shape) and `scripts/ai_provider.py` (the implementation).
 >
 > **DRAFT — REVISED 2026-07-27/28, Decisions #27/#28/#29 (2026-07-28 fix, REV-037): stated once, here
 > only a pointer.** The 10 FR30-curated keys (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`, `ALERTS_ENABLED`,

@@ -58,6 +58,13 @@ ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
 # testing or backfill via workflow_dispatch. Leave unset on the scheduled run.
 FORCE_RUN = os.environ.get("FORCE_RUN", "false").lower() == "true"
 
+# Selects the AIProvider implementation ai_judge.judge_batch() uses (FR33,
+# docs/design/operational-controls.md §14). Only "gemini" is implemented today
+# (Decision #26 — no second provider built); ai_provider.get_provider() raises
+# SystemExit for anything else. Not on the admin portal's curated tunables list
+# (FR30) — single-valued today, nothing to edit.
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "gemini")
+
 # --- Tunables (solution design 6.3) ------------------------------------------
 # REMINDER_INTERVAL_DAYS / COOLDOWN_HOURS removed (issue #11): the single-rule
 # model has no reminder and no cooldown, so neither constant has a consumer.

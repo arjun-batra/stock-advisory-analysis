@@ -1,83 +1,89 @@
-# Handoff — INC-3: Kill-switch (FR24, FR25, FR26, NFR2)
+# Handoff — INC-4: AI provider abstraction (FR33)
 
-Branch: `claude/admin-portal-evaluation-txaehj` (no new `inc-N` branch cut — Arjun directed batching
-this whole change request on the current branch rather than the per-increment branch/merge cycle).
+Branch: `claude/admin-portal-evaluation-txaehj` (same batching note as INC-3 — no new `inc-N` branch cut).
+INC-3 (kill-switch) shipped, tested, and was reviewer-cleared before this increment started.
 
-**Design:** `docs/design/operational-controls.md` §13. **Plan/AC:** `docs/design/increment-plan.md`
-"### INC-3 — Kill-switch". Traces to `docs/requirements.md` FR24-FR26, NFR2 (extended), Decisions Log
-#19-21.
-
-## Constraint honored
-Arjun has explicitly deferred applying any SQL changes to the live Supabase project for this change
-request. **No Supabase apply/execute/migration/DDL tool call was made.** All work below is
-write-only-to-repo: new/edited `.sql` files, reviewed and ready to apply, not yet applied. No
-read-only Supabase check was performed either (not needed to write code that matches the design doc's
-already-specified integration points verbatim).
+**Design:** `docs/design/operational-controls.md` §14 (§14.1 hand-rolled-vs-LiteLLM decision — already
+made, not revisited; §14.2 exact interface shape; §14.3 `ai_judge.py` after the refactor; §14.4 config
+addition). **Plan/AC:** `docs/design/increment-plan.md` "### INC-4 — AI provider abstraction (FR33)".
+Traces to `docs/requirements.md` FR33.
 
 ## Files changed
-- **New `sql/kill_switch.sql`** — `kill_switch_state` (singleton flag table, `CHECK (id)` constraint,
-  RLS enabled with zero policies — REV-033), `kill_switch_audit` (append-only log, RLS `enable`+`force`
-  with zero policies plus an explicit `revoke insert/update/delete from public, anon, authenticated` —
-  REV-033's belt-and-suspenders fix), and `set_kill_switch(p_paused boolean, p_source text default
-  'sql-direct')` (`SECURITY DEFINER`, updates the flag + inserts one audit row per call, execute revoked
-  from `public/anon/authenticated`). Copied verbatim from `operational-controls.md` §13.2/§13.3 — no
-  deviation from the design doc's SQL.
-- **`sql/scheduler_pgcron.sql`** — `dispatch_github_workflow` (the single choke point all five dispatch
-  paths funnel through: both watchlist gates, both discovery crons, publish-prices) now reads
-  `kill_switch_state.paused` first and returns `null` before the PAT lookup / `pg_net.http_post` if
-  paused, logging a `raise notice`. One guard, one function, per §13.1's design decision (lower-risk
-  diff than touching all five call sites, and a future sixth workflow inherits the guard for free as
-  long as it dispatches through this function).
-- **`sql/phase5_monitoring.sql`** — `check_pipeline_health` now reads `kill_switch_state` first;
-  returns immediately if `paused` (FR25: no alert evaluation at all while deliberately paused). Added
-  the resume-baseline fix (§13.4, load-bearing, not optional): `v_resume_baseline` = the last
-  `kill_switch_state.updated_at` where `paused = false`; all four staleness comparisons (watchlist
-  `wl_last` — both the ET and IST session branches share the same variable/check, discovery `disc_last`,
-  discovery-in `disc_in_last`, publish-prices `pp_last`) now compare against
-  `GREATEST(last_run_at, v_resume_baseline)` instead of the raw `last_run_at`, so lifting a pause
-  doesn't immediately false-alarm on a heartbeat that's merely stale from the pause duration — the
-  monitor gets one full dispatch cycle post-resume before it can alert. Alert *message text* still shows
-  the real, un-adjusted `last_run_at`/`disc_last`/etc. (only the stale/not-stale decision uses the
-  adjusted baseline) — unchanged per the design doc's explicit instruction.
+- **New `scripts/ai_provider.py`** — the full provider-neutral interface per §14.2: `TokenUsage`,
+  `ProviderResult` (frozen dataclasses), `ErrorClass` (str Enum), `ProviderError`, `BatchVerdictSchema`
+  (frozen dataclass), `AIProvider` (ABC, one abstract `generate()` method), `GeminiProvider` (the sole
+  concrete implementation — moved in, unchanged, from `ai_judge.py`: `genai.Client(http_options=...)`,
+  typed `response_schema` built from `BatchVerdictSchema`, `response_mime_type="application/json"`,
+  `temperature=0.2`, and `_classify()` carrying over `_is_retryable()`'s exact logic), `get_provider()`.
+- **`scripts/ai_judge.py`** — refactored to remove every Gemini-SDK-specific import/call
+  (`google.genai`, `google.genai.types`, `httpx`, `_client()`, `_usage()`, `_is_retryable()`,
+  `_RETRYABLE_CODES`/`_RETRYABLE_STATUSES`, `_RESPONSE_SCHEMA`). `_generate()` is now the
+  provider-neutral retry loop from §14.3 (takes an `AIProvider` + `max_retries`/`retry_base_ms` as
+  parameters instead of reading `config.*` / a `genai.Client` directly; catches only `ProviderError`).
+  `judge_batch()` gained an optional `provider=None` parameter (defaults to
+  `get_provider(config.AI_PROVIDER)`) — its public signature is otherwise unchanged and its return
+  contract is byte-identical (`_enrich()` now converts the `TokenUsage` dataclass back to a plain dict
+  via `dataclasses.asdict()` before stamping it onto each ticker's result, so callers see exactly the
+  same `{"prompt", "output", "thoughts", "total"}` shape as before). The "call config" log line
+  (timeout/max_retries/retry_base) and the per-retry transient-error log line are printed with
+  byte-identical text, just relocated to `judge_batch()`/`_generate()` respectively.
+- **`scripts/config.py`** — added `AI_PROVIDER` (env var, default `"gemini"`).
+- **`docs/design/non-functional-ops.md` §9** — added `AI_PROVIDER` to the core tunables baseline
+  paragraph (the reviewer's hardcoding-audit source of truth); updated the old "DRAFT, INC-4 not yet
+  implemented" stub to point at the now-implemented location instead of restating it.
+- **`tests/conftest.py`** — `mock_gemini` fixture now patches `ai_provider._client` (was
+  `ai_judge._client`) since the Gemini transport seam moved modules; docstrings updated to match. No
+  test assertions changed anywhere — `git diff --stat` on every `tests/test_*.py` file is empty.
 
-Both edited files got a one-line header note pointing at the new `sql/kill_switch.sql`
-apply-order dependency (`kill_switch_state` must exist before either function is applied).
+**Not touched, confirmed via `git diff --name-only`:** `scripts/run_hourly.py`, `scripts/run_discovery.py`.
 
-## Confirmed: no Python changes
-```
-git diff --name-only -- scripts/   # empty output
-```
-Zero files under `scripts/` touched. All three changed/new files are under `sql/`.
+## Acceptance criteria status (6 of 6 — see design doc's INC-4 AC list)
+1. **PASS** — `ai_provider.py` defines `AIProvider`, `ProviderResult`, `TokenUsage`, `ErrorClass`,
+   `ProviderError`, `BatchVerdictSchema`, `GeminiProvider`, `get_provider()` (verified by importing each
+   by name).
+2. **PASS** — `grep -n "genai\|types\." scripts/ai_judge.py` returns zero matches (exit code 1, no
+   output).
+3. **PASS** — `judge_batch()`'s signature is `(items, models=None, provider=None)`, return contract
+   unchanged (verified by the unmodified `tests/test_ai_judge.py` suite passing as-is); `git diff` on
+   `run_hourly.py`/`run_discovery.py` is empty (0 lines) and neither file appears in
+   `git diff --name-only`.
+4. **PASS** — full suite: 158 passed both before (baseline, via `git stash`) and after this change, with
+   zero assertion changes in any test file (only `conftest.py`'s fixture-plumbing docstrings/target
+   changed). `config.GEMINI_TIMEOUT_MS`/`GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS` are still the values
+   `judge_batch()` passes into `_generate()`'s `timeout_ms`/`max_retries`/`retry_base_ms` parameters —
+   same log lines, same `random.uniform(0, base*2**n)` full-jitter formula.
+5. **PASS** — `config.AI_PROVIDER` exists (default `"gemini"`); manual check:
+   `ai_provider.get_provider("bogus")` raises `SystemExit("Unknown AI_PROVIDER 'bogus'; supported:
+   ['gemini']")`.
+6. **BLOCKED — could not be executed in this environment.** No `GEMINI_API_KEY` (or any Google API
+   credential) is present anywhere in this session's environment (`env | grep -i gemini` / `-i google` /
+   `-i api_key` all empty; no secrets manager, `gh` CLI, or credential file found either). I did **not**
+   fabricate a result. As the closest available substitute I ran a real network call through the new
+   path with a deliberately invalid key (`GEMINI_API_KEY=invalid-test-key`) and confirmed it reaches
+   Google's real endpoint end-to-end: `ClientError: 400 INVALID_ARGUMENT ... 'API key not valid'`,
+   correctly classified `fatal` (0 transport retries, no backup-model retry burned), surfaced through
+   `ai_judge.judge_batch()` as `parse_status: "api_error"` — i.e. the full `ai_provider.py` ->
+   `GeminiProvider.generate()` -> `ai_judge._generate()` -> `judge_batch()` chain is wired correctly and
+   reaches Gemini's real API through this sandbox's proxy; the only missing piece is a valid credential.
+   **This needs a follow-up run with a real `GEMINI_API_KEY` before AC6 can be marked PASS** — either
+   supply the key to this session, or run
+   `python3 -c "import ai_judge; print(ai_judge.judge_batch([<a real item>]))"` from `scripts/` in an
+   environment that has it (e.g. the production GitHub Actions runner, or locally with the real secret).
 
-## How to run / verify (what's verifiable now, pre-apply)
+## How to run
 ```
-python3 -m pytest -q --tb=short   # 157 passed, both before and after this change — zero regressions,
-                                   # zero new tests (pure SQL increment, no existing Python test surface
-                                   # touches these functions/tables)
+cd scripts && python3 -m pytest -q --tb=short   # from repo root: pytest -q --tb=short (tests/ + scripts/ on sys.path via conftest.py)
 ```
-Dollar-quoted block balance and `begin`/`end` nesting spot-checked manually (no live DB, no `psql`
-available in this environment to run an actual parse/EXPLAIN).
-
-## Acceptance criteria status (per increment-plan.md's 6 ACs)
-- **AC6 (full test suite passes unmodified; zero `scripts/*.py` diff)** — **PASS**, verified above.
-- **AC1-AC5** — written and ready per the design doc, but require live Supabase verification
-  (`list_tables`/`list_functions`, calling `select set_kill_switch(true/false);`, manually invoking the
-  5 dispatch paths and checking `net._http_response`/`run_heartbeat`, calling
-  `check_pipeline_health()` with a synthetic stale heartbeat pre/post-resume, checking
-  `kill_switch_audit` rows across ≥2 toggles, querying `pg_class.relrowsecurity`/`relforcerowsecurity`,
-  and an anon-key REST call against both new tables) that cannot happen until this SQL is actually
-  applied to the live project. **Not attempted, not faked** — per Arjun's explicit deferral. Flagging
-  for whoever applies this later: AC2/AC3's "manually invoking dispatch paths" verification requires
-  toggling the flag on a project where the pg_cron jobs are live, so schedule that verification for a
-  low-traffic window.
+`ai_provider.get_provider("bogus")` manual check (SystemExit):
+```
+python3 -c "import ai_provider; ai_provider.get_provider('bogus')"
+```
 
 ## Known limitations
-- The manual-`workflow_dispatch` bypass (a human clicking "Run workflow" in the GitHub UI, or
-  `gh workflow run`, skips pg_cron and therefore the kill-switch check entirely) is an **accepted risk**
-  per §13.1 — FR24's text scopes the guarantee to scheduled dispatches only. Not a bug, not something to
-  fix in this increment.
-- `set_kill_switch()` is callable only via the SQL editor / service-role connection until INC-7 adds the
-  `is_admin()`-gated portal caller (`grant execute ... to authenticated`) — this increment is designed
-  to be fully self-contained with zero portal dependency, per the approved build order.
-- This increment's SQL is **not applied** to the live Supabase project. Nothing in this change request
-  is live yet; apply-time coordination is release's/Arjun's call, out of scope for dev.
+- AC6 (live smoke test) is unresolved per above — flagging to the orchestrator/Arjun rather than
+  guessing or faking a pass.
+- `AI_PROVIDER` is intentionally not on the admin portal's curated tunables list (FR30) — single-valued
+  today (only `"gemini"` implemented), nothing to edit; a second provider would be its own change
+  request that also updates FR30's curated list if it should be portal-editable (§14.4).
+- No new dependency added (`requirements.txt` unchanged) — `google-genai` was already a dependency and
+  simply moved which file imports it.

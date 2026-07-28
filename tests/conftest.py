@@ -28,13 +28,14 @@ os.environ.setdefault("SUPABASE_SECRET_KEY", "test-fake-secret-key")
 # --- shared Gemini-call fakes (used by test_ai_judge.py) ---
 #
 # ai_judge._generate / ai_judge._parse_batch / ai_judge._models_to_try all
-# funnel through the single `ai_judge._client` seam, so tests patch that one
+# funnel through GeminiProvider.generate(), which in turn calls the single
+# `ai_provider._client` seam (FR33 refactor, INC-4) -- so tests patch that one
 # seam and share this fake client machinery, mirroring how the production
 # code actually calls it.
 
 class FakeAPIError(Exception):
     """Stands in for google.genai's APIError: carries .code (HTTP int) and
-    .status (canonical name), which ai_judge._is_retryable inspects."""
+    .status (canonical name), which ai_provider._classify inspects."""
 
     def __init__(self, code=None, status=None, msg="simulated API error"):
         super().__init__(msg)
@@ -81,9 +82,9 @@ class FakeGeminiClient:
 
 @pytest.fixture
 def mock_gemini(monkeypatch):
-    """Patches the single shared seam (`ai_judge._client`) that ai_judge.judge_batch
-    calls through. Also stubs out time.sleep so a scripted retry/backoff path
-    never actually sleeps in the test suite.
+    """Patches the single shared seam (`ai_provider._client`) that
+    GeminiProvider.generate() calls through. Also stubs out time.sleep so a
+    scripted retry/backoff path never actually sleeps in the test suite.
 
     Usage: `mock_gemini(responses)` where `responses` is a list of
     FakeGeminiResponse / Exception instances, consumed in call order across
@@ -91,6 +92,7 @@ def mock_gemini(monkeypatch):
     Returns the FakeGeminiClient so tests can inspect `.models.calls`.
     """
     import ai_judge
+    import ai_provider
 
     monkeypatch.setattr(ai_judge.time, "sleep", lambda *_a, **_kw: None)
     holder = {}
@@ -98,7 +100,7 @@ def mock_gemini(monkeypatch):
     def _install(responses):
         client = FakeGeminiClient(responses)
         holder["client"] = client
-        monkeypatch.setattr(ai_judge, "_client", lambda: client)
+        monkeypatch.setattr(ai_provider, "_client", lambda *_a, **_kw: client)
         return client
 
     return _install

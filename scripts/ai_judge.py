@@ -1,20 +1,24 @@
 """AI judgment layer (solution design 4.4 / 4.4a).
 
-Builds the verdict prompt, calls Gemini in strict-JSON mode, validates the
-schema, retries once on a bad reply, and fails safe to Hold if it still can't
-parse — so a malformed response can only ever MISS a signal, never fabricate one.
+Builds the verdict prompt, calls the configured AI provider in strict-JSON
+mode, validates the schema, retries once on a bad reply, and fails safe to
+Hold if it still can't parse — so a malformed response can only ever MISS a
+signal, never fabricate one.
+
+Provider-neutral (FR33, `docs/design/operational-controls.md` §14): this
+module never imports an SDK directly or classifies a provider's raw
+exceptions — it talks only to `ai_provider.AIProvider`/`ProviderError`, so a
+future second provider is a new `AIProvider` implementation, not a change here.
 """
 
+import dataclasses
 import json
 import random
 import time
 from datetime import datetime, timezone
 
-import httpx
-from google import genai
-from google.genai import types
-
 import config
+from ai_provider import BatchVerdictSchema, ErrorClass, ProviderError, TokenUsage, get_provider
 from textutil import clip
 
 VALID_VERDICTS = {"Buy", "Sell", "Hold"}
@@ -71,26 +75,12 @@ BATCH_SYSTEM_PROMPT = (
     '"rationale": "<one or two short sentences>"}'
 )
 
-# Structural enforcement of the reply shape (belt to the prompt's braces):
-# with a typed schema the verdict/confidence enums and required keys are
-# guaranteed by constrained decoding, so the parse-retry path below should
-# almost never fire — it stays as the fail-safe.
-_RESPONSE_SCHEMA = types.Schema(
-    type=types.Type.ARRAY,
-    items=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "ticker": types.Schema(type=types.Type.STRING),
-            "verdict": types.Schema(type=types.Type.STRING,
-                                    enum=sorted(VALID_VERDICTS)),
-            "confidence": types.Schema(type=types.Type.STRING,
-                                       enum=sorted(VALID_CONFIDENCE)),
-            "rationale": types.Schema(type=types.Type.STRING),
-        },
-        required=["ticker", "verdict", "confidence", "rationale"],
-        property_ordering=["ticker", "verdict", "confidence", "rationale"],
-    ),
-)
+# Provider-neutral description of the expected reply shape (belt to the
+# prompt's braces) — each AIProvider implementation translates this into its
+# own SDK's schema/response-format type (see ai_provider._response_schema for
+# Gemini's constrained-decoding translation).
+_SCHEMA = BatchVerdictSchema(verdicts=tuple(sorted(VALID_VERDICTS)),
+                             confidences=tuple(sorted(VALID_CONFIDENCE)))
 
 
 def _fmt(v) -> str:
@@ -155,70 +145,20 @@ def _ticker_block(data: dict, position: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _client():
-    """Gemini client with an explicit, generous request timeout.
-
-    Root cause of the 3.5-flash -> lite fallbacks (observed live): 3.5-flash
-    *did* respond (tokens were billed on Google's dashboard) but slowly, and the
-    SDK's default client timeout fired first — so we discarded a completed,
-    token-charged response and fell back to lite. A high explicit timeout lets a
-    slow-but-valid response land instead of being thrown away.
-    """
-    print(f"  [ai_judge] call config: timeout={config.GEMINI_TIMEOUT_MS}ms, "
-          f"max_retries={config.GEMINI_MAX_RETRIES}, "
-          f"retry_base={config.GEMINI_RETRY_BASE_MS}ms (full jitter)")
-    return genai.Client(
-        api_key=config.GEMINI_API_KEY,
-        http_options=types.HttpOptions(timeout=config.GEMINI_TIMEOUT_MS),
-    )
-
-
-def _usage(resp) -> dict | None:
-    """Pull token counts off a response's usage_metadata, if present."""
-    um = getattr(resp, "usage_metadata", None)
-    if um is None:
-        return None
-    return {
-        "prompt": getattr(um, "prompt_token_count", None),
-        "output": getattr(um, "candidates_token_count", None),
-        "thoughts": getattr(um, "thoughts_token_count", None),
-        "total": getattr(um, "total_token_count", None),
-    }
-
-
-# Errors worth retrying are the TRANSIENT transport/capacity ones only
-# (2026-07-07 outage: 503 UNAVAILABLE "high demand" and 504 DEADLINE_EXCEEDED,
-# interleaved with successes all through the window; 429 is the rate-limit case
-# the old single fixed-delay retry targeted). Any other 4xx (bad request, auth,
-# bad model name) is deterministic — retrying just burns quota. A 200 whose
-# JSON doesn't parse is a prompt problem, not a transport one: that stays with
-# the parse-retry in judge_batch and never comes through here.
-_RETRYABLE_CODES = {429, 503, 504}
-_RETRYABLE_STATUSES = {"UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED"}
-
-
-def _is_retryable(e: Exception) -> bool:
-    """genai raises APIError carrying .code (HTTP int) and .status (canonical
-    name); a CLIENT-side deadline (GEMINI_TIMEOUT_MS expiring locally) surfaces
-    as an httpx timeout — the SDK's transport — or a bare TimeoutError."""
-    if isinstance(e, (httpx.TimeoutException, TimeoutError)):
-        return True
-    return (getattr(e, "code", None) in _RETRYABLE_CODES
-            or getattr(e, "status", None) in _RETRYABLE_STATUSES)
-
-
-def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, dict | None, int]:
-    """One Gemini request with retry-on-transient-error. Returns
+def _generate(provider, model: str, system_prompt: str, user_prompt: str,
+              schema: BatchVerdictSchema, timeout_ms: int, max_retries: int,
+              retry_base_ms: int) -> tuple[str, bool, str | None, TokenUsage | None, int]:
+    """One provider request with retry-on-transient-error. Returns
     (text, is_api_error, error_detail, usage, retries_used).
 
     THE shared call path: production watchlist/discovery (judge_batch) funnels
-    every API request through here, so retry behavior is identical by
-    construction. Only _is_retryable errors are retried, up to
-    config.GEMINI_MAX_RETRIES times, sleeping an exponential
-    FULLY-jittered delay (uniform 0..base*2^n) between attempts; every attempt
-    carries the client's GEMINI_TIMEOUT_MS (http_options is per-request), and
-    every retry is logged with attempt number, error, and delay — no silent
-    failures. retries_used is 0 on a first-attempt success.
+    every request through here, so retry behavior is identical by
+    construction regardless of provider. Only ErrorClass.RETRYABLE
+    ProviderErrors are retried, up to max_retries times, sleeping an
+    exponential FULLY-jittered delay (uniform 0..base*2^n) between attempts;
+    every attempt carries timeout_ms; every retry is logged with attempt
+    number, error, and delay — no silent failures. retries_used is 0 on a
+    first-attempt success.
 
     error_detail is the real exception (type + message) of the LAST attempt on
     failure — previously the caller logged a hardcoded "rate-limited/
@@ -229,17 +169,18 @@ def _generate(client, model: str, prompt, cfg) -> tuple[str, bool, str | None, d
     retries = 0
     while True:
         try:
-            resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
-            return (resp.text or "").strip(), False, None, _usage(resp), retries
-        except Exception as e:
-            err = f"{type(e).__name__}: {str(e)[:200]}"
-            if not _is_retryable(e) or retries >= config.GEMINI_MAX_RETRIES:
-                return "", True, err, None, retries
-            cap_s = config.GEMINI_RETRY_BASE_MS * (2 ** retries) / 1000.0
+            result = provider.generate(model=model, system_prompt=system_prompt,
+                                        user_prompt=user_prompt, schema=schema,
+                                        timeout_ms=timeout_ms)
+            return result.text, False, None, result.usage, retries
+        except ProviderError as e:
+            if e.error_class != ErrorClass.RETRYABLE or retries >= max_retries:
+                return "", True, e.detail, None, retries
+            cap_s = retry_base_ms * (2 ** retries) / 1000.0
             delay_s = random.uniform(0, cap_s)
             retries += 1
-            print(f"  [ai_judge] {model}: transient error ({err}); retry "
-                  f"{retries}/{config.GEMINI_MAX_RETRIES} in {delay_s:.1f}s (cap {cap_s:.0f}s)")
+            print(f"  [ai_judge] {model}: transient error ({e.detail}); retry "
+                  f"{retries}/{max_retries} in {delay_s:.1f}s (cap {cap_s:.0f}s)")
             time.sleep(delay_s)
 
 
@@ -298,14 +239,17 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     return out
 
 
-def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
-    """Judge every ticker in ONE Gemini call (cuts requests from N to 1 per run).
+def judge_batch(items: list[dict], models: list[str] | None = None, provider=None) -> dict:
+    """Judge every ticker in ONE AI call (cuts requests from N to 1 per run).
 
     items: list of {"data": <market data>, "position": <position|None>}.
     models: optional explicit model try-order (primary, backup...). Discovery
     passes its own 2.5 models here so it draws from separate free-tier quota
     buckets and can't eat into the watchlist's allowance; the watchlist call
     passes nothing and uses config.GEMINI_MODEL / _BACKUP.
+    provider: optional AIProvider injection (tests only) — defaults to
+    ai_provider.get_provider(config.AI_PROVIDER). No caller outside this
+    module needs to pass it; run_hourly.py/run_discovery.py are unchanged.
     Returns {ticker: {verdict, confidence, rationale, raw_model_response,
     parse_status, model_used, usage, fallback_from, retry_count}}. retry_count
     is the batch-cumulative transport-retry tally from _generate (0 = clean
@@ -316,7 +260,10 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
     if not items:
         return {}
 
-    client = _client()
+    provider = provider or get_provider(config.AI_PROVIDER)
+    print(f"  [ai_judge] call config: timeout={config.GEMINI_TIMEOUT_MS}ms, "
+          f"max_retries={config.GEMINI_MAX_RETRIES}, "
+          f"retry_base={config.GEMINI_RETRY_BASE_MS}ms (full jitter)")
     blocks = [f"--- Stock {i} ---\n{_ticker_block(it['data'], it['position'])}"
               for i, it in enumerate(items, 1)]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -326,20 +273,17 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
             "\n\nReturn a JSON array with one object per stock above, each "
             '{"ticker", "verdict", "confidence", "rationale"}, including every '
             "ticker exactly once.")
-    cfg = types.GenerateContentConfig(
-        system_instruction=BATCH_SYSTEM_PROMPT,
-        response_mime_type="application/json",
-        response_schema=_RESPONSE_SCHEMA,
-        temperature=0.2,
-    )
 
     def _enrich(parsed, usage, fallback_from, retry_count):
         # Stamp token usage + the (real) fallback error + the transport-retry
         # count onto every ticker's result. usage is the BATCH total for this
         # one API call — identical across the rows of a run, so sum it once per
         # run, not per ticker; retry_count is batch-cumulative the same way.
+        # usage arrives from the provider as a TokenUsage dataclass; the
+        # return contract stays the pre-existing plain dict.
+        usage_dict = dataclasses.asdict(usage) if usage else None
         for v in parsed.values():
-            v["usage"] = usage
+            v["usage"] = usage_dict
             v["fallback_from"] = fallback_from
             v["retry_count"] = retry_count
         return parsed
@@ -353,7 +297,9 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
 
     for i, model in enumerate(models):
         last_model = model
-        raw, api_err, err, usage, r = _generate(client, model, user, cfg)
+        raw, api_err, err, usage, r = _generate(provider, model, BATCH_SYSTEM_PROMPT, user, _SCHEMA,
+                                                  config.GEMINI_TIMEOUT_MS, config.GEMINI_MAX_RETRIES,
+                                                  config.GEMINI_RETRY_BASE_MS)
         total_retries += r
         if api_err:
             last_raw = err or raw
@@ -369,7 +315,9 @@ def judge_batch(items: list[dict], models: list[str] | None = None) -> dict:
             return _enrich(parsed, usage, fb, total_retries)
 
         retry = user + "\n\nYour last reply was not a valid JSON array. Reply with ONLY the JSON array."
-        raw2, _, _, usage2, r2 = _generate(client, model, retry, cfg)
+        raw2, _, _, usage2, r2 = _generate(provider, model, BATCH_SYSTEM_PROMPT, retry, _SCHEMA,
+                                            config.GEMINI_TIMEOUT_MS, config.GEMINI_MAX_RETRIES,
+                                            config.GEMINI_RETRY_BASE_MS)
         total_retries += r2
         parsed = _parse_batch(raw2, tickers, model)
         if parsed is not None:
