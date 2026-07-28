@@ -8,6 +8,8 @@ is exercised exactly the way `state.process_ticker` / `state.process_candidate`
 call it in production, without touching a real database.
 """
 
+import datetime as _dt
+
 import pytest
 
 import state
@@ -159,8 +161,6 @@ def _ai(verdict="Buy", parse_status="ok", rationale="looks good"):
             "model_used": "gemini-3.5-flash", "usage": None, "fallback_from": None,
             "retry_count": 0}
 
-
-import datetime as _dt
 
 NOW = _dt.datetime(2026, 7, 12, 14, 0, tzinfo=_dt.timezone.utc)
 
