@@ -1,6 +1,2 @@
 __pycache__/
 *.pyc
-
-# Shadow-pilot build session state (Claude Code continuity file, not part of the
-# codebase — durable truth is the repo + Supabase, this is just a scratch checklist).
-.shadow-pilot-session-state.md
