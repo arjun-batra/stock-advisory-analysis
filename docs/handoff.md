@@ -87,3 +87,57 @@ python3 -c "import ai_provider; ai_provider.get_provider('bogus')"
   request that also updates FR30's curated list if it should be portal-editable (§14.4).
 - No new dependency added (`requirements.txt` unchanged) — `google-genai` was already a dependency and
   simply moved which file imports it.
+
+---
+
+# Handoff — Reviewer Pass 14 fixes: REV-075, REV-076, REV-078 (INC-4 follow-up)
+
+Design: `docs/design/operational-controls.md` §14.2-14.4, `docs/design/non-functional-ops.md` §9 (both
+updated by tech-lead before this fix pass — read there for the exact decisions, not restated here). All
+three are internal, behavior-preserving fixes; no interface/signature changes.
+
+## Files changed
+- **`scripts/config.py`** — REV-075: fixed the stale comment near `GEMINI_MAX_RETRIES`/
+  `GEMINI_RETRY_BASE_MS` (formerly "logged at call setup (`ai_judge._client`)") to point at
+  `ai_provider._client`, the current location since INC-4's refactor. REV-078: added
+  `AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.2"))`, placed next to the other Gemini
+  call-shape tunables (`GEMINI_TIMEOUT_MS`, `GEMINI_MAX_RETRIES`, `GEMINI_RETRY_BASE_MS`), same
+  env-var-with-literal-default pattern.
+- **`scripts/ai_provider.py`** — REV-076: `GeminiProvider.__init__` now caches `self._client = None` /
+  `self._client_timeout_ms = None`; `generate()` builds a client only when none is cached yet or the
+  requested `timeout_ms` differs from the cached one, otherwise reuses `self._client`. Restores 1 client
+  build per `judge_batch()` call (was rebuilding on every retry attempt, up to ~16/batch). REV-078:
+  `temperature=0.2` literal replaced with `temperature=config.AI_TEMPERATURE`.
+
+## How to run
+```
+cd scripts && python3 -m pytest -q --tb=short   # from repo root: pytest -q --tb=short
+```
+Manual verification of the caching fix (no live API key needed — `_client` mocked):
+```python
+from unittest.mock import MagicMock, patch
+import ai_provider
+calls = {"n": 0}
+def fake_client(api_key, timeout_ms):
+    calls["n"] += 1
+    m = MagicMock(); m.models.generate_content.return_value = MagicMock(text="[]", usage_metadata=None)
+    return m
+with patch.object(ai_provider, "_client", side_effect=fake_client):
+    p = ai_provider.GeminiProvider("key")
+    schema = ai_provider.BatchVerdictSchema()
+    for _ in range(3):
+        p.generate(model="m", system_prompt="s", user_prompt="u", schema=schema, timeout_ms=1000)
+    assert calls["n"] == 1   # same timeout_ms -> cached, built once
+    p.generate(model="m", system_prompt="s", user_prompt="u", schema=schema, timeout_ms=2000)
+    assert calls["n"] == 2   # different timeout_ms -> rebuilt
+```
+
+## Test results
+Full suite: 158 passed, both before and after this change (`python3 -m pytest -q --tb=short`), confirming
+these are non-breaking as tech-lead's docs predicted — no test patches the construction cadence or
+asserts a hardcoded `0.2`.
+
+## Known limitations
+None new. `AI_TEMPERATURE`, like `AI_PROVIDER`, is intentionally not on the admin portal's curated
+tunables list (FR30) per `non-functional-ops.md` §9 — a `config.py`/repo-Variable-level tunable is
+sufficient today.

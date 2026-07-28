@@ -84,7 +84,7 @@ MIN_HISTORY_ROWS       = 21      # need >=20 sessions for the 20d metrics
 # Variable is an EMPTY string, not absent — a plain `os.environ.get(name,
 # default)` default would never apply, so `or` is used instead to resolve the
 # empty string to the intended default. The effective values are logged at
-# call setup (ai_judge._client).
+# call setup (ai_provider._client).
 GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES") or "3")
 GEMINI_RETRY_BASE_MS = int(os.environ.get("GEMINI_RETRY_BASE_MS") or "10000")
 # Per-request timeout for the Gemini call, in MILLISECONDS, honored on EVERY
@@ -95,6 +95,11 @@ GEMINI_RETRY_BASE_MS = int(os.environ.get("GEMINI_RETRY_BASE_MS") or "10000")
 # batch response land instead of being thrown away. Empty-string-safe like the
 # retry vars above, since it's now also wired as a workflow Variable.
 GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS") or "180000")
+
+# Sampling temperature for the Gemini call (ai_provider.GeminiProvider.generate). Kept LOW by default
+# to reduce run-to-run verdict drift (requirements_docs/SD.md); tunable per CLAUDE.md's no-hardcoded-
+# tunables rule, same pattern as GEMINI_TIMEOUT_MS/GEMINI_MAX_RETRIES/GEMINI_RETRY_BASE_MS.
+AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.2"))
 
 # Yahoo Finance (yfinance) has no published rate limit and rate-limited the
 # ingest loop mid-run (issue #1). Pace tickers apart and back off once on a

@@ -139,18 +139,30 @@ def _client(api_key: str, timeout_ms: int):
 class GeminiProvider(AIProvider):
     def __init__(self, api_key: str):
         self._api_key = api_key
+        self._client = None
+        self._client_timeout_ms = None
 
     def generate(self, *, model: str, system_prompt: str, user_prompt: str,
                  schema: BatchVerdictSchema, timeout_ms: int) -> ProviderResult:
-        client = _client(self._api_key, timeout_ms)
+        # Cached per instance, keyed by timeout_ms (REV-076): GeminiProvider is
+        # instantiated once per judge_batch() call and reused across every
+        # model/retry within it, so this restores the pre-INC-4 cadence of one
+        # client per batch instead of one per attempt. In every live call path
+        # timeout_ms is a single process-wide config value, so the cache key
+        # never changes within a batch; kept keyed (vs. unconditional) so the
+        # per-call timeout_ms parameter stays honest for a future caller that
+        # does vary it.
+        if self._client is None or self._client_timeout_ms != timeout_ms:
+            self._client = _client(self._api_key, timeout_ms)
+            self._client_timeout_ms = timeout_ms
         cfg = types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
             response_schema=_response_schema(schema),
-            temperature=0.2,
+            temperature=config.AI_TEMPERATURE,
         )
         try:
-            resp = client.models.generate_content(model=model, contents=user_prompt, config=cfg)
+            resp = self._client.models.generate_content(model=model, contents=user_prompt, config=cfg)
             return ProviderResult(text=(resp.text or "").strip(), usage=_usage(resp))
         except Exception as e:
             detail = f"{type(e).__name__}: {str(e)[:200]}"
