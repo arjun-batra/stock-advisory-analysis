@@ -7,13 +7,17 @@ index, module map, §0 load-bearing decisions, increment plan, and requirement c
 section depends on directly. Section number (§16.4) is unchanged from before the split — it's still part
 of §16 (Admin portal architecture), just in its own file now.
 
-**Status: DRAFT** — covers FR30, refined twice since the 2026-07-26 CR (Decision #27, 2026-07-27,
-supersedes #24; Decision #28, 2026-07-27, refines #27). Builds in **INC-6**, which depends on INC-5's
-`admin_allowlist`/`is_admin()` already existing. Pending GATE 3.
+**Status: DRAFT** — covers FR30, refined since the 2026-07-26 CR (Decision #27, 2026-07-27, supersedes
+#24; Decision #28, 2026-07-27, refines #27) and once more on 2026-07-28 (tech-lead correction, no new
+Decision # — see fallback-chain section below: a permanent third fallback tier had been added during
+design elaboration beyond what Decision #28 / FR30 actually specify; Arjun's review caught it and it's
+removed here). Builds in **INC-6**, which depends on INC-5's `admin_allowlist`/`is_admin()` already
+existing. Pending GATE 3.
 
 ---
 
-### 16.4 Tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines #27)
+### 16.4 Tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines
+#27); fallback chain narrowed further 2026-07-28 (see below)
 
 **The former design proposed a GitHub-PAT-holding Vercel proxy that wrote directly to GitHub Actions
 Variables.** During design that premise was checked against the live workflow YAML and found false for 8
@@ -136,9 +140,39 @@ to prevent. Keep them identical.
 }
 ```
 
-**`scripts/config.py` — three-tier fallback chain** (this run's live Supabase fetch → repo-committed
-cache → hardcoded literal, the last tier now a belt-and-suspenders floor for a missing/corrupted cache
-file rather than the primary fallback):
+**`scripts/config.py` — two-tier fallback chain, REVISED 2026-07-28** (this run's live Supabase fetch →
+repo-committed cache; **no third tier**). The prior draft of this section added a permanent hardcoded
+Python literal as a third, last-resort floor baked directly into each `_tunable()` call site. Arjun
+objected during review and asked that it be re-checked against what was actually specified. Re-reading
+`requirements.md` FR30 directly: *"`scripts/config.py` fetches them from this table at run start, falling
+back to the last successfully-fetched value, cached in a repo-committed file, itself seeded from an
+initial hardcoded default on first run, if the fetch fails."* That sentence describes exactly two runtime
+tiers — table, then cache file — plus a one-time **seed-time** default used to populate the cache file's
+initial content at INC-6 build time (already covered above, "Seed file" section). It does not describe a
+third tier consulted at every run. **The permanent third tier was tech-lead's own design elaboration, not
+a requirement** — confirmed by this re-read, not asserted from Arjun's summary alone.
+
+Arjun's substantive objection also holds independent of the text-matching question: a third tier means the
+same default value lives in three places that must be kept in sync (the SQL seed migration, the committed
+cache JSON, and a Python literal per key) — the exact failure class as the `ALERTS_ENABLED` seed-value bug
+caught earlier in this same design pass (§ "Seed migration" above), except permanent and load-bearing
+instead of a one-time seed mistake. Removed.
+
+**Failure mode when both tiers miss a key — decided here, not deferred:** with no third tier, if the live
+Supabase fetch fails or omits a key *and* the cache file is missing, unreadable, or also missing that key,
+there is no default left to silently return. `_tunable()` now **fails loud**: it raises `SystemExit` naming
+the key and both failed sources, rather than inventing or guessing a value. This mirrors
+`scripts/config.py`'s own existing `require_secrets()`, which already fails fast with a clear message on a
+missing required secret instead of limping along on an unset/empty value — same posture, same module,
+applied consistently to another class of "config this program cannot safely start without." The
+alternative (silently picking *some* value — e.g. `None`, `0`, or re-adding a hidden literal) reintroduces
+exactly the drift risk Arjun flagged, just moved one layer down; failing loud makes the double-failure
+visible immediately (a crashed scheduled workflow run, alerting via NFR2's dead-man monitor) instead of
+running the trading logic on a silently wrong tunable, which is strictly worse for a system whose output
+drives real alerts. This is a **deliberately rare** failure path — the cache file is repo-committed (not
+volatile), and Supabase's own base URL/secret-key resolution already goes through `require_secrets()`
+before any of this runs — but "rare" is exactly why it must fail loud rather than fail silent: nobody is
+watching for a quiet, wrong default on a path nobody expects to exercise.
 
 ```python
 _CACHE_PATH = pathlib.Path(__file__).resolve().parent.parent / "config" / "tunables_cache.json"
@@ -157,18 +191,22 @@ def _fetch_tunables() -> dict[str, str]:
 
 def _load_tunables_cache() -> dict[str, str]:
     """Repo-committed last-known-good values, read once at import time. A
-    missing/corrupted file (should not happen post-seed) returns {} —
-    callers then fall through to their hardcoded literal floor."""
+    missing/corrupted file returns {} — every key lookup then falls through
+    to _tunable()'s fail-loud SystemExit below if the live fetch also missed
+    it. No hardcoded floor exists past this point."""
     try:
         return json.loads(_CACHE_PATH.read_text())
     except Exception as e:
-        print(f"  [config] tunables cache read failed ({e}); using hardcoded floors")
+        print(f"  [config] tunables cache read failed ({e}); no fallback tier left for these keys")
         return {}
 
 _TUNABLES = _fetch_tunables()               # tier 1: this run's live Supabase fetch
 _TUNABLES_CACHE = _load_tunables_cache()    # tier 2: last-known-good, repo-committed
 
-def _tunable(key: str, cast, hardcoded_floor):
+def _tunable(key: str, cast):
+    """Two tiers only: live Supabase fetch, then the repo-committed cache. If
+    neither has a usable value for `key`, fail loud rather than guess — same
+    posture as require_secrets() above for a missing required secret."""
     for source in (_TUNABLES, _TUNABLES_CACHE):    # tier 1, then tier 2
         raw = source.get(key)
         if raw is not None:
@@ -177,7 +215,12 @@ def _tunable(key: str, cast, hardcoded_floor):
             except (TypeError, ValueError):
                 print(f"  [config] tunables value for {key!r} ({raw!r}) failed to cast; trying next tier")
                 continue
-    return hardcoded_floor                          # tier 3: original Python literal, rarely hit post-seed
+    raise SystemExit(
+        f"[config] tunable {key!r} unavailable: Supabase tunables fetch failed or did not "
+        f"include this key, AND config/tunables_cache.json is missing, unreadable, or also "
+        f"missing this key. Refusing to start with an unknown value for a portal-controlled "
+        f"tunable rather than silently guessing one."
+    )
 
 def write_tunables_cache_if_fetched() -> None:
     """Serialize THIS RUN'S successful Supabase fetch to config/tunables_cache.json,
@@ -198,8 +241,8 @@ def write_tunables_cache_if_fetched() -> None:
 
 # example usage — replaces the plain os.environ.get(...) reads for these 10 keys only;
 # every other config.py tunable (the ~18 non-curated keys) is completely untouched:
-GEMINI_MODEL = _tunable("GEMINI_MODEL", str, "gemini-2.5-flash")
-ALERTS_ENABLED_TABLE = _tunable("ALERTS_ENABLED", lambda v: str(v).lower() == "true", True)
+GEMINI_MODEL = _tunable("GEMINI_MODEL", str)
+ALERTS_ENABLED_TABLE = _tunable("ALERTS_ENABLED", lambda v: str(v).lower() == "true")
 ```
 
 `run_hourly.py`'s only change: one line, early in `main()` (before the market gate, so the cache
@@ -243,14 +286,15 @@ prior pass, restated against the new fallback chain: `ALERTS_ENABLED` is *also* 
 `workflow_dispatch` input (`${{ inputs.alerts_enabled }}` → env var `ALERTS_ENABLED`, still untouched, no
 YAML change), the documented **safe forced-test pattern** (`components.md` §4.1: "for any off-hours
 forced run, set `ALERTS_ENABLED=false`"). That must keep working exactly as today. Resolution — pure
-Python, unchanged in shape from the prior pass, just now backed by the 3-tier `_tunable()` chain instead
+Python, unchanged in shape from the prior pass, just now backed by the two-tier `_tunable()` chain instead
 of a flat table-or-literal one:
 
 ```python
 _alerts_input = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"   # workflow_dispatch input, unchanged
-ALERTS_ENABLED = _alerts_input and ALERTS_ENABLED_TABLE   # ALERTS_ENABLED_TABLE now resolves through
-                                                            # table -> cache -> hardcoded-True floor;
-                                                            # AND is a no-op on any full fallback chain miss
+ALERTS_ENABLED = _alerts_input and ALERTS_ENABLED_TABLE   # ALERTS_ENABLED_TABLE resolves through
+                                                            # table -> cache; if BOTH miss, _tunable()
+                                                            # has already raised SystemExit above — this
+                                                            # line never runs on an unresolved value
 ```
 
 The portal's toggle can only ever **suppress** alerts, never force them on over an explicit manual
@@ -264,8 +308,13 @@ The 10 keys (verbatim from FR30 / `requirements.md` §10's portal-exposure note)
 `DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS`. No other tunable is reachable from this UI;
 the other ~18 non-curated tunables are completely unaffected — still GitHub Variables/code defaults.
 
-**Status: both open questions from earlier passes are now resolved, not deferred.** Decision #27 closed
+**Status: all open questions from earlier passes are now resolved, not deferred.** Decision #27 closed
 the GitHub-Variables wiring gap (table is now how all 10 keys take effect). Decision #28 closes the
 failed-fetch fallback question (cache file, not a frozen literal) **and** the write-ownership question
-(`hourly-watchlist.yml` sole writer, confirmed by Arjun — not a proposal any more). **No open question
-remains for INC-6.**
+(`hourly-watchlist.yml` sole writer, confirmed by Arjun — not a proposal any more). The 2026-07-28 pass
+closes one more, raised by Arjun on review: the fallback chain is two tiers only (table, then cache
+file) — the permanent third hardcoded-literal tier was tech-lead's own design elaboration beyond FR30 /
+Decision #28's actual text, not a requirement, and has been removed; a simultaneous double-failure
+(Supabase fetch fails or misses a key, and the cache file is also missing/unreadable/missing that key)
+now fails loud via `SystemExit`, matching `require_secrets()`'s existing fail-fast posture for missing
+critical config rather than inventing a silent guess. **No open question remains for INC-6.**

@@ -5,10 +5,15 @@ for the 2026-07-26 change request — kill-switch (FR24–FR26), admin portal (F
 provider abstraction (FR33) — covered by the Increment Plan below (INC-3–INC-7) and three new module
 files (`operational-controls.md`, `admin-portal.md`, `admin-portal-tunables.md`). Revised twice since:
 2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves from a GitHub-PAT proxy to a
-Supabase table) and again 2026-07-27 (Decision #28, refines #27 — the failed-fetch fallback moves from a
-hardcoded literal to a repo-committed cache file). **Not yet implemented; no dev work starts before the
+Supabase table), again 2026-07-27 (Decision #28, refines #27 — the failed-fetch fallback moves from a
+hardcoded literal to a repo-committed cache file), and again 2026-07-28 (tech-lead correction, no new
+Decision # — the fallback chain narrowed to two tiers only, table then cache file; a permanent third
+hardcoded-literal tier added during design elaboration is removed, and a simultaneous double-failure of
+both tiers now fails loud via `SystemExit` instead of guessing — see
+`docs/design/admin-portal-tunables.md` §16.4). **Not yet implemented; no dev work starts before the
 user approves this plan at GATE 3**, per CLAUDE.md's pipeline gates. **No open design questions remain**
-as of Decision #28 — see the increment plan below and `docs/design/admin-portal-tunables.md` §16.4.
+as of the 2026-07-28 revision — see the increment plan below and `docs/design/admin-portal-tunables.md`
+§16.4.
 Split into per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index;
 read the module file(s) your increment actually touches, not the whole tree.**
 
@@ -37,7 +42,7 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(DRAFT)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
 | `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
-| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table + RLS, seed data, Decision #28 cache-file fail-safe (`config/tunables_cache.json`, 3-tier `config.py` fallback chain, `hourly-watchlist.yml` write-back), `ALERTS_ENABLED` AND-gate. Split out of `admin-portal.md` 2026-07-27 — INC-6 reads only this file, not the rest of §16. | §16.4 |
+| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table + RLS, seed data, Decision #28 cache-file fail-safe (`config/tunables_cache.json`, two-tier `config.py` fallback chain — table then cache, fails loud via `SystemExit` if both miss a key — `hourly-watchlist.yml` write-back), `ALERTS_ENABLED` AND-gate. Split out of `admin-portal.md` 2026-07-27 — INC-6 reads only this file, not the rest of §16. | §16.4 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -229,8 +234,9 @@ Keep the migration's function signature stable once INC-6 is built against it.
 **Design:** `docs/design/admin-portal-tunables.md` §16.4. **Files:** new `sql/admin_portal_tunables.sql`
 (`tunables` table, `_stamp_tunable_update()` trigger, `admin_write_tunables` RLS policy, 10-row seed);
 new `config/tunables_cache.json` (10-key seed file, identical values to the SQL seed); new
-`admin-portal/app/tunables/` (portal UI); additions to `scripts/config.py` (3-tier fallback chain —
-Supabase table → `config/tunables_cache.json` → hardcoded literal — plus
+`admin-portal/app/tunables/` (portal UI); additions to `scripts/config.py` (two-tier fallback chain —
+Supabase table → `config/tunables_cache.json`, no third hardcoded-literal tier; fails loud via
+`SystemExit` if both tiers miss a key, see `admin-portal-tunables.md` §16.4's 2026-07-28 revision — plus
 `write_tunables_cache_if_fetched()` and the `ALERTS_ENABLED` AND-gate, §16.4); one line added to
 `run_hourly.py`'s entry point; **`.github/workflows/hourly-watchlist.yml`** gains a `permissions:
 contents: write` block (it has none today) and a new "Commit tunables cache if changed" step mirroring
@@ -277,9 +283,15 @@ write-ownership question — are resolved structurally, not deferred.
    shows **no** attempt to write or commit `config/tunables_cache.json` from either workflow — grep
    `run_discovery.py` and `publish_prices.py` for `write_tunables_cache_if_fetched` and confirm zero
    matches.
-9. With the Supabase project unreachable **and** `config/tunables_cache.json` deleted/corrupted in a
-   scratch test, every one of the 10 keys falls back to its hardcoded literal floor (tier 3) —
-   confirmed against the existing `test-report.md` config-default assertions, zero regressions.
+9. **Double-failure fails loud, not silent.** With the Supabase project unreachable (or the fetch
+   returning no rows) **and** `config/tunables_cache.json` deleted or corrupted in a scratch test,
+   importing `scripts/config.py` (and therefore any entry point that imports it —
+   `run_hourly.py`/`run_discovery.py`/`publish_prices.py`) raises `SystemExit` naming the first
+   unresolvable tunable key and both failed sources, and the process exits non-zero — it must **not**
+   proceed with any value for that key (no hardcoded-literal floor exists to fall back to as of the
+   2026-07-28 revision). A qa test performs exactly this: delete/corrupt the cache file, force the
+   Supabase fetch to fail (bad URL or mocked exception), invoke the entry point, and assert non-zero
+   exit + the `SystemExit` message naming the affected key.
 10. `ALERTS_ENABLED`: with the `tunables` row set to `false`, a scheduled (no-`inputs`) run sends no real
     push even though the `workflow_dispatch` input defaults to `true` (table/cache suppresses). With the
     row `true` and a manual dry-run (`inputs.alerts_enabled=false`), no real push is sent either (input
