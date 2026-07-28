@@ -19,6 +19,9 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+
 # Serialize runs so two never mutate verdict_state at once (design 7.4).
 concurrency:
   group: hourly-watchlist
@@ -44,29 +47,16 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          # Repository variables (Settings -> Secrets and variables -> Actions ->
-          # Variables tab), not secrets -- model names aren't sensitive, and this
-          # way you can swap models from the GitHub UI with no commit. GEMINI_MODEL
-          # keeps a literal default (the primary must never be empty). The BACKUP,
-          # however, carries NO literal default on purpose: an unset Variable ->
-          # empty env -> config.py's `if m` filter drops it -> NO fallback model.
-          # That is exactly config.py's documented "leave empty to disable the
-          # fallback" behavior. So: BACKUP Variable unset means NO backup model,
-          # NOT a silent 'gemini-2.5-flash-lite' fallback.
-          # Literal fallback corrected 3.5/3.1 -> 2.5 family (2026-07-13 change
-          # request, Change 2 / design §4.4): the 3.x models showed stability
-          # issues; real operation and scripts/config.py's own defaults are on
-          # gemini-2.5-flash across every track.
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          GEMINI_MODEL_BACKUP: ${{ vars.GEMINI_MODEL_BACKUP }}
-          # NSE watchlist model pair (design §12 D3) — same Variable-driven
-          # pattern, own free-tier quota bucket. Unset NSE_GEMINI_MODEL -> falls
-          # back to the US/TSX primary (NSE runs in a separate, non-overlapping
-          # session). NSE_GEMINI_MODEL_BACKUP unset AND GEMINI_MODEL_BACKUP unset
-          # -> empty -> config drops it -> no NSE backup, same disable-by-unset
-          # behavior as above (no literal lite fallback).
-          NSE_GEMINI_MODEL: ${{ vars.NSE_GEMINI_MODEL || vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          NSE_GEMINI_MODEL_BACKUP: ${{ vars.NSE_GEMINI_MODEL_BACKUP || vars.GEMINI_MODEL_BACKUP }}
+          # Model names are NOT wired here (REV-039/REV-038): scripts/config.py is
+          # the single source of truth for GEMINI_MODEL / GEMINI_MODEL_BACKUP /
+          # NSE_GEMINI_MODEL / NSE_GEMINI_MODEL_BACKUP, including NSE's inheritance
+          # of the US/TSX pair when unset. A workflow `env:` line set to an unset
+          # `${{ vars.X }}` arrives as an EMPTY STRING, not an absent key, which
+          # would defeat config.py's two-arg `os.environ.get(name, default)` and
+          # silently blank the model — so no env line is passed for these four
+          # keys, and config.py's own defaults/inheritance apply unconditionally.
+          # To override a model, edit scripts/config.py (until the admin-portal
+          # tunables table replaces this mechanism).
           # Gemini transport tuning: retry count / backoff base / per-attempt
           # timeout. Plain `${{ vars.X }}` with NO literal fallback on purpose:
           # an unset Variable arrives as an empty string and config.py's

@@ -16,7 +16,12 @@ SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 # Bypasses RLS; server-only — lives only in Actions secrets, never in code.
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
-# Non-secret, but kept in env so you can change the model without a code edit.
+# This is the SINGLE source of truth for these defaults (REV-039): the
+# workflows deliberately do not forward a GitHub repo Variable for any of the
+# four keys below, since an unset `${{ vars.X }}` arrives as an empty string,
+# not an absent env var, which would silently blank the model rather than
+# fall through to the default here. To change a model today, edit this file
+# (a future admin-portal tunables table replaces this mechanism).
 # Primary/backup both run on Google's PAID tier (load-bearing #6, design §4.4):
 # gemini-3.5-flash / gemini-3.1-flash-lite showed stability issues in real
 # operation, so both defaults are corrected to the gemini-2.5-flash family
@@ -26,11 +31,13 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")
 
-# NSE watchlist model pair (Phase 6, design §12 D3). Same Variable-driven
-# pattern as GEMINI_MODEL: point at a different model for quota isolation from
-# the US/TSX watchlist bucket, or the same string to share it -- a config-time
-# choice, no code change either way. Defaults to the same models as the US/TSX
-# watchlist since NSE runs in a separate, non-overlapping session anyway.
+# NSE watchlist model pair (Phase 6, design §12 D3). Point at a different model
+# for quota isolation from the US/TSX watchlist bucket, or leave unset to
+# inherit GEMINI_MODEL / GEMINI_MODEL_BACKUP (NSE runs in a separate,
+# non-overlapping session, so sharing the pair is a safe default). This
+# inheritance is Python-level only now (REV-038/REV-039) -- no workflow env
+# line intervenes, so editing GEMINI_MODEL above changes the NSE pair too
+# unless NSE_GEMINI_MODEL is set explicitly.
 NSE_GEMINI_MODEL = os.environ.get("NSE_GEMINI_MODEL", GEMINI_MODEL)
 NSE_GEMINI_MODEL_BACKUP = os.environ.get("NSE_GEMINI_MODEL_BACKUP", GEMINI_MODEL_BACKUP)
 
@@ -101,11 +108,18 @@ HEADLINES_LIMIT = int(os.environ.get("HEADLINES_LIMIT", "5"))
 NOTIF_BODY_MAX = int(os.environ.get("NOTIF_BODY_MAX", "150"))
 RATIONALE_MAX = int(os.environ.get("RATIONALE_MAX", "280"))
 
+# ntfy push endpoint (notify.NtfyNotifier) and its per-request timeout, in
+# SECONDS -- previously hardcoded at the call site.
+NTFY_BASE_URL = os.environ.get("NTFY_BASE_URL", "https://ntfy.sh/")
+NTFY_TIMEOUT_SECONDS = float(os.environ.get("NTFY_TIMEOUT_SECONDS", "10"))
+
 # --- Phase 4: daily discovery (reactive movers) ------------------------------
 # Discovery uses DIFFERENT models from the watchlist on purpose: Gemini free-tier
 # quotas are per-model, so a separate model pair gives discovery its own daily
 # bucket and it can't eat into the watchlist's allowance. Discovery is one
-# batched call/day, so even a throttled 2.5 Flash (20 RPD) is ample.
+# batched call/day, so even a throttled 2.5 Flash (20 RPD) is ample. This file
+# is the single source of truth for the defaults (REV-039) -- the discovery
+# workflow does not forward a GitHub repo Variable for either key.
 DISCOVERY_GEMINI_MODEL = os.environ.get("DISCOVERY_GEMINI_MODEL", "gemini-2.5-flash")
 DISCOVERY_GEMINI_MODEL_BACKUP = os.environ.get("DISCOVERY_GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")
 
@@ -211,12 +225,21 @@ def is_nse_open(now_ist: datetime | None = None) -> bool:
     return _is_open(now, NSE_MARKET_OPEN, NSE_MARKET_CLOSE)
 
 
-def require_secrets() -> None:
-    """Fail fast with a clear message if a required secret is missing."""
-    missing = [n for n, v in (
-        ("GEMINI_API_KEY", GEMINI_API_KEY),
-        ("SUPABASE_URL", SUPABASE_URL),
-        ("SUPABASE_SECRET_KEY", SUPABASE_SECRET_KEY),
-    ) if not v]
+_ALL_SECRETS = {
+    "GEMINI_API_KEY": GEMINI_API_KEY,
+    "SUPABASE_URL": SUPABASE_URL,
+    "SUPABASE_SECRET_KEY": SUPABASE_SECRET_KEY,
+}
+
+
+def require_secrets(*names: str) -> None:
+    """Fail fast with a clear message if a required secret is missing.
+
+    Defaults to the full three-secret list (existing callers); pass specific
+    names for an entry point that only needs a subset, e.g. publish_prices.py
+    doesn't call Gemini and shouldn't require GEMINI_API_KEY.
+    """
+    wanted = names or tuple(_ALL_SECRETS)
+    missing = [n for n in wanted if not _ALL_SECRETS[n]]
     if missing:
         raise SystemExit(f"Missing required environment secrets: {', '.join(missing)}")

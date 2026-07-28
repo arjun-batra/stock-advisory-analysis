@@ -1,0 +1,15 @@
+# Ruff configuration for stock-advisory-analysis
+# Minimal config to enable linting in CI (audit.yml)
+
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+
+[per-file-ignores]
+"tests/*" = ["F401"]  # Unused imports in tests OK
+"__init__.py" = ["F401"]  # Unused imports in __init__ OK

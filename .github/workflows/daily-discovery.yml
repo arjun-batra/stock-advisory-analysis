@@ -17,6 +17,9 @@ on:
         type: string
         default: "na"
 
+permissions:
+  contents: read
+
 concurrency:
   group: daily-discovery
   cancel-in-progress: false
@@ -41,12 +44,15 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          # Discovery's OWN models — separate per-model free-tier quota bucket,
-          # so discovery can't eat into the watchlist's 3.5 allowance. Override
-          # via repo Variables (Settings > Secrets and variables > Actions >
-          # Variables); falls back to these if unset.
-          DISCOVERY_GEMINI_MODEL: ${{ vars.DISCOVERY_GEMINI_MODEL || 'gemini-2.5-flash' }}
-          DISCOVERY_GEMINI_MODEL_BACKUP: ${{ vars.DISCOVERY_GEMINI_MODEL_BACKUP || 'gemini-2.5-flash-lite' }}
+          # Discovery's OWN models are NOT wired here (REV-039): scripts/config.py
+          # is the single source of truth for DISCOVERY_GEMINI_MODEL /
+          # DISCOVERY_GEMINI_MODEL_BACKUP (separate per-model free-tier quota
+          # bucket from the watchlist). A workflow `env:` line set to an unset
+          # `${{ vars.X }}` arrives as an EMPTY STRING, not an absent key, which
+          # would defeat config.py's two-arg `os.environ.get(name, default)` and
+          # silently blank the model — so no env line is passed for these two
+          # keys. To override, edit scripts/config.py (until the admin-portal
+          # tunables table replaces this mechanism).
           # Gemini transport tuning — discovery shares ai_judge._generate with
           # the watchlist, so it gets the same retry/timeout policy. Unset
           # Variable -> empty string -> config.py `or`-defaults (3 retries,

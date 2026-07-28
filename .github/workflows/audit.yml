@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -31,7 +34,7 @@ jobs:
         if: steps.detect.outputs.python == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.12'
 
       - name: Ruff lint (if configured)
         if: steps.detect.outputs.python == 'true'

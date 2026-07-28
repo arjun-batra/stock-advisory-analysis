@@ -31,9 +31,7 @@ def _num(v):
 
 
 def main() -> None:
-    missing = [n for n in ("SUPABASE_URL", "SUPABASE_SECRET_KEY") if not os.environ.get(n)]
-    if missing:
-        raise SystemExit(f"Missing required environment secrets: {', '.join(missing)}")
+    config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")
 
     sb = state.client()
     watchlist = state.get_watchlist(sb)

@@ -1,9 +1,9 @@
 """Shared text helpers.
 
 One home for the word-boundary clip that both rationale limits use: the stored
-rationale (ai_judge.RATIONALE_MAX, 280) and the push-notification body
-(notify.NOTIF_BODY_MAX, 150). The two modules previously carried identical
-copies of this function.
+rationale (ai_judge.RATIONALE_MAX) and the push-notification body
+(notify.NOTIF_BODY_MAX) -- both env-tunable, see config.py for the current
+values. The two modules previously carried identical copies of this function.
 """
 
 

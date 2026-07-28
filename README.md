@@ -58,8 +58,8 @@ The system is not a locally-run app; it runs on a schedule in the cloud.
 1. **Control plane — Supabase.** A Supabase (Postgres) project holds the schema (watchlist, holdings,
    `call_log`, views) and drives scheduling and health monitoring via pg_cron.
    Apply the SQL migrations in `sql/` in the exact order documented in `docs/runbook.md` §2.3 —
-   `scheduler_pgcron.sql` → `phase5_monitoring.sql` → `dashboard_latest_call_view.sql` →
-   `drop_shadow_tables_migration.sql` — to provision the schema and objects.
+   `scheduler_pgcron.sql` → `phase5_monitoring.sql` → `dashboard_latest_call_view.sql` —
+   to provision the schema and objects.
 2. **Compute — GitHub Actions.** The workflows in `.github/workflows/` (e.g.
    `hourly-watchlist.yml`) do the actual fetch/AI/alert work. They are dispatched by Supabase pg_cron
    and can also be triggered manually via **workflow_dispatch** (use `FORCE_RUN=true` to run outside

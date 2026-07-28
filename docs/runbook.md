@@ -71,9 +71,10 @@ Create a Supabase project if one doesn't exist. Then:
    - `sql/scheduler_pgcron.sql` (creates `dispatch_github_workflow()` function and base cron jobs for watchlist/discovery/prices)
    - `sql/phase5_monitoring.sql` (creates health-monitor function `check_pipeline_health()`, dispatch gates for market hours, monitor alert state table, and schedules the health check itself)
    - `sql/dashboard_latest_call_view.sql` (creates the `latest_call_per_ticker` view, used by the dashboard and detail page for fast read-only queries)
-   - `sql/drop_shadow_tables_migration.sql` (removes shadow-pilot tables if migrating from an older version; safe to run even if tables don't exist — `IF EXISTS` is used)
 
 These migrations set up the entire control plane. They will create the `run_heartbeat` and `monitor_alerts` tables automatically, and the cron jobs will start firing immediately on the schedules defined below.
+
+**Note:** `sql/drop_shadow_tables_migration.sql` is a one-time migration that was already applied to this project; it is not part of the fresh-deploy procedure (a fresh project never had those tables to drop). It remains in the repo as a historical record.
 
 ### Workflows and Their Schedules
 
@@ -139,7 +140,7 @@ The system includes an **active dead-man monitor** to alert when workflows are s
 
 ### Monitor Overview
 
-- **What it is:** A pg_cron job (`check_pipeline_health()` in `sql/phase5_monitoring.sql`) that runs at :20 and :50 past each hour, Mon–Fri.
+- **What it is:** A pg_cron job (`check_pipeline_health()` in `sql/phase5_monitoring.sql`) that runs at :20 and :50 past the hour during specific UTC hour windows (4–11 and 14–23), Mon–Fri. (This schedule covers both the NSE session and the US/TSX session with some margin.)
 - **What it checks:** Staleness and degradation of three pipelines (watchlist, discovery US/TSX, discovery NSE, publish-prices).
 - **How it alerts:** Sends ntfy pushes to the same ntfy topic provisioned in Vault secret `ntfy_topic` when a pipeline enters or worsens a bad state.
 - **Alert states:** `ok` (healthy), `stale` (no run for >70 min during session), `degraded` (latest run has status != ok).
@@ -211,7 +212,7 @@ Then wait ~2–5 min for the workflow to start (GitHub Actions runner queue is u
 
 Refer to `docs/idea-brief.md` §"Open risks (accepted, documented)" for the full list. Key ones:
 
-1. **Gemini data privacy:** Free-tier models may train on submitted prompts (watchlist, holdings, cost basis). **Mitigation:** Swap to Gemini paid tier (already done; see `docs/requirements.md` §6, NFR1). Production uses paid-tier `gemini-2.5-flash`, not free tier.
+1. **Gemini data privacy:** Paid-tier models do not train on submitted prompts (watchlist, holdings, cost basis) per Google's standard terms. **Current state:** Production uses paid-tier `gemini-2.5-flash` (see `docs/requirements.md` §6, NFR1).
 
 2. **Yahoo Finance API is unofficial:** No SLA; TSX/NSE fundamentals may be incomplete or missing. **Mitigation:** Smoke test before relying on any market's data; fall-through skip-with-log when data is unavailable.
 
@@ -266,8 +267,14 @@ Refer to `docs/idea-brief.md` §"Open risks (accepted, documented)" for the full
 
 4. **Dispatch function exists and is callable:**
    ```sql
-   SELECT public.dispatch_github_workflow('audit.yml');
+   SELECT public.dispatch_github_workflow('hourly-watchlist.yml');
    -- Should return a request ID (a bigint)
+   ```
+   To verify success, check the corresponding row in `net._http_response`:
+   ```sql
+   SELECT status, content FROM net._http_response 
+   WHERE id = <request_id_from_above> LIMIT 1;
+   -- Should show status 204 (success) or 422 if workflow dispatch failed
    ```
 
 5. **Cron jobs are scheduled:**
@@ -283,7 +290,7 @@ Refer to `docs/idea-brief.md` §"Open risks (accepted, documented)" for the full
 
 7. **Dashboard is accessible:**
    - Navigate to the GitHub Pages URL (specified in `DETAIL_PAGE_BASE`).
-   - Verify the password gate appears and you can log in (password is in your `DETAIL_PAGE_BASE` URL fragment or `pages/index.html`).
+   - Verify the password gate appears and you can log in (password is in your `DETAIL_PAGE_BASE` URL fragment or `pages/dashboard.html`).
    - Verify prices.json is populated: check `pages/prices.json` in the repo.
 
 8. **Monitor sends alerts:**

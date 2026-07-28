@@ -92,11 +92,14 @@ Within 3 months, at least one verdict the system surfaced is later validated as 
 have been caught by manual checking. This is only auditable because every check is logged.
 
 ## Open risks (accepted, documented — from SD.md §2)
-1. Gemini free tier may train on submitted prompts (which include watchlist, holdings, cost basis).
-   Accepted for the budget; swap to a paid/isolated model is a small change.
+1. Gemini may train on submitted prompts (which include watchlist, holdings, cost basis). Gemini now
+   runs on Google's **paid tier** system-wide, but data-handling posture is still governed by the
+   account/API terms in effect, not assumed private. Accepted for the budget; swap to an isolated/no-train
+   model tier remains a small, isolated config change.
 2. Yahoo Finance API is unofficial — no SLA, TSX/NSE fundamentals may be incomplete.
-3. Free-tier quotas move; observed fallbacks were client-side timeout / 503, not quota (attribution
-   corrected). The real cause is logged per call.
+3. Observed fallbacks were never quota/rate-limiting — they were client-side timeout / 503 (attribution
+   corrected; this held on the free tier and holds on the paid tier alike). The real cause is logged per
+   call.
 4. No spam control — non-deterministic verdicts surface directly as alerts; a choppy day can push on
    every flip. Accepted cost of the single-rule design.
 5. NYSE/TSX/NSE holiday calendars are not consulted; a closed market falls through to skip-with-log.
