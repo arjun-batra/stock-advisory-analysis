@@ -1,143 +1,146 @@
-# Handoff — INC-4: AI provider abstraction (FR33)
+# Handoff — INC-5: Admin portal foundation (FR27, FR28, FR29, NFR5, NFR6)
 
-Branch: `claude/admin-portal-evaluation-txaehj` (same batching note as INC-3 — no new `inc-N` branch cut).
-INC-3 (kill-switch) shipped, tested, and was reviewer-cleared before this increment started.
+Branch: `claude/admin-portal-evaluation-txaehj` (same batching note as INC-3/INC-4 — no new `inc-N`
+branch cut).
 
-**Design:** `docs/design/operational-controls.md` §14 (§14.1 hand-rolled-vs-LiteLLM decision — already
-made, not revisited; §14.2 exact interface shape; §14.3 `ai_judge.py` after the refactor; §14.4 config
-addition). **Plan/AC:** `docs/design/increment-plan.md` "### INC-4 — AI provider abstraction (FR33)".
-Traces to `docs/requirements.md` FR33.
-
-## Files changed
-- **New `scripts/ai_provider.py`** — the full provider-neutral interface per §14.2: `TokenUsage`,
-  `ProviderResult` (frozen dataclasses), `ErrorClass` (str Enum), `ProviderError`, `BatchVerdictSchema`
-  (frozen dataclass), `AIProvider` (ABC, one abstract `generate()` method), `GeminiProvider` (the sole
-  concrete implementation — moved in, unchanged, from `ai_judge.py`: `genai.Client(http_options=...)`,
-  typed `response_schema` built from `BatchVerdictSchema`, `response_mime_type="application/json"`,
-  `temperature=0.2`, and `_classify()` carrying over `_is_retryable()`'s exact logic), `get_provider()`.
-- **`scripts/ai_judge.py`** — refactored to remove every Gemini-SDK-specific import/call
-  (`google.genai`, `google.genai.types`, `httpx`, `_client()`, `_usage()`, `_is_retryable()`,
-  `_RETRYABLE_CODES`/`_RETRYABLE_STATUSES`, `_RESPONSE_SCHEMA`). `_generate()` is now the
-  provider-neutral retry loop from §14.3 (takes an `AIProvider` + `max_retries`/`retry_base_ms` as
-  parameters instead of reading `config.*` / a `genai.Client` directly; catches only `ProviderError`).
-  `judge_batch()` gained an optional `provider=None` parameter (defaults to
-  `get_provider(config.AI_PROVIDER)`) — its public signature is otherwise unchanged and its return
-  contract is byte-identical (`_enrich()` now converts the `TokenUsage` dataclass back to a plain dict
-  via `dataclasses.asdict()` before stamping it onto each ticker's result, so callers see exactly the
-  same `{"prompt", "output", "thoughts", "total"}` shape as before). The "call config" log line
-  (timeout/max_retries/retry_base) and the per-retry transient-error log line are printed with
-  byte-identical text, just relocated to `judge_batch()`/`_generate()` respectively.
-- **`scripts/config.py`** — added `AI_PROVIDER` (env var, default `"gemini"`).
-- **`docs/design/non-functional-ops.md` §9** — added `AI_PROVIDER` to the core tunables baseline
-  paragraph (the reviewer's hardcoding-audit source of truth); updated the old "DRAFT, INC-4 not yet
-  implemented" stub to point at the now-implemented location instead of restating it.
-- **`tests/conftest.py`** — `mock_gemini` fixture now patches `ai_provider._client` (was
-  `ai_judge._client`) since the Gemini transport seam moved modules; docstrings updated to match. No
-  test assertions changed anywhere — `git diff --stat` on every `tests/test_*.py` file is empty.
-
-**Not touched, confirmed via `git diff --name-only`:** `scripts/run_hourly.py`, `scripts/run_discovery.py`.
-
-## Acceptance criteria status (6 of 6 — see design doc's INC-4 AC list)
-1. **PASS** — `ai_provider.py` defines `AIProvider`, `ProviderResult`, `TokenUsage`, `ErrorClass`,
-   `ProviderError`, `BatchVerdictSchema`, `GeminiProvider`, `get_provider()` (verified by importing each
-   by name).
-2. **PASS** — `grep -n "genai\|types\." scripts/ai_judge.py` returns zero matches (exit code 1, no
-   output).
-3. **PASS** — `judge_batch()`'s signature is `(items, models=None, provider=None)`, return contract
-   unchanged (verified by the unmodified `tests/test_ai_judge.py` suite passing as-is); `git diff` on
-   `run_hourly.py`/`run_discovery.py` is empty (0 lines) and neither file appears in
-   `git diff --name-only`.
-4. **PASS** — full suite: 158 passed both before (baseline, via `git stash`) and after this change, with
-   zero assertion changes in any test file (only `conftest.py`'s fixture-plumbing docstrings/target
-   changed). `config.GEMINI_TIMEOUT_MS`/`GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS` are still the values
-   `judge_batch()` passes into `_generate()`'s `timeout_ms`/`max_retries`/`retry_base_ms` parameters —
-   same log lines, same `random.uniform(0, base*2**n)` full-jitter formula.
-5. **PASS** — `config.AI_PROVIDER` exists (default `"gemini"`); manual check:
-   `ai_provider.get_provider("bogus")` raises `SystemExit("Unknown AI_PROVIDER 'bogus'; supported:
-   ['gemini']")`.
-6. **BLOCKED — could not be executed in this environment.** No `GEMINI_API_KEY` (or any Google API
-   credential) is present anywhere in this session's environment (`env | grep -i gemini` / `-i google` /
-   `-i api_key` all empty; no secrets manager, `gh` CLI, or credential file found either). I did **not**
-   fabricate a result. As the closest available substitute I ran a real network call through the new
-   path with a deliberately invalid key (`GEMINI_API_KEY=invalid-test-key`) and confirmed it reaches
-   Google's real endpoint end-to-end: `ClientError: 400 INVALID_ARGUMENT ... 'API key not valid'`,
-   correctly classified `fatal` (0 transport retries, no backup-model retry burned), surfaced through
-   `ai_judge.judge_batch()` as `parse_status: "api_error"` — i.e. the full `ai_provider.py` ->
-   `GeminiProvider.generate()` -> `ai_judge._generate()` -> `judge_batch()` chain is wired correctly and
-   reaches Gemini's real API through this sandbox's proxy; the only missing piece is a valid credential.
-   **This needs a follow-up run with a real `GEMINI_API_KEY` before AC6 can be marked PASS** — either
-   supply the key to this session, or run
-   `python3 -c "import ai_judge; print(ai_judge.judge_batch([<a real item>]))"` from `scripts/` in an
-   environment that has it (e.g. the production GitHub Actions runner, or locally with the real secret).
-
-## How to run
-```
-cd scripts && python3 -m pytest -q --tb=short   # from repo root: pytest -q --tb=short (tests/ + scripts/ on sys.path via conftest.py)
-```
-`ai_provider.get_provider("bogus")` manual check (SystemExit):
-```
-python3 -c "import ai_provider; ai_provider.get_provider('bogus')"
-```
-
-## Known limitations
-- AC6 (live smoke test) is unresolved per above — flagging to the orchestrator/Arjun rather than
-  guessing or faking a pass.
-- `AI_PROVIDER` is intentionally not on the admin portal's curated tunables list (FR30) — single-valued
-  today (only `"gemini"` implemented), nothing to edit; a second provider would be its own change
-  request that also updates FR30's curated list if it should be portal-editable (§14.4).
-- No new dependency added (`requirements.txt` unchanged) — `google-genai` was already a dependency and
-  simply moved which file imports it.
-
----
-
-# Handoff — Reviewer Pass 14 fixes: REV-075, REV-076, REV-078 (INC-4 follow-up)
-
-Design: `docs/design/operational-controls.md` §14.2-14.4, `docs/design/non-functional-ops.md` §9 (both
-updated by tech-lead before this fix pass — read there for the exact decisions, not restated here). All
-three are internal, behavior-preserving fixes; no interface/signature changes.
+**Design:** `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8. **Plan/AC:**
+`docs/design/increment-plan.md` "### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD".
+Traces to `docs/requirements.md` FR27–FR29, NFR5, NFR6.
 
 ## Files changed
-- **`scripts/config.py`** — REV-075: fixed the stale comment near `GEMINI_MAX_RETRIES`/
-  `GEMINI_RETRY_BASE_MS` (formerly "logged at call setup (`ai_judge._client`)") to point at
-  `ai_provider._client`, the current location since INC-4's refactor. REV-078: added
-  `AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.2"))`, placed next to the other Gemini
-  call-shape tunables (`GEMINI_TIMEOUT_MS`, `GEMINI_MAX_RETRIES`, `GEMINI_RETRY_BASE_MS`), same
-  env-var-with-literal-default pattern.
-- **`scripts/ai_provider.py`** — REV-076: `GeminiProvider.__init__` now caches `self._client = None` /
-  `self._client_timeout_ms = None`; `generate()` builds a client only when none is cached yet or the
-  requested `timeout_ms` differs from the cached one, otherwise reuses `self._client`. Restores 1 client
-  build per `judge_batch()` call (was rebuilding on every retry attempt, up to ~16/batch). REV-078:
-  `temperature=0.2` literal replaced with `temperature=config.AI_TEMPERATURE`.
 
-## How to run
+- **New `admin-portal/`** — Next.js 16 (App Router, TypeScript) app, project root for Vercel deployment.
+  Scaffolded via `create-next-app`, then trimmed to exactly the design's file list (§16.8) plus small
+  supporting helpers:
+  - `lib/supabase-client.ts` — the browser Supabase client (`@supabase/ssr`'s `createBrowserClient`,
+    anon key + session). Used by every feature; no server-side data path.
+  - `lib/admin-guard.ts` — `checkAuthorization()`, the pure-ish allowlist-check helper (session ->
+    `is_admin()` RPC -> sign-out-and-reject if false). Kept out of the React component so the
+    authorization decision logic is isolated from rendering.
+  - `lib/validation.ts` — pure validation functions (`validateWatchlistRow`, `validateHoldingsRow`)
+    mirroring `sql/schema.sql`'s CHECK constraints 1:1, no invented rules.
+  - `components/AuthGuard.tsx` — client component wrapping every authenticated route; redirects to
+    `/login` (no session) or `/login?error=not_authorized` (signed-in but not on the allowlist, after
+    signing the user out). Renders the shared nav/header for authorized sessions.
+  - `app/login/page.tsx` — Google OAuth sign-in button only. No email/password or magic-link UI
+    anywhere in this file or any other file (`grep -rniE "password|magic.?link" admin-portal/app
+    admin-portal/lib admin-portal/components` returns zero matches).
+  - `app/auth/callback/route.ts` — standard Supabase Auth/Next.js PKCE code-exchange route
+    (`@supabase/ssr`'s `createServerClient`, cookies from `next/headers`). Anon key only, no secret;
+    the only server-side code in the portal.
+  - `app/(app)/layout.tsx`, `app/(app)/watchlist/page.tsx`, `app/(app)/holdings/page.tsx` — the
+    shared authenticated layout (a route group; the parens don't affect the URL, so these still serve
+    at `/watchlist` and `/holdings` per the design's file list) wrapping the FR28/FR29 CRUD screens.
+    Both screens: list + inline edit + delete + add form, client-side Supabase calls, DB error
+    messages surfaced verbatim on failure (so an RLS rejection is visible, not swallowed).
+  - `app/page.tsx` — root route, pure redirect target (`/` -> `/watchlist` if authorized, else
+    `/login` or `/login?error=not_authorized`).
+  - `app/layout.tsx`, `app/globals.css` — minimal shared shell/styling, no external font fetch.
+  - `.env.example` — documents the two `NEXT_PUBLIC_*` vars (see "How to deploy" below). `.gitignore`
+    (create-next-app default) ignores `.env*` with `!.env.example` added so the example stays tracked
+    while `.env.local` never is.
+  - Removed create-next-app boilerplate not needed here: default `CLAUDE.md`/`AGENTS.md` stubs, sample
+    SVGs, the default landing page content.
+- **New `sql/admin_portal_rls.sql`** — `admin_allowlist` (RLS enabled, zero policies — REV-033),
+  `is_admin()` (`returns boolean`, no arguments, `SECURITY DEFINER`, exact signature from
+  `admin-portal.md` §16.2 —**not changed from the design doc's block**, since INC-6 has a hard,
+  literal dependency on this signature), and the `admin_write_watchlist` / `admin_write_holdings`
+  policies (`for all to authenticated using (is_admin()) with check (is_admin())`), copied verbatim
+  from §16.2/§16.3.
+
+**Not touched:** no `scripts/*.py` file (`git diff --stat -- scripts/` is empty), no other `sql/*.sql`
+file, no `.github/workflows/*` file.
+
+## Acceptance criteria status
+
+**Self-verifiable now (done):**
+- **AC6** — PASS. `grep -n "admin_allowlist\|is_admin()" sql/admin_portal_rls.sql` shows both new write
+  policies (`admin_write_watchlist`, `admin_write_holdings`) call `public.is_admin()` in both `using`
+  and `with check`; `admin_allowlist` has `enable row level security` and zero `create policy`
+  statements for it anywhere in the file (matches REV-033's fix).
+- **AC7** — PASS. `grep -rniE "service_role|SUPABASE_SERVICE|GEMINI_API_KEY|GITHUB_TOKEN|_PAT\b|
+  client_secret" admin-portal/app admin-portal/lib admin-portal/components sql/admin_portal_rls.sql`
+  returns zero matches. Only two env vars are referenced anywhere in the portal's source
+  (`grep -rn "process\.env" admin-portal/app admin-portal/lib`):
+  `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Ran a real production build with
+  those two vars set and inspected the built `.next` output directly: the anon/publishable key appears
+  (expected — it's the intentionally-public client key, same posture as `pages/common.js`'s hardcoded
+  key), and the only `service_role`/`sb_secret_` string matches anywhere in the build output are
+  `@supabase/ssr`'s/`supabase-js`'s own bundled JSDoc comments warning callers never to expose a
+  service_role key in the browser — library documentation text, not an embedded credential; this
+  portal's code never imports or calls any `supabase.auth.admin.*` API.
+- **Build** — PASS. `npm run build` (Next.js 16.2.12, Turbopack) compiles, typechecks
+  (`tsc` via the build), and generates all 6 routes (`/`, `/login`, `/auth/callback`, `/watchlist`,
+  `/holdings`, `/_not-found`) with zero errors. `npm run lint` (eslint) is clean, zero errors/warnings.
+- **Smoke test** — PASS. Ran `next dev` locally against the real (already-public) Supabase URL/anon
+  key from `pages/common.js`. All 5 routes return the expected status (`/login` 200 with a rendered
+  "Sign in with Google" button and no password/magic-link text, `/` 200, `/watchlist` 200 rendering
+  the `AuthGuard`'s "Checking session…" shell before the client-side redirect fires, `/holdings` 200
+  same shell, `/auth/callback` with no `code` param 307-redirects to `/login?error=auth_failed`). No
+  server errors in the dev log. Could not smoke-test an actual authenticated round-trip (Google OAuth
+  consent screen requires a real browser + Arjun's allowlisted account) — that's AC1–AC3.
+- **Full Python regression** — PASS both before and after this increment: `python3 -m pytest -q
+  --tb=short` -> 171 passed (baseline was also 171; this increment adds zero Python files, confirmed
+  via `git diff --stat -- scripts/` being empty). Note: `pytest` on PATH resolves to an isolated `uv
+  tool` install without `supabase`/`google-genai` installed — use `python3 -m pytest` (repo-root
+  `dist-packages` has the real deps), not bare `pytest`.
+
+**Deferred — need live deployment/live Supabase, per your instruction not to fake these (I don't have
+Vercel or write access to the live Supabase project in this session):**
+- **AC1–AC3** (deployed URL, redirect-to-Google, non-allowlisted reject, allowlisted admin reaches the
+  app) — need a real Vercel URL + `admin_portal_rls.sql` applied + Google OAuth actually configured
+  (Arjun's already done the OAuth/dashboard side per your note).
+- **AC4–AC5** (CRUD writes confirmed via direct Supabase query; anon-key-no-session REST write rejected
+  by RLS) — need the migration applied to the live project.
+- **AC8 (REV-034 existing-schema grant/policy audit)** — needs a live Supabase MCP/SQL-editor session
+  against the real project (`select * from pg_policies where schemaname='public'` +
+  `information_schema.role_table_grants`, then confirm an authenticated-but-non-allowlisted session
+  gains nothing beyond what `anon` already had). I don't have Supabase MCP tool access in this session
+  (not bound to my toolset), so this is explicitly pending, not attempted or faked.
+
+## How to run locally
+
 ```
-cd scripts && python3 -m pytest -q --tb=short   # from repo root: pytest -q --tb=short
-```
-Manual verification of the caching fix (no live API key needed — `_client` mocked):
-```python
-from unittest.mock import MagicMock, patch
-import ai_provider
-calls = {"n": 0}
-def fake_client(api_key, timeout_ms):
-    calls["n"] += 1
-    m = MagicMock(); m.models.generate_content.return_value = MagicMock(text="[]", usage_metadata=None)
-    return m
-with patch.object(ai_provider, "_client", side_effect=fake_client):
-    p = ai_provider.GeminiProvider("key")
-    schema = ai_provider.BatchVerdictSchema()
-    for _ in range(3):
-        p.generate(model="m", system_prompt="s", user_prompt="u", schema=schema, timeout_ms=1000)
-    assert calls["n"] == 1   # same timeout_ms -> cached, built once
-    p.generate(model="m", system_prompt="s", user_prompt="u", schema=schema, timeout_ms=2000)
-    assert calls["n"] == 2   # different timeout_ms -> rebuilt
+cd admin-portal
+cp .env.example .env.local   # fill in the two NEXT_PUBLIC_* values
+npm install
+npm run dev                  # http://localhost:3000
 ```
 
-## Test results
-Full suite: 158 passed, both before and after this change (`python3 -m pytest -q --tb=short`), confirming
-these are non-breaking as tech-lead's docs predicted — no test patches the construction cadence or
-asserts a hardcoded `0.2`.
+## How to deploy (for Arjun — exact steps)
+
+1. **Apply the migration first.** Run `sql/admin_portal_rls.sql` against the live Supabase project (SQL
+   editor or migration tool), then manually seed your admin email:
+   `insert into public.admin_allowlist (email) values ('<your-google-account-email>');`
+   (not baked into the migration on purpose — see the file's comments).
+2. **Vercel project settings:**
+   - **Root Directory:** `admin-portal`
+   - **Framework Preset:** Next.js (auto-detected)
+   - **Build Command:** `npm run build` (default — no override needed)
+   - **Output Directory:** `.next` (default — no override needed)
+   - **Install Command:** `npm install` (default)
+3. **Environment variables** (Project Settings -> Environment Variables, all environments):
+   - `NEXT_PUBLIC_SUPABASE_URL` = your Supabase project URL
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = your Supabase anon/publishable key
+   - No other variable is needed or used — do not add a service-role key or any other secret; the
+     portal has no server-only credential anywhere (§16.7).
+4. **Supabase Auth dashboard:** confirm Google is the only enabled provider (you've said this is
+   already done) and that the OAuth redirect URL allow-list includes
+   `https://<your-vercel-domain>/auth/callback`.
+5. Deploy. Visiting the root URL logged-out should redirect to `/login`.
 
 ## Known limitations
-None new. `AI_TEMPERATURE`, like `AI_PROVIDER`, is intentionally not on the admin portal's curated
-tunables list (FR30) per `non-functional-ops.md` §9 — a `config.py`/repo-Variable-level tunable is
-sufficient today.
+
+- No `app/api/` routes beyond the auth callback, no server-only secret, exactly per §16.8 — confirmed
+  by design, not just by omission.
+- `app/tunables/`, `app/track-record/`, and the kill-switch UI are intentionally **not** built — out of
+  scope for INC-5 (INC-6/INC-7). No stub pages or nav links exist for them; the shared header only
+  links to Watchlist/Holdings.
+- The holdings "add" form only lets you pick a ticker that already exists in `watchlist` (a dropdown,
+  not free text) — this mirrors the FK constraint (`holdings.ticker references watchlist(ticker)`)
+  rather than relying solely on the DB to reject an invalid ticker after the fact.
+- `npm audit` reports 12 high-severity advisories, all in **dev-only** tooling transitively pulled in
+  by `eslint-config-next`/`postcss` (not runtime/production dependencies) — `npm audit fix --force`
+  would force a breaking `eslint` major-version bump; left alone for this increment since it doesn't
+  affect the deployed app. Worth a follow-up `npm audit fix --force` + lint re-check in a later
+  increment if Arjun wants it addressed.
