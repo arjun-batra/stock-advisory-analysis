@@ -231,9 +231,11 @@ a real advantage — *if* a second provider is imminent.
    layer; routing through a second abstraction on top of the one already root-caused and fixed
    reintroduces exactly the risk class that produced that bug, and any recurrence would now be one layer
    further from the code the team already understands, not closer to debuggable.
-3. **The actual new code is small.** `_client()` / `_generate()` / `_is_retryable()` in `ai_judge.py`
-   already isolate 100% of the Gemini-SDK-specific surface — this is a refactor (extract to a class
-   behind an interface), not new functionality. Estimated net new code: ~80–120 lines in one file.
+3. **The actual new code is small.** `_client()` / `_generate()` / `_is_retryable()` — at decision time
+   (pre-INC-4) all three lived in `ai_judge.py` — already isolate 100% of the Gemini-SDK-specific surface;
+   this is a refactor (extract to a class behind an interface), not new functionality. Estimated net new
+   code: ~80–120 lines in one file. (Post-refactor: `_client()`/`_classify()` now live in
+   `ai_provider.py`, `_generate()`'s provider-neutral retry loop stays in `ai_judge.py` — §14.3.)
 4. **Zero new dependency.** No new entry in `requirements.txt`, no new supply-chain surface to track for
    a public, single-maintainer repo — consistent with this codebase's existing minimalism (no
    `candidate_universe` table, single ingest wrapper, etc., `docs/design.md` §0 #7 / `foundations.md`).
@@ -300,9 +302,13 @@ class AIProvider(ABC):
 one provider doesn't earn a package) implements `generate()` using exactly today's `google.genai` call
 shape (`genai.Client(http_options=types.HttpOptions(timeout=timeout_ms))`,
 `response_mime_type="application/json"`, typed `response_schema` built from `BatchVerdictSchema`,
-`temperature=0.2`) and an internal `_classify(exc) -> ErrorClass` carrying over `_is_retryable()`'s exact
+`temperature=config.AI_TEMPERATURE`, decided REV-078 — see below) and an internal `_classify(exc) ->
+ErrorClass` carrying over `_is_retryable()`'s exact
 logic unchanged (`httpx.TimeoutException` / bare `TimeoutError` → retryable; `.code in {429,503,504}` or
 `.status in {UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED}` → retryable; everything else → fatal).
+The **call shape** (parameters, schema, temperature) is preserved exactly as above; the **construction
+cadence** is not automatic from that and is specified separately in §14.3 (REV-076) — do not infer "1
+client per batch" from this paragraph alone.
 
 ```python
 def get_provider(name: str | None = None) -> AIProvider:
@@ -352,11 +358,81 @@ def get_provider(name: str | None = None) -> AIProvider:
 - `google.genai` / `google.genai.types` imports move entirely into `ai_provider.py`; `ai_judge.py` no
   longer imports them.
 
+**Client construction cadence — decided REV-076 (2026-07-28).** Putting `timeout_ms` on `generate()`
+rather than on `GeminiProvider.__init__` (so a single provider instance could in principle serve calls at
+different timeouts) has a real consequence the initial cut missed: `GeminiProvider` is instantiated once
+per `judge_batch()` call (§14.2's `get_provider()`, called once at the top of `judge_batch`) and then
+reused across every model in the try-list and every retry within `_generate()`'s loop — but if `generate()`
+calls `_client()` itself on every invocation, that reuse buys nothing, and a fresh `genai.Client` (fresh
+httpx transport, fresh TLS handshake) is built on every attempt: up to `(GEMINI_MAX_RETRIES + 1)` per model
+× up to 2 models × up to 2 parse attempts, vs. exactly 1 per batch pre-INC-4.
+
+**Decision: cache the client on the `GeminiProvider` instance, keyed by `timeout_ms`.** In every live call
+path `timeout_ms` is always `config.GEMINI_TIMEOUT_MS` — a single process-wide config value, never varied
+per model or per retry — so within one `judge_batch()` call the cache key never changes and this restores
+the pre-INC-4 cadence exactly (1 client per batch, matching `config.py`'s "logged at call setup" comment
+and `judge_batch()`'s own once-per-batch config-log line, REV-075). The key (rather than an unconditional
+single cached client) is kept anyway, at negligible cost, so the interface's per-call `timeout_ms`
+parameter stays honest for any future caller that *does* vary it — a construction, not a correctness,
+concern: `AIProvider.generate()`'s signature does not change, and no test seam changes (`get_provider()`
+still runs inside `judge_batch()` after monkeypatching, per `docs/handoff.md`'s existing test approach).
+No downside was found: nothing in the Gemini SDK requires a fresh client per request (the client is a thin
+transport wrapper, not a stateful session tied to one call), and connection reuse across retries is
+strictly better for a batch that's already retrying because of transient transport trouble.
+
+```python
+class GeminiProvider(AIProvider):
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+        self._client = None
+        self._client_timeout_ms = None
+
+    def generate(self, *, model, system_prompt, user_prompt, schema, timeout_ms) -> ProviderResult:
+        if self._client is None or self._client_timeout_ms != timeout_ms:
+            self._client = _client(self._api_key, timeout_ms)
+            self._client_timeout_ms = timeout_ms
+        # ...unchanged below: build cfg, call self._client.models.generate_content(...)
+```
+
+**Dev action required:** apply the caching shown above to `scripts/ai_provider.py`'s `GeminiProvider`
+(currently constructs a fresh client on every `generate()` call, `ai_provider.py:145`). No other file
+changes; no test or interface changes.
+
+**Temperature tunable — decided REV-078 (2026-07-28).** `temperature=0.2` was a bare literal in
+`ai_provider.py:150`, moved verbatim from pre-INC-4 `ai_judge.py` and never entered into either config
+audit baseline. **Decision: promote it to a tunable, `AI_TEMPERATURE`, following the exact pattern already
+used for `GEMINI_TIMEOUT_MS`/`GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS`** — those are the other three
+Gemini call-shape parameters in this codebase and all three are already `config.py` env-var tunables with
+a literal default; treating `temperature` differently (as a permanent bare constant) would be the one
+exception to that pattern with no principled reason for it. This is **not** the "genuinely fixed
+toolchain/structural fact" carve-out §9 already documents (`runs-on`, action pins, etc.) — temperature is
+a model-behavior parameter exactly like the three it sits next to in the same `GenerateContentConfig`
+call. `requirements_docs/SD.md`'s "low, to reduce run-to-run drift" rationale is preserved as the
+**default value**, not as a reason to forbid operator override — an operator who deliberately raises it
+accepts the drift tradeoff explicitly, the same way an operator who raises `GEMINI_MAX_RETRIES` accepts a
+longer worst-case run time. Default stays `0.2`; nothing about current behavior changes until an operator
+edits the value. Not on the admin portal's curated list (FR30) — same rationale as `AI_PROVIDER`, no
+proven need for at-runtime (no-commit) editing yet; a `config.py`/repo-Variable-level tunable is
+sufficient today.
+
+**Dev action required:** add to `scripts/config.py` (non-curated set, same section as the other Gemini
+call-shape tunables, near `GEMINI_TIMEOUT_MS`):
+```python
+# Sampling temperature for the Gemini call (ai_provider.GeminiProvider.generate). Kept LOW by default
+# to reduce run-to-run verdict drift (requirements_docs/SD.md); tunable per CLAUDE.md's no-hardcoded-
+# tunables rule, same pattern as GEMINI_TIMEOUT_MS/GEMINI_MAX_RETRIES/GEMINI_RETRY_BASE_MS.
+AI_TEMPERATURE = float(os.environ.get("AI_TEMPERATURE", "0.2"))
+```
+and change `ai_provider.py:150`'s `temperature=0.2` to `temperature=config.AI_TEMPERATURE` (already
+reflected in §14.2 above). No interface or test-seam change; `config` is already imported in
+`ai_provider.py`.
+
 ### 14.4 Configuration addition
 
 | Key | Default | Purpose |
 |---|---|---|
 | `AI_PROVIDER` | `"gemini"` | Selects the `AIProvider` implementation `judge_batch()` uses. Only `"gemini"` is implemented (FR33/Decision #26 — no second provider built). Not on the admin portal's curated tunables list (FR30) — no reason to expose a single-valued selector; adding a second provider is a future change request that would also update FR30's curated list if it should be portal-editable. |
+| `AI_TEMPERATURE` | `0.2` | Sampling temperature for the Gemini call (REV-078, 2026-07-28). Kept low by default to reduce run-to-run verdict drift; operator-tunable like the other three Gemini call-shape parameters. Not on the admin portal's curated list (FR30) — same rationale as `AI_PROVIDER`. |
 
 ### 14.5 Requirement coverage
 

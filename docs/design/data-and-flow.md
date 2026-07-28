@@ -58,10 +58,12 @@ multi-MB `raw_model_response` per refresh (FR21, NFR1).
   failed | api_error | no_data` and a short `fallback_from` token set (`timeout | 503 | 429-rpd | parse`);
   neither matched what the code actually writes. `retried` is written by nothing — the retry path
   (`components.md` §4.4's "parse & retry") returns `ok` on a successful retry, so `retried` is removed
-  from the documented set (reserved/unused, not a live value). `fallback_from` is a full string built by
-  `ai_judge._generate`/`judge_batch`, `"; ".join(f"{model}: {type(exc).__name__}: {str(exc)[:200]}" for
-  each attempted model)` — corrected above to match. Any future query/analytics view against this jsonb
-  shape should match the writer, not the previously-stale contract.
+  from the documented set (reserved/unused, not a live value). `fallback_from` is a full string,
+  `"; ".join(f"{model}: {detail}" for each attempted model)`, assembled in `ai_judge.judge_batch` from the
+  per-attempt `detail` string (`f"{type(exc).__name__}: {str(exc)[:200]}"`) that
+  `ai_provider.GeminiProvider.generate` raises inside its `ProviderError` since INC-4 (pre-INC-4 this was
+  all built in `ai_judge._generate`) — corrected above to match. Any future query/analytics view against
+  this jsonb shape should match the writer, not the previously-stale contract.
 
 **Timestamps stored in UTC; rendering per-surface (FR23):** notifications = one market timezone
 (server); detail page + dashboard = device primary + IST secondary (client); relative time computed

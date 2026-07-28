@@ -65,7 +65,12 @@ scripts/
                          #   DRAFT (REV-043, live-system fix not gated on any increment): gains a narrow
                          #   get_price_only(ticker) for publish_prices.py — see components.md §4.2.
   prefilter.py           # Yahoo live screener + quality gates + signals + funnel; region-aware
-  ai_judge.py            # Gemini batched judge_batch(models=...); BATCH_SYSTEM_PROMPT; schema + confidence
+  ai_provider.py         # IMPLEMENTED (INC-4, 2026-07-28, FR33): AIProvider interface + GeminiProvider
+                         #   (operational-controls.md §14); the sole owner of google.genai imports and
+                         #   Gemini-SDK error classification. get_provider() resolves config.AI_PROVIDER.
+  ai_judge.py            # provider-neutral judge_batch(models=..., provider=None) — talks only to
+                         #   AIProvider/ProviderResult/ProviderError (ai_provider.py), no Gemini-SDK
+                         #   coupling since INC-4; BATCH_SYSTEM_PROMPT; schema + confidence
   state.py               # Supabase read/write; single-rule change machine; _snapshot()
   notify.py              # ntfy dispatch (provider-agnostic); per-market topic + timestamp
   textutil.py            # shared clip()
@@ -105,16 +110,19 @@ tunables_cache.json      # DRAFT (INC-6): repo-ROOT last-known-good cache for th
                          #   back only by hourly-watchlist.yml (tunables-workflow-writeback.md)
 ```
 
-> **DRAFT additions (2026-07-26/27 CR, not yet implemented):** `scripts/ai_provider.py` (INC-4 —
-> `AIProvider` interface + `GeminiProvider`, see `operational-controls.md` §14) and a new top-level
-> `admin-portal/` directory (INC-5/6/7 — Next.js app deployed to Vercel, **no server-only secrets or API
-> proxy routes**, see `admin-portal.md` §16.8, revised 2026-07-27/Decision #27). Neither exists in the
-> repo yet; listed here in advance so this section stays the accurate map once they ship. `config.py`
-> also gains `_fetch_tunables()` / `_tunable()` (INC-6, `docs/design/tunables-fallback.md` §16.4) — the
-> first module-level network call this file has ever made, an explicit timeout
-> (`TUNABLES_FETCH_TIMEOUT_MS`) and a deterministic offline test seam (`SKIP_TUNABLES_FETCH`), and a
-> **fail-loud `SystemExit`** on a double-miss rather than hanging or silently guessing — full mechanism
-> in that file, not restated here (see §9 below for the two-tier chain's one-sentence summary).
+> **IMPLEMENTED (INC-4, 2026-07-28):** `scripts/ai_provider.py` (`AIProvider` interface + `GeminiProvider`,
+> see `operational-controls.md` §14) has shipped and is listed in the repo map above under `scripts/`.
+> This stub is retained only as a pointer to §14, so this section's history stays legible.
+>
+> **DRAFT additions (2026-07-26/27 CR, not yet implemented):** a new top-level `admin-portal/` directory
+> (INC-5/6/7 — Next.js app deployed to Vercel, **no server-only secrets or API proxy routes**, see
+> `admin-portal.md` §16.8, revised 2026-07-27/Decision #27). Does not exist in the repo yet; listed here in
+> advance so this section stays the accurate map once it ships. `config.py` also gains `_fetch_tunables()` /
+> `_tunable()` (INC-6, `docs/design/tunables-fallback.md` §16.4) — the first module-level network call this
+> file has ever made, an explicit timeout (`TUNABLES_FETCH_TIMEOUT_MS`) and a deterministic offline test
+> seam (`SKIP_TUNABLES_FETCH`), and a **fail-loud `SystemExit`** on a double-miss rather than hanging or
+> silently guessing — full mechanism in that file, not restated here (see §9 below for the two-tier chain's
+> one-sentence summary).
 
 > **Shadow-track files removed 2026-07-16** (`scripts/shadow.py`, `scripts/run_shadow.py`,
 > `scripts/run_shadow_nse.py`, `scripts/wallet_sim.py`, `scripts/eval_shadow.py`, both shadow SQL
@@ -137,7 +145,9 @@ Variables; nothing sensitive hardcoded. This mirrors the Configuration section o
 `GEMINI_RETRY_BASE_MS` (10000), `NTFY_TOPIC`, `NSE_NTFY_TOPIC` (falls back to `NTFY_TOPIC`),
 `DETAIL_PAGE_BASE`, `ALERTS_ENABLED` (false), `FORCE_RUN` (false), `AI_PROVIDER` (`"gemini"` — selects the
 `AIProvider` implementation `ai_judge.judge_batch()` uses, `operational-controls.md` §14.4; not on the
-admin portal's curated list, FR30 — single-valued today), `MIN_HISTORY_ROWS` (21),
+admin portal's curated list, FR30 — single-valued today), `AI_TEMPERATURE` (0.2 — Gemini call sampling
+temperature, `ai_provider.GeminiProvider.generate`; REV-078, 2026-07-28, `operational-controls.md` §14.3;
+not on the admin portal's curated list, FR30), `MIN_HISTORY_ROWS` (21),
 `YF_PACING_SECONDS` (2 — unified yfinance/screener call spacing; as of REV-007 this **also** governs
 prefilter's live-screener call pacing, replacing five formerly-hardcoded `sleep(1)` sites, so inter-screen
 pacing there is now 2s, not 1s — a deliberate low-risk timing change), `YF_BACKOFF_SECONDS` (10),
