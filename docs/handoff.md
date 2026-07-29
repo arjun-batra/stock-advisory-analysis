@@ -1,3 +1,67 @@
+# Handoff — Live-system fix: `ingest.get_price_only()` (REV-043, carried since Pass 15)
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read `docs/review-log.md` REV-043 + `docs/design/components.md` §4.2's design call +
+`docs/design/non-functional-ops.md`'s repo-structure DRAFT note for `ingest.py`/`publish_prices.py`, and
+`docs/code-map.md`. Design fixes the contract: `ingest.get_price_only(ticker) -> dict` — `period='5d'`
+history (enough for `price`/`pct_change_1d`) plus `tk.fast_info` for currency, **no** `tk.info` scrape,
+**no** `tk.news` call; `publish_prices.py` switches its one call site from `get_market_data()` to
+`get_price_only()`; `get_market_data()` stays untouched (still the only path `run_hourly.py`/
+`run_discovery.py` use). Files: `scripts/ingest.py` (new function + `_fetch_history` gains an optional
+`period` param, default unchanged), `scripts/config.py` (new `YF_PRICE_ONLY_PERIOD` tunable, "5d" default
+— same pattern as `YF_HISTORY_PERIOD`, no hardcoded fetch window per CLAUDE.md), `scripts/publish_prices.py`
+(one-line call switch + docstring update), `tests/test_ingest.py` (new coverage),
+`tests/test_tunables.py` (two existing mocks of `publish_prices.ingest.get_market_data` renamed to
+`get_price_only` — they'd otherwise silently stop exercising the real call path). No design deviation;
+scope stays inside REV-043 as written. Verify: full suite green, direct smoke-run of `publish_prices.main()`
+with a mocked `get_price_only`, confirm `pages/prices.json` output values match what the old full fetch
+would have produced for the same close data.
+
+## What changed and why
+
+`publish_prices.py` was pulling a full `get_market_data()` per ticker (3mo history + `tk.fast_info` +
+`tk.info` + `tk.news`, ~4 Yahoo requests) but only ever reads `price`/`pct_change_1d`/`market`/
+`fundamentals.currency`. `get_price_only()` fetches a 5d history window (still enough for `price` and
+`pct_change_1d` — both only ever look at the last 1-2 closes) and `tk.fast_info` for currency, skipping the
+`tk.info` scrape and `tk.news` fetch entirely. This is a pure efficiency fix: same published price values,
+cheaper fetch. `get_market_data()` and its callers (`run_hourly.py`, `run_discovery.py`) are unchanged.
+
+## Files touched
+
+- `scripts/ingest.py` — added `get_price_only(ticker) -> dict`; `_fetch_history` gained an optional
+  `period` param (defaults to `config.YF_HISTORY_PERIOD`, so `get_market_data`'s behavior is unchanged).
+- `scripts/config.py` — added `YF_PRICE_ONLY_PERIOD` (default `"5d"`), same tunable pattern as
+  `YF_HISTORY_PERIOD`/`YF_HISTORY_RETRIES`.
+- `scripts/publish_prices.py` — call site switched `ingest.get_market_data(ticker)` ->
+  `ingest.get_price_only(ticker)`; no other logic changed (same dict field names read: `has_price`,
+  `price`, `pct_change_1d`, `market`, `fundamentals.currency`, `notes`).
+- `tests/test_ingest.py` — three new tests: `get_price_only` returns correct price/1d-change fields and
+  never touches `tk.info`/`tk.news` (raises if it does); its price/pct_change_1d values match
+  `get_market_data`'s for the same underlying closes (no behavior change); empty-history skip-with-log path.
+- `tests/test_tunables.py` — two existing `publish_prices` heartbeat tests updated to mock
+  `ingest.get_price_only` instead of the now-unused-by-`publish_prices` `ingest.get_market_data` (the old
+  mocks would have gone stale silently — `publish_prices.main()` no longer calls `get_market_data` at all).
+
+## How to run
+
+`python3 -m pytest tests/test_ingest.py tests/test_tunables.py -q` for the targeted coverage, or the full
+suite: `python3 -m pytest -q --tb=short` (207 passed, 0 failed — no regressions). Manual smoke test: mock
+`state.client`/`state.get_watchlist`/`ingest.get_price_only`/`state.write_heartbeat` and call
+`publish_prices.main()` in a tmp cwd — confirmed it writes `pages/prices.json` with the expected
+price/chg/market/currency shape and an `ok` heartbeat.
+
+## Known limitations / follow-ups
+
+- `docs/design/non-functional-ops.md` §9's tunables list does not yet mention `YF_PRICE_ONLY_PERIOD` —
+  that file is tech-lead-owned (dev doesn't touch design docs per CLAUDE.md); flagging for tech-lead to add
+  a one-line entry alongside `YF_HISTORY_PERIOD`'s.
+- REV-043's "related, not addressed here" note (`publish_prices.py` has no market-open gate in
+  `sql/scheduler_pgcron.sql`) is explicitly out of scope for this fix and unchanged — still a pm question
+  per the design doc.
+
+---
+
 # Handoff — REV-096 fix: relocate `BATCH_SYSTEM_PROMPT` out of `ai_judge.py` into `prompts/`
 
 ## Build plan (written before coding, per dev's updated workflow)

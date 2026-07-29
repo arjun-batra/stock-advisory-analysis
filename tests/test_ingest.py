@@ -7,10 +7,15 @@ an unrelated same-acronym-company headline gets dropped, and the filter
 fails OPEN (keeps everything) when no company name is available to match
 against -- and the session-aware pricing/volume pro-rating boundary logic
 (`_session_state`) at three key points: well into the session, just after
-open, and after the session has closed.
+open, and after the session has closed. Also covers `get_price_only`
+(REV-043, `components.md` §4.2): it must return the same `price`/
+`pct_change_1d` values `get_market_data` would for the same underlying
+history, using a narrower fetch, and must never touch `tk.info`/`tk.news`.
 """
 
 import datetime as dt
+
+import pandas as pd
 
 import config
 import ingest
@@ -133,3 +138,101 @@ def test_session_state_nse_market_uses_ist_session():
     live, frac = ingest._session_state("NSE", now=ist)
     assert live is True
     assert 0.0 < frac < 0.1
+
+
+# --- get_price_only (REV-043, components.md §4.2 — publish_prices.py's -------
+# lightweight price-only fetch)
+
+def _history_df(closes):
+    idx = pd.date_range("2026-07-01", periods=len(closes), freq="D")
+    return pd.DataFrame({"Close": closes, "Volume": [1_000] * len(closes)}, index=idx)
+
+
+class FakeYFTickerNoInfoNoNews:
+    """Fake `yf.Ticker`: `.history()` and `.fast_info` are the only members
+    `get_price_only` may read. `.info`/`.news` raise if ever touched, so any
+    accidental full-fetch call fails the test loudly rather than silently
+    doing extra network work."""
+
+    def __init__(self, ticker, closes, currency="USD", expected_period=None):
+        self.ticker = ticker
+        self._closes = closes
+        self.fast_info = {"currency": currency}
+        self._expected_period = expected_period
+
+    def history(self, period=None, auto_adjust=False):
+        if self._expected_period is not None:
+            assert period == self._expected_period
+        return _history_df(self._closes)
+
+    @property
+    def info(self):
+        raise AssertionError("get_price_only must not touch tk.info (full scrape)")
+
+    @property
+    def news(self):
+        raise AssertionError("get_price_only must not touch tk.news")
+
+
+def test_get_price_only_returns_price_and_1d_change_without_full_scrape(monkeypatch):
+    closes = [10.0, 11.0, 12.0, 13.0, 14.5]
+    monkeypatch.setattr(
+        ingest.yf, "Ticker",
+        lambda ticker: FakeYFTickerNoInfoNoNews(ticker, closes, currency="USD",
+                                                 expected_period=config.YF_PRICE_ONLY_PERIOD))
+
+    data = ingest.get_price_only("AAPL")
+
+    assert data["has_price"] is True
+    assert data["price"] == 14.5
+    assert data["pct_change_1d"] == round((14.5 / 13.0 - 1) * 100, 2)
+    assert data["market"] == "US"
+    assert data["fundamentals"]["currency"] == "USD"
+
+
+def test_get_price_only_matches_get_market_data_price_fields_for_same_history(monkeypatch):
+    """Not a behavior change: given the same underlying closes, the narrower
+    fetch must produce the exact same price/pct_change_1d get_market_data
+    would (only the *data volume* fetched differs, not the values)."""
+    # get_market_data needs >= config.MIN_HISTORY_ROWS rows to compute the 20d
+    # fields, but price/pct_change_1d only ever look at the last two closes.
+    long_closes = [10.0 + i * 0.1 for i in range(30)]
+    long_closes[-1] = 14.5
+    long_closes[-2] = 13.0
+    short_closes = [13.0, 14.5]
+
+    class FullFakeTicker(FakeYFTickerNoInfoNoNews):
+        def __init__(self, ticker):
+            super().__init__(ticker, long_closes, currency="USD")
+
+        @property
+        def info(self):
+            return {}
+
+        @property
+        def news(self):
+            return []
+
+    monkeypatch.setattr(ingest.yf, "Ticker", FullFakeTicker)
+    full = ingest.get_market_data("AAPL")
+
+    monkeypatch.setattr(
+        ingest.yf, "Ticker",
+        lambda ticker: FakeYFTickerNoInfoNoNews(ticker, short_closes, currency="USD"))
+    narrow = ingest.get_price_only("AAPL")
+
+    assert narrow["price"] == full["price"] == 14.5
+    assert narrow["pct_change_1d"] == full["pct_change_1d"]
+
+
+def test_get_price_only_no_price_data_is_skip_not_fatal(monkeypatch):
+    class EmptyHistoryTicker(FakeYFTickerNoInfoNoNews):
+        def history(self, period=None, auto_adjust=False):
+            return pd.DataFrame({"Close": [], "Volume": []})
+
+    monkeypatch.setattr(ingest.yf, "Ticker", lambda ticker: EmptyHistoryTicker(ticker, []))
+
+    data = ingest.get_price_only("DELISTED")
+
+    assert data["has_price"] is False
+    assert data["notes"]

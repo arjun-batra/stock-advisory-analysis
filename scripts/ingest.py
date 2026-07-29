@@ -21,16 +21,19 @@ def _is_rate_limit(exc: Exception) -> bool:
     return any(s in blob for s in ("ratelimit", "rate limit", "too many requests", "429"))
 
 
-def _fetch_history(tk: "yf.Ticker"):
-    """Fetch 3mo history, retrying ONCE after a backoff on a Yahoo rate-limit.
+def _fetch_history(tk: "yf.Ticker", period: str | None = None):
+    """Fetch history (default 3mo, `config.YF_HISTORY_PERIOD`), retrying ONCE
+    after a backoff on a Yahoo rate-limit. `period` overrides the window
+    (used by `get_price_only`'s narrower 5d fetch).
 
     Returns (dataframe_or_none, error_note_or_none, was_rate_limited).
     yfinance has no published rate limit and throttled the back-to-back ingest
     loop mid-run (issue #1), so this mirrors the AI step's backoff-retry.
     """
+    period = period or config.YF_HISTORY_PERIOD
     for attempt in range(config.YF_HISTORY_RETRIES):
         try:
-            return tk.history(period=config.YF_HISTORY_PERIOD, auto_adjust=False), None, False
+            return tk.history(period=period, auto_adjust=False), None, False
         except Exception as e:
             if _is_rate_limit(e) and attempt == 0:
                 time.sleep(config.YF_BACKOFF_SECONDS)
@@ -285,4 +288,48 @@ def get_market_data(ticker: str) -> dict:
     out["headlines"] = heads
     if dropped:
         out["notes"].append(f"{dropped} headline(s) dropped as likely unrelated to the company")
+    return out
+
+
+def get_price_only(ticker: str) -> dict:
+    """Lightweight price/1d-change fetch for `publish_prices.py` (REV-043,
+    `components.md` §4.2 design call). `get_market_data()` above does a full
+    3mo history fetch plus `tk.fast_info`, `tk.info`, and `tk.news` — four
+    Yahoo requests — but `publish_prices.py` only reads `price`/
+    `pct_change_1d`/`market`/`fundamentals.currency`. This fetches a short
+    `config.YF_PRICE_ONLY_PERIOD` history window (enough for those two price
+    fields) and `tk.fast_info` for currency context only — no `tk.info`
+    scrape, no `tk.news` call. `get_market_data()` is untouched and remains
+    the only path the AI-judgment code (`run_hourly.py`/`run_discovery.py`)
+    uses.
+    """
+    market = _market_for(ticker)
+    out = {
+        "ticker": ticker, "market": market,
+        "has_price": False, "rate_limited": False,
+        "price": None, "pct_change_1d": None,
+        "fundamentals": {}, "notes": [],
+    }
+
+    tk = yf.Ticker(ticker)
+    h, err, rate_limited = _fetch_history(tk, period=config.YF_PRICE_ONLY_PERIOD)
+    if err is not None:
+        out["notes"].append(err)
+        out["rate_limited"] = rate_limited
+        return out
+    if h is None or h.empty:
+        out["notes"].append("no price data (delisted/halted/bad ticker)")
+        return out
+
+    close = h["Close"].dropna()
+    out["has_price"] = True
+    out["price"] = round(float(close.iloc[-1]), 4)
+    if len(close) >= 2:
+        out["pct_change_1d"] = round((close.iloc[-1] / close.iloc[-2] - 1) * 100, 2)
+
+    try:
+        fi = dict(tk.fast_info)
+    except Exception:
+        fi = {}
+    out["fundamentals"] = {"currency": _get(fi, "currency")}
     return out
