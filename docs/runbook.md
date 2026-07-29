@@ -74,12 +74,73 @@ Create a Supabase project if one doesn't exist. Then:
    - `sql/phase5_monitoring.sql` (creates health-monitor function `check_pipeline_health()`, dispatch gates for market hours, monitor alert state table, and schedules the health check itself). **This is now the sole, reconciled source of `check_pipeline_health()`** (reviewer REV-062, fixed 2026-07-28) — it carries the kill-switch pause-check + resume-baseline fix (FR25/NFR2), the discovery/publish-prices degraded-check branches, and the ET/IST watchlist dedup, all together. `sql/fix_missing_degraded_checks.sql` and `sql/dedup_watchlist_health_check.sql` are superseded and must **not** be applied (see below).
    - `sql/dashboard_latest_call_view.sql` (creates the `latest_call_per_ticker` view, used by the dashboard and detail page for fast read-only queries)
    - `sql/enable_monitor_alerts_rls.sql` **(added 2026-07-28, reviewer REV-033/REV-035)** — one-line RLS-enable for `monitor_alerts`, which `phase5_monitoring.sql`'s `create table` never included even though the live table has RLS enabled. Must come after `phase5_monitoring.sql` (the table doesn't exist yet before that).
+   - `sql/admin_portal_rls.sql` **(added 2026-07-26, INC-5, FR27-29/NFR5/NFR6)** — creates `admin_allowlist` table, `is_admin()` authorization function, and write policies for `watchlist`/`holdings`. Must come after `schema.sql` (the tables it writes policies for must exist first). Must be applied before any portal writes can succeed; deployed to Vercel as part of INC-5.
+   - `sql/admin_portal_tunables.sql` **(added 2026-07-27, INC-6, FR30/NFR5/NFR6)** — creates `tunables` table (source of truth for tunable overrides), the `tunables_stamp_update` trigger, and the write policy for the portal to edit them. Must come after `schema.sql`. Deployed as part of INC-6.
+   - `sql/kill_switch_portal_grant.sql` **(added 2026-07-29, INC-7, FR32/NFR6)** — extends `set_kill_switch()` with an `is_admin()` authorization check for authenticated portal callers, adds the `grant execute` for authenticated role, and adds a SELECT policy so the portal can read `kill_switch_state`. Also closes a TRUNCATE-grant gap on `kill_switch_state` and `kill_switch_audit` (same class as REV-081/REV-086 found on `admin_allowlist`/`tunables`). Must come after `kill_switch.sql` (both tables must exist). Deployed as part of INC-7.
 
-These six migrations set up the entire control plane (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, plus the `latest_call_per_ticker` view). The cron jobs will start firing immediately on the schedules defined below.
+These nine migrations set up the entire control plane and admin-portal backend (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, `admin_allowlist`/`tunables` created by the two portal-support migrations, plus the `latest_call_per_ticker` view). The cron jobs will start firing immediately on the schedules defined below.
 
 **Note:** `sql/drop_shadow_tables_migration.sql` is a one-time migration that was already applied to this project; it is not part of the fresh-deploy procedure (a fresh project never had those tables to drop). It remains in the repo as a historical record.
 
 **Superseded — do not apply:** `sql/fix_missing_degraded_checks.sql` (REV-042) and `sql/dedup_watchlist_health_check.sql` (REV-047) each committed their own independent `check_pipeline_health()` body. Reviewer Pass 12 (REV-062, blocker) found no apply order among the three committed bodies (these two plus `phase5_monitoring.sql`'s INC-3 edit) produced a correct function — applying either of these two alone, as this runbook previously instructed, silently reverted INC-3's kill-switch pause-check/resume-baseline fix with no error. Both fixes are now folded into `phase5_monitoring.sql`'s single reconciled function (above); these two files no longer define the function at all (see each file's header) and are kept only as a historical/non-applyable record.
+
+#### 2.4 Admin Portal Deployment (INC-5/6/7)
+
+The admin portal (`admin-portal/` directory in this repo) is a Next.js application deployed to Vercel. It provides authenticated write access to the system's configuration (watchlist, holdings, tunables) and operational controls (kill-switch toggle and track-record view).
+
+##### Vercel Project Setup
+
+1. **Create a Vercel project** (if not already deployed):
+   - Sign in to https://vercel.com with the appropriate account.
+   - Import the `stock-advisory-analysis` repository (GitHub import).
+   - **Set the project root to `admin-portal/`** — this is required for Vercel to deploy the Next.js app from the subdirectory.
+   - Use default build settings (Vercel auto-detects Next.js).
+
+2. **Environment variables in Vercel**:
+   - Go to Settings > Environment Variables in the Vercel dashboard.
+   - Add these **public environment variables** (safe to expose; these are the low-privilege Supabase anon keys):
+     - `NEXT_PUBLIC_SUPABASE_URL`: The Supabase project URL (format: `https://<project-id>.supabase.co`)
+     - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: The Supabase anon/publishable key (starts with `eyJ...`)
+   - These are the same values used by the public dashboard and detail page; no new secrets are exposed.
+   - No other environment variables are needed for the portal — it uses the Supabase client library to read/write via RLS, not a server-side proxy.
+
+##### Google OAuth Configuration
+
+The admin portal uses **Supabase Auth with Google OAuth as the only login provider**:
+
+1. **Configure Google OAuth in Supabase Auth dashboard** (one-time setup at INC-5):
+   - In Supabase dashboard, go to **Authentication > Providers > Google**.
+   - Enable Google OAuth and enter your Google Cloud credentials (OAuth client ID and secret).
+   - Set the Supabase auth callback URL (Supabase will display the exact URL during setup; point your Google app's authorized redirect URIs to it).
+
+2. **Disable other auth methods in Supabase Auth dashboard**:
+   - Go to **Authentication > Providers**.
+   - **Disable** Email/Password and Magic Link sign-in.
+   - **Only Google OAuth should be enabled.**
+
+3. **Seed the admin allowlist** (one-time setup at INC-5):
+   - After `sql/admin_portal_rls.sql` is applied, seed the `admin_allowlist` table with Arjun's Google account email (the one used to sign in):
+   ```sql
+   INSERT INTO public.admin_allowlist (email) VALUES ('arjun@example.com');
+   ```
+   - Replace `arjun@example.com` with the actual Google account email that should be the system admin.
+   - This is the single source of truth for who can edit the portal; all RLS policies check `public.is_admin()`, which queries this table.
+
+##### Portal Routes and Deployment Notes
+
+- **Login/OAuth callback**: `/login` (sign-in with Google) and `/auth/callback` (OAuth code-exchange, Supabase Auth standard flow).
+- **Configuration screens** (authenticated only):
+  - `/watchlist` — add/edit/delete tickers (FR28, INC-5).
+  - `/holdings` — add/edit/delete positions (FR29, INC-5).
+  - `/tunables` — override AI model, retry, timeout settings (FR30, INC-6).
+  - `/track-record` — read-only paginated view of the call log (FR31, INC-7).
+- **Kill-switch toggle**: Displayed in the top-right header of every authenticated page (surfaced on shared layout, not a standalone route, INC-7).
+
+All writes go through the Supabase client library with the signed-in user's session JWT, enforced by RLS policies in the database. There is no server-side API layer or GitHub-PAT proxy — the portal is a pure client-side app (except for the standard OAuth callback route).
+
+##### Custom Domain Setup
+
+The portal is deployed to a custom domain (configured in Vercel's domain settings). Point the domain's CNAME or nameservers to Vercel's servers per Vercel's documentation. Once deployed, the portal is accessible at the custom domain URL and the OAuth callback is routed via that same domain.
 
 ### Workflows and Their Schedules
 
@@ -367,9 +428,10 @@ persist:
 path); `holdings`, `verdict_state`, and `run_heartbeat` have RLS enabled with zero policies — no
 anon/authenticated access at all, read/written only by the secret-key workflows or a `SECURITY DEFINER`
 function. `sql/schema.sql` is this posture captured in version control. `kill_switch_state` and
-`kill_switch_audit` are **not** part of this live-confirmed set (INC-3's SQL is not yet applied to
-production) — their RLS/REVOKE posture is documented in `docs/design/operational-controls.md` §13.2 and
-must be verified the same way once `sql/kill_switch.sql` is actually applied.
+`kill_switch_audit` **ARE** part of this live-confirmed set (INC-3's SQL was applied to production
+early in the session) — their RLS/REVOKE posture is documented in `docs/design/operational-controls.md`
+§13.2 and verified in `docs/handoff.md`'s dated INC-3 evidence block (2026-07-29 kill-switch pause/resume
+audit, confirming both tables exist with RLS enabled, and `set_kill_switch()` works correctly).
 
 All modifications to this schema must be applied as new SQL migrations (or via Supabase's migration UI), never by direct ALTER commands.
 
