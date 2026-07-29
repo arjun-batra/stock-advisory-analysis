@@ -112,7 +112,7 @@ def main() -> None:
             outcomes["error"] += 1
 
     degraded = outcomes["skip"] + outcomes["error"] + screens_errored
-    status = "partial" if degraded else "ok"
+    status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, heartbeat_key, status)
     print(f"Done [{status}]. {dict(outcomes)}"
           + (f" ({screens_errored}/{screens_attempted} screens errored)" if screens_errored else ""))

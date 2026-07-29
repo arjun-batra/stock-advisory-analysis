@@ -23,6 +23,12 @@ if SCRIPTS_DIR not in sys.path:
 os.environ.setdefault("GEMINI_API_KEY", "test-fake-gemini-key")
 os.environ.setdefault("SUPABASE_URL", "https://example.invalid.supabase.co")
 os.environ.setdefault("SUPABASE_SECRET_KEY", "test-fake-secret-key")
+# INC-6 (FR30): deterministically exercise config.py's tier-2 (cache) tunables
+# path by default, instead of ~15 live Supabase connection attempts per suite
+# run against the fake SUPABASE_URL host above (docs/design/tunables-workflow-
+# writeback.md's INC-6 follow-up note). Tests that want tier-1 behavior
+# monkeypatch config._fetch_tunables directly.
+os.environ.setdefault("SKIP_TUNABLES_FETCH", "true")
 
 
 # --- shared Gemini-call fakes (used by test_ai_judge.py) ---

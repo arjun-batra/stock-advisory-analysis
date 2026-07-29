@@ -66,7 +66,7 @@ def main() -> None:
     # publish-prices pipeline only showed as an ever-growing "prices updated Nh
     # ago" on the dashboard — visible if someone happened to look, alerting no
     # one. check_pipeline_health() now watches this key during either session.
-    status = "partial" if skipped else "ok"
+    status = "partial" if (skipped or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, "publish-prices", status)
     print(f"Wrote {OUT_PATH} with {len(prices)}/{len(watchlist)} tickers priced "
           f"at {out['generated_at']} [{status}]")
