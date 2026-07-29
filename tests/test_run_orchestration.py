@@ -168,11 +168,22 @@ def test_heartbeat_is_partial_when_a_ticker_is_skipped(monkeypatch, wire_main):
 
 
 def test_heartbeat_is_ok_when_every_ticker_processes_cleanly(monkeypatch, wire_main):
+    """INC-6/AC14 (REV-045) note: `status` now also ORs in
+    config.TUNABLES_DEGRADED (tests/conftest.py's SKIP_TUNABLES_FETCH=true
+    default makes every curated key resolve from tier 2, so it's True for the
+    whole suite unless neutralized). This test's own purpose is the
+    TICKER-cleanliness half of the "ok" rule (issue #2) -- neutralize the
+    tunables-degraded half here so a real ticker-level regression can't hide
+    behind it. The degraded half is asserted on its own in
+    test_tunables.py::test_ac14_run_discovery_heartbeat_is_partial_when_degraded...
+    and this file's sibling test_heartbeat_is_partial_when_tunables_are_degraded
+    below, for run_hourly specifically."""
     sb = wire_main
     sb.watchlist = [_wl_row("AAPL", "US")]
     monkeypatch.setattr(config, "is_market_open", lambda now: True)
     monkeypatch.setattr(config, "is_nse_open", lambda now: False)
     monkeypatch.setattr(config, "FORCE_RUN", False)
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
     monkeypatch.setattr(run_hourly.ingest, "get_market_data",
                          lambda ticker: {**_data(ticker), "has_price": True, "is_new": False})
     monkeypatch.setattr(run_hourly.ai_judge, "judge_batch",
@@ -183,6 +194,26 @@ def test_heartbeat_is_ok_when_every_ticker_processes_cleanly(monkeypatch, wire_m
     assert sb.run_heartbeat["hourly-watchlist"]["status"] == "ok"
     assert len(sb.call_log) == 1
     assert sb.call_log[0]["alerted"] is False   # cold start, FR8: no fabricated alert
+
+
+def test_heartbeat_is_partial_when_tunables_are_degraded(monkeypatch, wire_main):
+    """INC-6/AC14 (REV-045): a tier-2 (cache) resolution must be
+    monitor-visible via the heartbeat even when every ticker processes
+    cleanly -- the counterpart to the test above."""
+    sb = wire_main
+    sb.watchlist = [_wl_row("AAPL", "US")]
+    monkeypatch.setattr(config, "is_market_open", lambda now: True)
+    monkeypatch.setattr(config, "is_nse_open", lambda now: False)
+    monkeypatch.setattr(config, "FORCE_RUN", False)
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", True)
+    monkeypatch.setattr(run_hourly.ingest, "get_market_data",
+                         lambda ticker: {**_data(ticker), "has_price": True, "is_new": False})
+    monkeypatch.setattr(run_hourly.ai_judge, "judge_batch",
+                         lambda items, models=None: {"AAPL": _ai("Buy")})
+
+    run_hourly.main()
+
+    assert sb.run_heartbeat["hourly-watchlist"]["status"] == "partial"
 
 
 def test_heartbeat_is_partial_when_a_ticker_errors_mid_run(monkeypatch, wire_main):
@@ -218,10 +249,19 @@ _EMPTY_FUNNEL = {"raw": 10, "after_dedup": 10, "passed_quality": 0, "passed_sign
 
 def test_quiet_day_all_screens_ok_reports_ok(monkeypatch, wire_discovery, capsys):
     """issue #8: zero candidates with every screen having run cleanly is a
-    genuine quiet day, not a failure."""
+    genuine quiet day, not a failure.
+
+    BUG-003 fix note: the early-return branch now also ORs in
+    config.TUNABLES_DEGRADED (True by default under conftest.py's
+    SKIP_TUNABLES_FETCH=true) -- neutralize it here so this test isolates the
+    screen-cleanliness half of the "ok" rule, same pattern as
+    test_heartbeat_is_ok_when_every_ticker_processes_cleanly above. The
+    degraded half of this branch is covered by
+    test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded."""
     sb = wire_discovery
     monkeypatch.setattr(run_discovery.prefilter, "find_candidates",
                          lambda exclude, region: ([], 5, 0, _EMPTY_FUNNEL))
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
 
     run_discovery.main()
 

@@ -78,10 +78,28 @@ def test_default_discovery_models(reload_config):
 
 
 def test_nse_model_pair_inherits_watchlist_pair_by_default(reload_config):
-    cfg = reload_config(GEMINI_MODEL="watchlist-model", GEMINI_MODEL_BACKUP="watchlist-backup",
-                         NSE_GEMINI_MODEL=None, NSE_GEMINI_MODEL_BACKUP=None)
-    assert cfg.NSE_GEMINI_MODEL == "watchlist-model"
-    assert cfg.NSE_GEMINI_MODEL_BACKUP == "watchlist-backup"
+    """UPDATED for INC-6 (FR30, Decision #27): GEMINI_MODEL/_BACKUP moved off
+    env-var control onto the tunables table/cache (see
+    test_gemini_model_env_var_no_longer_has_any_effect below) -- so this test
+    can no longer set them via env var to prove inheritance. What's left to
+    verify is the inheritance mechanism itself (os.environ.get("NSE_GEMINI_
+    MODEL", GEMINI_MODEL)), which INC-6 did not touch: NSE falls back to
+    whatever GEMINI_MODEL/_BACKUP resolve to, from any source."""
+    cfg = reload_config(NSE_GEMINI_MODEL=None, NSE_GEMINI_MODEL_BACKUP=None)
+    assert cfg.NSE_GEMINI_MODEL == cfg.GEMINI_MODEL
+    assert cfg.NSE_GEMINI_MODEL_BACKUP == cfg.GEMINI_MODEL_BACKUP
+
+
+def test_gemini_model_env_var_no_longer_has_any_effect(reload_config):
+    """INC-6 (FR30, Decision #27): GEMINI_MODEL is now a curated tunable,
+    sourced only from the tunables table/cache -- this is the intended,
+    designed consequence of the change (docs/handoff.md's "Expected
+    test-suite impact" note), not a regression. Replaces the pre-INC-6
+    assertion that an env var propagated to this value."""
+    baseline = reload_config(GEMINI_MODEL=None).GEMINI_MODEL
+    cfg = reload_config(GEMINI_MODEL="an-env-var-value-that-must-now-be-ignored")
+    assert cfg.GEMINI_MODEL == baseline
+    assert cfg.GEMINI_MODEL != "an-env-var-value-that-must-now-be-ignored"
 
 
 # --- env-var overrides actually propagate --------------------------------------
@@ -101,9 +119,19 @@ def test_nse_model_override_propagates(reload_config):
     assert cfg.NSE_GEMINI_MODEL == "custom-nse-model"
 
 
-def test_discovery_min_market_cap_override_propagates(reload_config):
+def test_discovery_min_market_cap_resolves_from_cache_not_env_var(reload_config):
+    """RENAMED/UPDATED for INC-6 (FR30, Decision #27): DISCOVERY_MIN_MARKET_CAP
+    is now a curated tunable, sourced only from the tunables table/cache --
+    setting the env var must have ZERO effect (see docs/handoff.md's
+    "Expected test-suite impact" note; this replaces the pre-INC-6 env-var-
+    propagation assertion). Real table-edit propagation (via a mocked tier-1
+    fetch) is covered in test_tunables.py's AC5 tests."""
+    baseline = reload_config(DISCOVERY_MIN_MARKET_CAP=None).DISCOVERY_MIN_MARKET_CAP
+    assert baseline == 2000000000.0   # tunables_cache.json's seeded value
+
     cfg = reload_config(DISCOVERY_MIN_MARKET_CAP="123456789")
-    assert cfg.DISCOVERY_MIN_MARKET_CAP == 123456789.0
+    assert cfg.DISCOVERY_MIN_MARKET_CAP == baseline
+    assert cfg.DISCOVERY_MIN_MARKET_CAP != 123456789.0
 
 
 def test_alerts_enabled_is_off_by_default(reload_config):

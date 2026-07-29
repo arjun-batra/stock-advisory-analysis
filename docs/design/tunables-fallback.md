@@ -7,7 +7,9 @@ together exceeded the ~400-line module-split guidance once the Pass-11 review fi
 read that file first; this one is INC-6's runtime (`scripts/config.py`) half of the same section, §16.4.
 Section number unchanged — still §16.4, just the second file it lives in.
 
-**Status: DRAFT**, same status/history as `admin-portal-tunables.md`. Builds in **INC-6**.
+**Status: IMPLEMENTED**, same status/history as `admin-portal-tunables.md` — dev-built, qa-tested
+(PASS — `docs/test-report.md`; BUG-003 found and fixed), reviewer Pass 18 verdict **NOT CLEAR pending
+REV-086 fix in progress** (`docs/review-log.md`) — not yet reviewer-clear. Builds in **INC-6**.
 
 ---
 

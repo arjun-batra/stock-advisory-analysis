@@ -19,16 +19,33 @@ on:
         type: boolean
         default: true
 
-permissions:
-  contents: read
+# NOTE (INC-6/FR30, REV-040b): permissions is intentionally declared per-job
+# below, NOT here at the workflow top level -- this workflow holds every
+# production secret and a top-level `permissions: contents: write` would
+# apply to any job this file will ever contain, including one added later
+# without necessarily re-auditing this decision. A previous Pass-11 fix
+# (REV-050) had added a top-level `contents: read` here; INC-6 supersedes it
+# with the job-scoped block below, which is stricter (no job inherits write
+# by default) and matches this file's real single-job shape today.
 
 # Serialize runs so two never mutate verdict_state at once (design 7.4).
+# RENAMED (REV-040a, INC-6/FR30) from `hourly-watchlist` to a group shared
+# with publish-prices.yml, so their commit-on-change steps (both hit
+# tunables_cache.json / pages/prices.json on overlapping */30 windows) can
+# never race against each other. This only ADDS publish-prices.yml to the
+# same FIFO queue -- two hourly-watchlist.yml runs still serialize against
+# each other exactly as before, preserving the original verdict_state
+# guarantee this group existed for.
 concurrency:
-  group: hourly-watchlist
+  group: repo-commit
   cancel-in-progress: false
 
 jobs:
   watchlist:
+    permissions:
+      contents: write   # NEW (REV-040b, INC-6/FR30) -- scoped to THIS JOB only, needed for the
+                         # "Commit tunables cache if changed" step below. The rest of the workflow's
+                         # default token permissions are untouched.
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
@@ -83,3 +100,37 @@ jobs:
           NSE_NTFY_TOPIC: ${{ secrets.NSE_NTFY_TOPIC }}
           DETAIL_PAGE_BASE: ${{ secrets.DETAIL_PAGE_BASE }}
         run: python scripts/run_hourly.py
+
+      # FR30 / Decision #28-#29: this workflow is the SOLE writer of
+      # tunables_cache.json (config.write_tunables_cache_if_fetched(), called
+      # from run_hourly.py's main() above). Not a verbatim copy of publish-
+      # prices.yml's "Commit prices.json if changed" step (REV-040): guarded
+      # by the shared `repo-commit` concurrency group above (primary defense),
+      # plus a bounded retry around the pull-rebase-then-push pair (REV-040's
+      # second mitigation) so a lost race against another committer to this
+      # branch fails the push once and retries, rather than failing this step
+      # outright AFTER the run's real work (checks, alerts) already succeeded.
+      - name: Commit tunables cache if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tunables_cache.json
+          if git diff --cached --quiet; then
+            echo "tunables_cache.json unchanged — nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore: refresh tunables cache [skip ci]"
+
+          max_attempts=3
+          attempt=1
+          until git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}"; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::failed to push tunables_cache.json after ${max_attempts} attempts"
+              exit 1
+            fi
+            sleep_s=$(( (RANDOM % 5) + 2 ))
+            echo "push attempt ${attempt}/${max_attempts} failed (lost the race or a transient error) — retrying in ${sleep_s}s"
+            attempt=$((attempt + 1))
+            sleep "$sleep_s"
+          done
+          echo "tunables_cache.json pushed (attempt ${attempt}/${max_attempts})."

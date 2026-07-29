@@ -2329,3 +2329,141 @@ commit messages or agent self-reports:**
 - **STILL OPEN, carried into Pass 15 (14 IDs):** REV-039, REV-043, REV-048, REV-049(b), REV-052,
   REV-063 (residual), REV-064, REV-065, REV-066, REV-067, REV-068, REV-070, REV-071, REV-072, plus
   REV-075 above. Full carried text lives in `docs/review-log.md` Pass 15's "Carried forward" section.
+
+---
+
+## Pass 16 — 2026-07-29 (INC-5 admin portal foundation — backfilled diff-scoped audit) — ARCHIVED 2026-07-29
+
+Archived at Pass 17's close, per `CLAUDE.md`'s doc-hygiene rule. Pass 16 was the first-ever diff-scoped
+audit of `admin-portal/` (whole tree, excluding `node_modules`), `sql/admin_portal_rls.sql`, and
+`tests/admin_portal/*.test.ts` (26 tests) — backfilled after INC-5 shipped without going through Phase
+3(d) live. It traced FR27–FR29/NFR5/NFR6 end to end with no gap, found no scope creep/hardcoding/bloat,
+independently re-verified the post-handoff `process.env[name]` bug fix was both correctly in place and
+genuinely regression-tested, and issued **NOT CLEAR** for INC-5 on one new minor security finding
+(REV-081) plus two new minor doc/evidence findings (REV-082, REV-083). Full finding text is in git
+history at the Pass-17 commit.
+
+**Closing disposition (Pass 17, 2026-07-29) — each independently re-verified against current file
+content, not against the fix commits' own claims:**
+
+- **RESOLVED (3):**
+  - **REV-081** `[SECURITY]` minor — `admin_allowlist` TRUNCATE grant not covered by RLS. Fixed at
+    `sql/admin_portal_rls.sql:17`: `revoke insert, update, delete, truncate on public.admin_allowlist
+    from public, anon, authenticated;`, placed immediately after the `enable row level security` line,
+    matching (and extending, with `truncate`) the established `kill_switch_audit` REVOKE pattern
+    (`kill_switch.sql:56`). The file's comment was also re-split so it no longer overclaims: the
+    original RLS-zero-policies paragraph now scopes its claim to the four RLS-governed verbs only
+    (`:18-28`), and a new, separate paragraph (`:29-35`) explains the TRUNCATE gap and the REVOKE fix
+    specifically. Live application (project `ikghqdtlbwifwnooytmm`, via Supabase `apply_migration`) and
+    live re-verification (`information_schema.role_table_grants` showing only REFERENCES/SELECT/TRIGGER
+    remaining for `anon`/`authenticated`) were both reported by the orchestrator; reviewer has no live-DB
+    tool bound this session and did not re-run that query independently — same evidentiary status as
+    other live-only checks in this project (REV-070, REV-083's own live evidence). The reviewable
+    artifact (the file, its SQL syntax, and its corrected comment) was independently verified in full.
+  - **REV-082** `[DESIGN-GAP]` minor — INC-5 status stale in `admin-portal.md`, `increment-plan.md`,
+    `design.md`. All three now correctly read INC-5 as IMPLEMENTED (dev-built, live-deployed, qa PASS),
+    with INC-6/INC-7 correctly left DRAFT throughout — checked every INC-5/6/7 mention in all three
+    files, no accidental promotion. `admin-portal.md:8-9`'s "Pending GATE 3" false-negative is gone. As
+    a side effect of the same edit, `increment-plan.md`'s title and its `### INC-3`/`### INC-4` heading
+    status markers (the primary item of REV-079, open since Pass 15) are now also fixed — see REV-079's
+    own disposition below.
+  - **REV-083** `[TEST-GAP]` (evidence-trail) minor — AC8/NFR7 live audit had no reviewable record.
+    Fixed: `docs/handoff.md:33-71` now carries a dated, attributed, raw-query record (`pg_class`,
+    `pg_policies`, `pg_proc`, `information_schema.role_table_grants`) run by the orchestrator against
+    the live project, including the exact grant enumeration that surfaced REV-081. `docs/test-report.md`
+    GAP-001 is marked RESOLVED (`:100-107`) and AC6/AC8's per-AC rows (`:94`, `:96`) now read
+    "independently confirmed," citing the handoff record rather than asserting it unverified.
+- **NEW residual findings opened at Pass 17, not part of the original three:**
+  - **REV-084** `[DESIGN-GAP]` minor — the "reviewer Pass 16 verdict NOT CLEAR pending REV-081 fix in
+    progress" caveat, written into `design.md`, `increment-plan.md` (top status note and the INC-5
+    heading), and `admin-portal.md` while REV-081's fix was still in flight, was necessarily left
+    unresolved by the fix commits themselves (they could not know Pass 17's verdict in advance). Now
+    stale the moment Pass 17 clears. Owner: tech-lead, one follow-up edit in the same four spots.
+  - **REV-085** `[BLOAT]`/staleness minor — `docs/handoff.md:225-236`'s original "Deferred" section
+    still lists AC8 as needing a live Supabase session, now contradicted and superseded by the dated
+    evidence record at `:33-71` added directly above it in the same file. Owner: dev, delete or
+    cross-reference the superseded bullet.
+  - **REV-079** re-scoped, still open — primary item (title + INC-3/INC-4 status markers in
+    `increment-plan.md`) resolved as a side effect of the REV-082 fix; secondary item (AC5's baseline
+    wording at `increment-plan.md:114-115`, still naming only `non-functional-ops.md` §9) not fixed.
+    Carried into Pass 17 re-scoped to the secondary item only. Owner: tech-lead.
+- **Verdict:** INC-5 CLEAR at Pass 17 — zero blockers, zero majors. Full disposition and new-finding text
+  in `docs/review-log.md` Pass 17.
+
+---
+
+## Pass 18 — 2026-07-29 (INC-6 admin portal tunables editor, FR30 — diff-scoped audit) — ARCHIVED
+2026-07-29 at Pass 19's close
+
+Archived at Pass 19's close, per `CLAUDE.md`'s doc-hygiene rule (full finding text is in git history at
+the Pass-18 commit / prior revisions of `docs/review-log.md`). Pass 18 was INC-6's diff-scoped audit
+(FR30, and NFR6 via FR30's write path): complete requirement→design→code→test traceability with one
+doc-baseline gap (REV-087), zero `[SCOPE-CREEP]`, the core hardcoding-removal mechanism (10 keys off
+env-var/hardcoded control) genuinely implemented with no new `[HARDCODED]`, no new `[BLOAT]`, and one new
+gating `[SECURITY]` minor (REV-086: `sql/admin_portal_tunables.sql` missing a narrow `revoke insert,
+delete, truncate` statement — the `tunables` table's sibling of REV-081's `admin_allowlist` fix, found
+before first live application rather than after). Verdict was **NOT CLEAR**, held on REV-086 alone, per
+this project's own Pass-16/REV-081 precedent for the identical finding class. Three non-blocking minors
+also opened (REV-087 requirements-baseline gap, REV-088 test-report internal inconsistency, REV-089 stale
+DRAFT status headers across four design docs), plus three carried items independently re-verified and
+closed this pass (REV-075, REV-084, REV-085 — see their own disposition below, unchanged from the prior
+revision of this entry).
+
+**Closing disposition (Pass 18, 2026-07-29) — carried items, each independently re-verified against
+current file content, not against any fix commit's own claim:**
+
+- **REV-075** `[BLOAT]` (comment accuracy) minor — RESOLVED. `scripts/config.py:257-258` now reads "The
+  effective values are logged at call setup (`ai_judge.judge_batch`)"; independently confirmed
+  `ai_judge.py:264-266` genuinely prints all three named values in one `[ai_judge] call config:` line.
+- **REV-084** `[DESIGN-GAP]` minor — RESOLVED. The "NOT CLEAR pending REV-081" qualifier is gone from all
+  four cited spots (`docs/design.md`, `docs/design/increment-plan.md`, `docs/design/admin-portal.md`) —
+  all now correctly state "reviewer Pass 17 verdict is CLEAR." Repo-wide grep confirmed zero remaining
+  hits of the stale phrase.
+- **REV-085** `[BLOAT]`/staleness minor — RESOLVED. `docs/handoff.md` no longer contains the stale AC8
+  "explicitly pending" bullet — the file was rewritten in full for INC-6's own handoff, superseding the
+  INC-5-era content (preserved in git history).
+
+**Closing disposition (Pass 19, 2026-07-29) — REV-086/087/088/089, each independently re-verified against
+current file content, not against the fix commits' claims, per Pass 19's explicit brief:**
+
+- **REV-086** `[SECURITY]` minor — RESOLVED. `sql/admin_portal_tunables.sql:25` now reads exactly
+  `revoke insert, delete, truncate on public.tunables from public, anon, authenticated;`, placed
+  immediately after `alter table public.tunables enable row level security;` (`:24`). Independently
+  confirmed: (1) the statement deliberately omits UPDATE and SELECT — both legitimately granted to
+  `authenticated` via the `admin_write_tunables` policy (`:54-57`, `for select, update to authenticated`),
+  the mechanism the whole FR30 feature depends on; revoking either would silently break the portal's save
+  path since RLS filters rows but does not itself confer the underlying table privilege; (2) it is
+  materially narrower than, not a copy of, `admin_allowlist`'s REV-081 REVOKE
+  (`sql/admin_portal_rls.sql:17`, which includes UPDATE — correct there because no `authenticated`-role
+  write path to that table is legitimate, wrong here); (3) an inline comment (`:26-32`) explains the
+  divergence explicitly so a future editor doesn't "helpfully" align the two lists. Live application not
+  independently re-verified (no live-DB tool bound to this session, same evidentiary status as REV-070 and
+  REV-081's live half) — the migration has not yet been applied to the live project (INC-6 hasn't shipped),
+  so there is nothing live to check yet; the orchestrator applies it post-clearance, same process as
+  INC-5's `sql/admin_portal_rls.sql`.
+- **REV-087** `[REQUIREMENTS-GAP]` minor — RESOLVED. `docs/requirements.md:351-352` now carries both rows
+  (`TUNABLES_FETCH_TIMEOUT_MS` default `5000`, `SKIP_TUNABLES_FETCH` default `false`) in the §10
+  Core-system table. Changelog entry at `:418` (2026-07-29) records the fix, names REV-087, and notes the
+  archival of the oldest entry to hold the cap. Changelog independently recounted at exactly 10 live
+  entries (`:409-418`) — cap honoured.
+- **REV-088** `[TEST-GAP]`-adjacent doc-hygiene minor — RESOLVED. `docs/test-report.md:136`'s AC14 row now
+  reads "PASS — all 3 entry points, including BUG-003 fix"; the Verdict paragraph (`:170-179`) now reads
+  "PASS. BUG-003 found this session and FIXED by dev (commit `799cd35`); no bugs remain open" with no
+  remaining "PARTIAL"/"open bug" language — consistent with the Gaps and Open Bugs sections, which already
+  said FIXED.
+- **REV-089** `[DESIGN-GAP]` minor — RESOLVED as scoped. All four named files now correctly state INC-6 is
+  dev-built/qa-tested and explicitly not-yet-reviewer-clear: `docs/design/increment-plan.md:1,3-18`
+  (title, status note, and the `### INC-6` heading itself, `:161`) and the matching `**Status: IMPLEMENTED**
+  ... reviewer Pass 18 verdict NOT CLEAR pending REV-086 fix in progress` framing in
+  `docs/design/admin-portal-tunables.md:10-12`, `docs/design/tunables-fallback.md:10-12`, and
+  `docs/design/tunables-workflow-writeback.md:11-14`. INC-7 correctly untouched/DRAFT throughout
+  (`increment-plan.md:17-18,286`). REV-079's secondary residual (AC5 baseline wording,
+  `increment-plan.md:117-118`, still naming only `non-functional-ops.md` §9) remains open — tech-lead
+  explicitly left it out of this fix's scope; carried forward, not treated as gating INC-6's clearance (an
+  INC-3/INC-4-era wording residual, not an INC-6 defect). New residual found independently this pass — see
+  REV-090 in `docs/review-log.md` Pass 19 (`docs/design.md` itself, the master index every agent reads
+  first, was outside REV-089's scope and still states INC-6 is DRAFT/not-yet-built in multiple spots,
+  directly contradicting the four files this fix corrected).
+- **Verdict:** INC-6 **CLEAR** at Pass 19 — all four findings that held it NOT CLEAR independently
+  re-verified RESOLVED. Zero blockers, zero majors. Full disposition, REV-090, and REV-079's residual
+  status in `docs/review-log.md` Pass 19.

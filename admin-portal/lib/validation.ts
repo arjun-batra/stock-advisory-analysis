@@ -44,6 +44,19 @@ export function validateWatchlistRow(input: WatchlistInput): string[] {
   return errors;
 }
 
+/**
+ * Tunables (FR30, docs/design/admin-portal-tunables.md §16.4) — the portal only ever UPDATEs one of
+ * the 10 migration-seeded rows (RLS grants `select, update` only, REV-044); there is no add/delete
+ * form, so the only client-side rule worth enforcing is "don't submit a blank value" — every other
+ * constraint (which keys exist, cast validity) is enforced server-side by the CHECK constraint and
+ * scripts/config.py's own cast, not duplicated here.
+ */
+export function validateTunableValue(value: string): string[] {
+  const errors: string[] = [];
+  if (!value.trim()) errors.push("Value is required.");
+  return errors;
+}
+
 export function validateHoldingsRow(input: HoldingsInput): string[] {
   const errors: string[] = [];
   if (!input.ticker.trim()) errors.push("Ticker is required.");

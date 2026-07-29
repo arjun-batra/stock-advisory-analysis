@@ -5,9 +5,14 @@ Actions encrypted secrets (see .github/workflows/hourly-watchlist.yml). Nothing
 sensitive is ever hardcoded here — this file is in a public repo.
 """
 
+import json
 import os
+import pathlib
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
+
+from supabase import create_client
+from supabase.lib.client_options import ClientOptions
 
 # --- Secrets / config (set as GitHub Actions secrets; see workflow) -----------
 GEMINI_API_KEY      = os.environ.get("GEMINI_API_KEY", "")
@@ -15,6 +20,160 @@ SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 # New-style secret key (sb_secret_...), replaces the legacy service_role JWT.
 # Bypasses RLS; server-only — lives only in Actions secrets, never in code.
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
+
+# --- Admin-portal tunables (FR30, docs/design/tunables-fallback.md §16.4) ----
+# Two runtime tiers only, table -> repo-committed cache -- NO permanent third
+# hardcoded-literal tier (2026-07-28 design revision; see the design doc for
+# why one was removed). Governs exactly the 10 curated keys below; every other
+# tunable in this file is untouched and still reads a plain os.environ.get(...).
+
+# Non-curated: bootstraps the fetch below, so it cannot itself be sourced from
+# the `tunables` table.
+TUNABLES_FETCH_TIMEOUT_MS = int(os.environ.get("TUNABLES_FETCH_TIMEOUT_MS", "5000"))
+# Offline switch: tests/local runs skip the live fetch and resolve every
+# curated key from tunables_cache.json deterministically (REV-041) -- avoids
+# ~15 live connection attempts per suite run against tests/conftest.py's fake
+# SUPABASE_URL host.
+SKIP_TUNABLES_FETCH = os.environ.get("SKIP_TUNABLES_FETCH", "false").lower() == "true"
+
+_CACHE_PATH = pathlib.Path(__file__).resolve().parent.parent / "tunables_cache.json"   # repo root,
+    # REV-046 -- NOT inside a `config/` subdirectory: scripts/ is a flat, non-package directory on
+    # sys.path, and a repo-root `config/` dir with no __init__.py would be a valid implicit namespace
+    # package that could shadow this very module (`import config`) if the repo root ever preceded
+    # scripts/ on sys.path.
+
+_TUNABLE_CASTS: dict[str, "Callable[[str], object]"] = {}   # populated by every _tunable() call below;
+    # write_tunables_cache_if_fetched() reuses this exact registry to validate before persisting
+    # (REV-036) rather than re-deriving cast rules in a second place.
+
+
+def _fetch_tunables() -> dict[str, str]:
+    """This run's live fetch. Returns {} on ANY failure, or when explicitly
+    skipped (REV-041's offline path). NEVER writes to the cache file itself --
+    only write_tunables_cache_if_fetched(), called explicitly, does that. This
+    is the ONE function qa patches to test every fallback-tier path
+    deterministically, mirroring ai_provider._client."""
+    if SKIP_TUNABLES_FETCH:
+        print("  [config] SKIP_TUNABLES_FETCH set; using tunables_cache.json only "
+              "(no live Supabase call made) — deterministic for tests/local runs")
+        return {}
+    try:
+        client = create_client(
+            SUPABASE_URL, SUPABASE_SECRET_KEY,
+            options=ClientOptions(postgrest_client_timeout=TUNABLES_FETCH_TIMEOUT_MS / 1000),
+        )
+        rows = client.table("tunables").select("key,value").execute().data
+        return {r["key"]: r["value"] for r in rows}
+    except Exception as e:
+        print(f"  [config] tunables fetch failed ({e}); falling back to tunables_cache.json")
+        return {}
+
+
+def _load_tunables_cache() -> dict[str, str]:
+    """Repo-committed last-known-good values, read once at import time. A
+    missing/corrupted file returns {} -- every key lookup then falls through
+    to _tunable()'s fail-loud SystemExit below if the live fetch also missed
+    it. No hardcoded floor exists past this point."""
+    try:
+        return json.loads(_CACHE_PATH.read_text())
+    except Exception as e:
+        print(f"  [config] tunables cache read failed ({e}); no fallback tier left for these keys")
+        return {}
+
+
+_TUNABLES = _fetch_tunables()               # tier 1: this run's live Supabase fetch
+_TUNABLES_CACHE = _load_tunables_cache()    # tier 2: last-known-good, repo-committed
+TUNABLES_DEGRADED = False    # REV-045: set True the first time any curated key resolves from tier 2
+                              # instead of tier 1 this run -- read by every entry point's heartbeat
+                              # write so a persistently-stale tunables state is monitor-visible.
+
+
+def _tunable(key: str, cast):
+    """Two tiers only: live Supabase fetch, then the repo-committed cache.
+
+    REV-036 fix: a tier-1 value that FAILS TO CAST fails loud immediately
+    (SystemExit) instead of silently falling through to tier 2 -- a cast
+    failure on a value Supabase actually returned is an operator-caused data
+    error (e.g. a bad portal edit), not a fetch failure; silently falling
+    through would let that bad value later get persisted into the cache by
+    write_tunables_cache_if_fetched(), turning one typo into a permanently
+    corrupted last-known-good. Only a MISSING key falls through to tier 2.
+    """
+    global TUNABLES_DEGRADED
+    _TUNABLE_CASTS[key] = cast
+    raw1 = _TUNABLES.get(key)
+    if raw1 is not None:
+        try:
+            return cast(raw1)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"[config] tunable {key!r} was fetched from Supabase as {raw1!r} but failed to "
+                f"cast. This is an operator-entered value error, not a fetch failure — refusing "
+                f"to fall through to the cache tier and risk persisting it as the new "
+                f"last-known-good. Fix the value in the tunables table (portal or SQL editor)."
+            )
+    raw2 = _TUNABLES_CACHE.get(key)
+    if raw2 is not None:
+        try:
+            value = cast(raw2)
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"[config] tunable {key!r} unavailable: Supabase tunables fetch did not include "
+                f"this key, AND the cached value {raw2!r} in tunables_cache.json failed to cast. "
+                f"Refusing to start with an unknown value for a portal-controlled tunable."
+            )
+        TUNABLES_DEGRADED = True
+        print(f"  [config] tunable {key!r} resolved from tunables_cache.json (tier 2) — "
+              f"live Supabase fetch did not include it this run")
+        return value
+    raise SystemExit(
+        f"[config] tunable {key!r} unavailable: Supabase tunables fetch failed or did not "
+        f"include this key, AND tunables_cache.json is missing, unreadable, or also "
+        f"missing this key. Refusing to start with an unknown value for a portal-controlled "
+        f"tunable rather than silently guessing one."
+    )
+
+
+def write_tunables_cache_if_fetched() -> None:
+    """Validate and merge THIS RUN'S successful Supabase fetch into the
+    existing cache, then write the result to tunables_cache.json. No-ops
+    silently if this run's fetch failed entirely (_TUNABLES is empty) -- a
+    failed fetch never touches a good cache.
+
+    REV-036 fix (three changes from the original draft, which serialized
+    `_TUNABLES` verbatim and unconditionally):
+      1. VALIDATE before writing: a fetched value is only persisted if it
+         still casts cleanly under `_TUNABLE_CASTS[key]` (populated by every
+         `_tunable()` call above).
+      2. MERGE, never overwrite: start from the existing cache and only
+         update keys this run's fetch actually returned, so a fetch that
+         legitimately omitted a key never deletes that key's last-known-good.
+         The merged file can never be smaller than the cache already on disk.
+      3. No-op cleanly when nothing changed, so the workflow's git-diff step
+         (not this function) still decides whether a commit is needed.
+
+    Decision #28: hourly-watchlist.yml is the SOLE writer (runs most
+    frequently). Called ONLY from run_hourly.py's entry point --
+    run_discovery.py and publish_prices.py never call this; they remain pure
+    read-only consumers of _TUNABLES_CACHE via _tunable() above."""
+    if not _TUNABLES:
+        return
+    merged = dict(_TUNABLES_CACHE)
+    for key, raw in _TUNABLES.items():
+        cast = _TUNABLE_CASTS.get(key)
+        if cast is None:
+            continue   # a key this run never read via _tunable(); leave the cache's value untouched
+        try:
+            cast(raw)   # validate only -- the cache stores the raw string, same shape as today
+        except (TypeError, ValueError):
+            print(f"  [config] tunables cache write-back: {key!r}={raw!r} failed to validate; "
+                  f"keeping the existing cached value for this key")
+            continue
+        merged[key] = raw
+    if merged == _TUNABLES_CACHE:
+        return
+    _CACHE_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
+
 
 # This is the SINGLE source of truth for these defaults (REV-039): the
 # workflows deliberately do not forward a GitHub repo Variable for any of the
@@ -28,8 +187,12 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 # (2026-07-13 change request, Change 2). Backup is tried automatically if the
 # primary errors on every attempt. Leave GEMINI_MODEL_BACKUP empty to disable
 # the fallback and run primary-only.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_MODEL_BACKUP = os.environ.get("GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite")
+# GEMINI_MODEL / GEMINI_MODEL_BACKUP are curated tunables (FR30) as of INC-6 --
+# sourced from the `tunables` table / tunables_cache.json above, NOT from an
+# env var (the env-var/GitHub-Variable wiring gap this comment used to
+# describe is exactly what Decision #27 closed by moving these to Supabase).
+GEMINI_MODEL = _tunable("GEMINI_MODEL", str)
+GEMINI_MODEL_BACKUP = _tunable("GEMINI_MODEL_BACKUP", str)
 
 # NSE watchlist model pair (Phase 6, design §12 D3). Point at a different model
 # for quota isolation from the US/TSX watchlist bucket, or leave unset to
@@ -51,8 +214,16 @@ NTFY_TOPIC       = os.environ.get("NTFY_TOPIC", "")
 NSE_NTFY_TOPIC   = os.environ.get("NSE_NTFY_TOPIC", "")
 DETAIL_PAGE_BASE = os.environ.get("DETAIL_PAGE_BASE", "")
 
-# Phase 2 runs the full logic but sends NO real pushes. Phase 3 flips this true.
-ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"
+# ALERTS_ENABLED (FR30 curated tunable) has TWO inputs, AND-gated -- this must
+# keep the pre-existing safe-forced-test pattern working exactly as today
+# ("for any off-hours forced run, set ALERTS_ENABLED=false" -- components.md
+# §4.1): the workflow_dispatch input below can only ever SUPPRESS alerts,
+# never force them on over the table/cache value, and vice versa.
+_alerts_input = os.environ.get("ALERTS_ENABLED", "false").lower() == "true"   # workflow_dispatch
+    # input, unchanged -- Phase 2-era default: runs the full logic but sends NO real pushes.
+ALERTS_ENABLED_TABLE = _tunable("ALERTS_ENABLED", lambda v: str(v).lower() == "true")
+ALERTS_ENABLED = _alerts_input and ALERTS_ENABLED_TABLE   # if BOTH tiers missed this key,
+    # _tunable() has already raised SystemExit above -- this line never runs on an unresolved value
 
 # Manual override: run even when the market is closed (weekend / off-hours), for
 # testing or backfill via workflow_dispatch. Leave unset on the scheduled run.
@@ -137,7 +308,9 @@ DISCOVERY_GEMINI_MODEL_BACKUP = os.environ.get("DISCOVERY_GEMINI_MODEL_BACKUP", 
 
 # Prefilter quality gates (all tunable). A candidate must clear ALL of these to
 # reach the AI. Defaults set with Arjun after the screener smoke test.
-DISCOVERY_MIN_MARKET_CAP = float(os.environ.get("DISCOVERY_MIN_MARKET_CAP", "2000000000"))   # $2B
+# DISCOVERY_MIN_MARKET_CAP is a curated tunable (FR30) as of INC-6 -- sourced
+# from the `tunables` table / tunables_cache.json, not an env var.
+DISCOVERY_MIN_MARKET_CAP = _tunable("DISCOVERY_MIN_MARKET_CAP", float)   # $2B
 DISCOVERY_MIN_PRICE      = float(os.environ.get("DISCOVERY_MIN_PRICE", "5"))                 # $5
 DISCOVERY_MIN_VOLUME     = float(os.environ.get("DISCOVERY_MIN_VOLUME", "500000"))           # 500k shares/day
 # Only real primary exchanges — excludes Cboe CA secondary listings, OTC, pink sheets.
@@ -152,14 +325,17 @@ DISCOVERY_ALLOWED_EXCHANGES_IN = {"NSI"}
 # Default ₹5,000 crore (₹5e10 ≈ $0.6B): a liquid mid/large-cap floor. The USD-$2B
 # equivalent (~₹1.66e11) would leave almost nothing — the D5 probe's median mover
 # mcap was ~₹4e10. TUNABLE / for ratification, like every discovery threshold.
-DISCOVERY_MIN_MARKET_CAP_INR = float(os.environ.get("DISCOVERY_MIN_MARKET_CAP_INR", "50000000000"))  # ₹5e10
+# Curated tunable (FR30) as of INC-6 -- sourced from the `tunables` table / tunables_cache.json.
+DISCOVERY_MIN_MARKET_CAP_INR = _tunable("DISCOVERY_MIN_MARKET_CAP_INR", float)   # ₹5e10
 # INR price floor (rupees), analogous to the $5 US floor. ₹50 default.
 DISCOVERY_MIN_PRICE_INR = float(os.environ.get("DISCOVERY_MIN_PRICE_INR", "50"))
 # Movement thresholds for the gainers/losers screens (abs % move to qualify).
-DISCOVERY_GAINER_PCT = float(os.environ.get("DISCOVERY_GAINER_PCT", "5"))
-DISCOVERY_LOSER_PCT  = float(os.environ.get("DISCOVERY_LOSER_PCT", "-5"))
+# Both curated tunables (FR30) as of INC-6 -- sourced from the `tunables` table / tunables_cache.json.
+DISCOVERY_GAINER_PCT = _tunable("DISCOVERY_GAINER_PCT", float)
+DISCOVERY_LOSER_PCT  = _tunable("DISCOVERY_LOSER_PCT", float)
 # Volume-spike signal: today's volume >= this multiple of the 3-month average.
-DISCOVERY_VOL_SPIKE = float(os.environ.get("DISCOVERY_VOL_SPIKE", "2.0"))
+# Curated tunable (FR30) as of INC-6 -- sourced from the `tunables` table / tunables_cache.json.
+DISCOVERY_VOL_SPIKE = _tunable("DISCOVERY_VOL_SPIKE", float)
 # 52-week-extreme signal: price within this fraction of the 52w high/low.
 DISCOVERY_52W_PROXIMITY = float(os.environ.get("DISCOVERY_52W_PROXIMITY", "0.02"))
 # Earnings-proximity signal (FR4): flag a name whose next earnings date is within
@@ -169,10 +345,25 @@ DISCOVERY_EARNINGS_DAYS = int(os.environ.get("DISCOVERY_EARNINGS_DAYS", "7"))
 # (prefilter._signals) — the forward-looking side is DISCOVERY_EARNINGS_DAYS above.
 DISCOVERY_EARNINGS_RECENT_DAYS = int(os.environ.get("DISCOVERY_EARNINGS_RECENT_DAYS", "2"))
 # Max candidates sent to the AI in the single daily batched call.
-DISCOVERY_SHORTLIST_MAX = int(os.environ.get("DISCOVERY_SHORTLIST_MAX", "15"))
+# Curated tunable (FR30) as of INC-6 -- sourced from the `tunables` table / tunables_cache.json.
+DISCOVERY_SHORTLIST_MAX = _tunable("DISCOVERY_SHORTLIST_MAX", int)
 # Per-candidate push cooldown: a name flagged within this many days is logged
-# but not re-pushed (design 4.3 — "log always, push conditionally").
-DISCOVERY_PUSH_COOLDOWN_DAYS = int(os.environ.get("DISCOVERY_PUSH_COOLDOWN_DAYS", "7"))
+# but not re-pushed (design 4.3 — "log always, push conditionally"). Curated
+# tunable (FR30) as of INC-6 -- sourced from the `tunables` table / tunables_cache.json.
+DISCOVERY_PUSH_COOLDOWN_DAYS = _tunable("DISCOVERY_PUSH_COOLDOWN_DAYS", int)
+
+# All 10 curated tunables are resolved by this point (import-time, once per process
+# -- NOT hot-reloaded mid-run). This startup line is how a portal edit's effect is
+# actually confirmed operationally: edit a row, re-run a script, and the new value
+# appears here (AC5).
+print(f"  [config] tunables resolved (degraded={TUNABLES_DEGRADED}): "
+      f"GEMINI_MODEL={GEMINI_MODEL!r} GEMINI_MODEL_BACKUP={GEMINI_MODEL_BACKUP!r} "
+      f"ALERTS_ENABLED_TABLE={ALERTS_ENABLED_TABLE!r} DISCOVERY_GAINER_PCT={DISCOVERY_GAINER_PCT!r} "
+      f"DISCOVERY_LOSER_PCT={DISCOVERY_LOSER_PCT!r} DISCOVERY_VOL_SPIKE={DISCOVERY_VOL_SPIKE!r} "
+      f"DISCOVERY_MIN_MARKET_CAP={DISCOVERY_MIN_MARKET_CAP!r} "
+      f"DISCOVERY_MIN_MARKET_CAP_INR={DISCOVERY_MIN_MARKET_CAP_INR!r} "
+      f"DISCOVERY_SHORTLIST_MAX={DISCOVERY_SHORTLIST_MAX!r} "
+      f"DISCOVERY_PUSH_COOLDOWN_DAYS={DISCOVERY_PUSH_COOLDOWN_DAYS!r}")
 
 
 def discovery_models() -> list[str]:

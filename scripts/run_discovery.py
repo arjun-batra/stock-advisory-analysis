@@ -56,7 +56,7 @@ def main() -> None:
         # Distinguish a genuine quiet day (all screens ran, nothing passed gates)
         # from a silent screener failure (screens errored) — the latter must not
         # report a clean 'ok' (issue #2 principle applied to discovery).
-        if screens_errored:
+        if screens_errored or config.TUNABLES_DEGRADED:
             state.write_heartbeat(sb, heartbeat_key, "partial")
             print(f"Done [partial]. 0 candidates but {screens_errored}/{screens_attempted} "
                   f"screens errored — treat as screener failure, NOT a quiet day.")
@@ -112,7 +112,7 @@ def main() -> None:
             outcomes["error"] += 1
 
     degraded = outcomes["skip"] + outcomes["error"] + screens_errored
-    status = "partial" if degraded else "ok"
+    status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, heartbeat_key, status)
     print(f"Done [{status}]. {dict(outcomes)}"
           + (f" ({screens_errored}/{screens_attempted} screens errored)" if screens_errored else ""))

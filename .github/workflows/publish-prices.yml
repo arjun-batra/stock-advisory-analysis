@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-prices
+  group: repo-commit
   cancel-in-progress: false
 
 jobs:

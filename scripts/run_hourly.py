@@ -98,6 +98,12 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
 
 
 def main() -> None:
+    # Refreshes tunables_cache.json from this run's live tunables fetch (if any),
+    # BEFORE the market gate below, so the cache stays current on every dispatch
+    # regardless of whether the gate goes on to skip work (FR30, Decision #28/#29
+    # -- hourly-watchlist.yml is the sole writer, see config.write_tunables_cache_if_fetched).
+    config.write_tunables_cache_if_fetched()
+
     now = datetime.now(timezone.utc)
     now_et = datetime.now(config.MARKET_TZ)
     now_ist = datetime.now(config.NSE_MARKET_TZ)
@@ -152,7 +158,7 @@ def main() -> None:
     # shared "hourly-watchlist" key across both sessions (design §12 D4/D5) — the
     # monitor computes the right staleness window per session off this same key.
     degraded = outcomes["skip"] + outcomes["error"]
-    status = "partial" if degraded else "ok"
+    status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, "hourly-watchlist", status)
     print(f"Done [{status}]. {dict(outcomes)}")
 
