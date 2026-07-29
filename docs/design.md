@@ -7,8 +7,12 @@ passed by the user for the 2026-07-26 change request's plan — kill-switch (FR2
 `admin-portal-tunables.md`, `tunables-fallback.md`, `tunables-workflow-writeback.md`). **INC-3
 (kill-switch, FR24–FR26) and INC-4 (AI provider abstraction, FR33) are IMPLEMENTED** — dev built both, qa
 tested both, and reviewer cleared both with zero blockers through Pass 14 (`docs/review-log.md`); see
-`operational-controls.md` §13–§14, now **IMPLEMENTED**. **INC-5, INC-6, INC-7 (admin portal, FR27–FR32,
-NFR5–6) remain DRAFT** — not yet built, no dev work has started on them. Design revised several times
+`operational-controls.md` §13–§14, now **IMPLEMENTED**. **INC-5 (admin portal foundation: auth, hosting,
+watchlist & holdings CRUD, FR27–FR29, NFR5–6) is also IMPLEMENTED** — dev-built, live-deployed, qa-tested
+with a PASS verdict; reviewer Pass 16 verdict is NOT CLEAR pending REV-081 (a minor gap, fix in progress at
+dev) — see `docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-6, INC-7 (admin
+portal: tunables editor FR30, track-record view & kill-switch UI FR31–FR32) remain DRAFT** — not yet built,
+no dev work has started on them. Design revised several times
 since: 2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves
 from a GitHub-PAT proxy to a Supabase table); 2026-07-27 (Decision #28, refines #27 — the failed-fetch
 fallback moves from a hardcoded literal to a repo-committed cache file, and *proposes*
@@ -20,7 +24,7 @@ double-failure of both tiers now fails loud via `SystemExit` instead of guessing
 race/privilege trade-off to re-put to Arjun, who confirmed `hourly-watchlist.yml` stays sole writer *on
 condition of* REV-040's two mitigations — a shared `concurrency` group with `publish-prices.yml` and a
 bounded retry around the cache-commit `git push` — both now part of this design, see
-`docs/design/tunables-workflow-writeback.md` §16.4). **No dev work starts on INC-5/INC-6/INC-7 until each
+`docs/design/tunables-workflow-writeback.md` §16.4). **No dev work starts on INC-6/INC-7 until each
 is reached in sequence, per the approved build order** (CLAUDE.md: no increment starts before the previous
 one passes QA). **No open design questions remain** as of Decision #29 — see
 `docs/design/increment-plan.md` and `docs/design/tunables-workflow-writeback.md` §16.4.
@@ -45,14 +49,14 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | File | Covers | Sections |
 |---|---|---|
 | `docs/design.md` (this file) | Load-bearing decisions, retired-work pointer, requirement coverage map | §0, §15 |
-| `docs/design/increment-plan.md` **(INC-3/INC-4 IMPLEMENTED; INC-5–7 DRAFT)** | The project plan: INC-3 through INC-7, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
+| `docs/design/increment-plan.md` **(INC-3/INC-4/INC-5 IMPLEMENTED; INC-6–7 DRAFT)** | The project plan: INC-3 through INC-7, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
 | `docs/design/foundations.md` | Purpose, confirmed architecture choices, accepted risks, high-level architecture diagram | §1–§3 |
 | `docs/design/components.md` | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
 | `docs/design/data-and-flow.md` | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
 | `docs/design/non-functional-ops.md` | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(IMPLEMENTED, INC-3/INC-4)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
-| `docs/design/admin-portal.md` **(DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
+| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED; INC-7 sections DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
 | `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
 | `docs/design/tunables-fallback.md` **(DRAFT)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
 | `docs/design/tunables-workflow-writeback.md` **(DRAFT)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |

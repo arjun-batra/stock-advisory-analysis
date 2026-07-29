@@ -1,13 +1,18 @@
-# Increment plan — 2026-07-26 change request — INC-3/INC-4 IMPLEMENTED, INC-5–7 DRAFT
+# Increment plan — 2026-07-26 change request — INC-3/INC-4/INC-5 IMPLEMENTED, INC-6–7 DRAFT
 
-**Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch) and INC-4 (AI provider
-abstraction) are IMPLEMENTED** — dev-built, qa-tested, reviewer-cleared with zero blockers through Pass 15
-(`docs/review-log.md`). "IMPLEMENTED" here does **not** mean fully live-verified: INC-3's
-`sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral,
-`review-log.md` REV-070) — a deployment/scheduling obligation, not a design or code gap — and INC-4's AC6
-(live-Gemini smoke test) is deferred, not failed, pending a real `GEMINI_API_KEY` (`docs/handoff.md`).
-Phase-4 closure must not treat FR24–FR26/FR33 as live-verified until those two items resolve. **INC-5,
-INC-6, INC-7 (admin portal) remain genuinely DRAFT** — no dev work has started on them.
+**Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
+abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
+dev-built, qa-tested, and reviewer-reviewed through Pass 15 (INC-3/INC-4) and Pass 16 (INC-5)
+(`docs/review-log.md`). "IMPLEMENTED" here does **not** mean fully live-verified or fully reviewer-clear:
+INC-3's `sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral,
+`review-log.md` REV-070) — a deployment/scheduling obligation, not a design or code gap; INC-4's AC6
+(live-Gemini smoke test) is deferred, not failed, pending a real `GEMINI_API_KEY` (`docs/handoff.md`); and
+INC-5's Pass 16 verdict is **NOT CLEAR** pending REV-081 (a minor, not-currently-exploitable
+least-privilege gap on `admin_allowlist`'s grants — `docs/review-log.md`), whose fix is in progress at dev
+in parallel with this update. Phase-4 closure must not treat FR24–FR26/FR33 as live-verified until INC-3's
+and INC-4's two deferred items resolve, and must not treat FR27–FR29/NFR5–6 as reviewer-clear until
+REV-081 (and ideally REV-082/REV-083 alongside it) is fixed. **INC-6, INC-7 (admin portal: tunables
+editor, track-record view & kill-switch UI) remain genuinely DRAFT** — no dev work has started on them.
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -110,7 +115,7 @@ credentials — see status note above)
    (`non-functional-ops.md` §9); `get_provider("bogus")` raises `SystemExit` with a clear message.
 6. A real smoke-test batched call against live Gemini still returns valid verdicts through the new path.
 
-### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD (FR27, FR28, FR29, NFR5, NFR6) — **DRAFT** (not yet built)
+### INC-5 — Admin portal: auth, hosting, watchlist & holdings CRUD (FR27, FR28, FR29, NFR5, NFR6) — **IMPLEMENTED** (dev-built, live-deployed `f48f5f7`/`6895db0`, qa-tested with a PASS verdict — `docs/test-report.md`; reviewer Pass 16 verdict NOT CLEAR pending REV-081 fix in progress — see status note above)
 **Design:** `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8. **Files:** new `admin-portal/`
 Next.js app (Vercel); new `sql/admin_portal_rls.sql` (`admin_allowlist`, `is_admin()`, watchlist/holdings
 write policies).

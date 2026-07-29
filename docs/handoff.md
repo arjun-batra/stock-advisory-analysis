@@ -1,5 +1,75 @@
 # Handoff — INC-5: Admin portal foundation (FR27, FR28, FR29, NFR5, NFR6)
 
+## Post-handoff fixes (2026-07-29): reviewer Pass 16 REV-081 / REV-083
+
+Reviewer's Pass 16 (`docs/review-log.md`) held INC-5 NOT CLEAR on two findings. Both fixed in this
+pass; **the SQL fix (REV-081) is applied to the repo file only — it still needs to be applied live to
+production separately (see below).**
+
+**REV-081 [SECURITY, minor] — `admin_allowlist` TRUNCATE grant not covered by RLS.** RLS governs
+SELECT/INSERT/UPDATE/DELETE, not TRUNCATE, so Supabase's default full-table grant left
+`anon`/`authenticated` with a live (if not currently PostgREST-exploitable) TRUNCATE privilege on
+`admin_allowlist`, despite RLS-enabled-zero-policies. Fixed in `sql/admin_portal_rls.sql` by adding,
+immediately after `alter table public.admin_allowlist enable row level security;`:
+
+```sql
+revoke insert, update, delete, truncate on public.admin_allowlist from public, anon, authenticated;
+```
+
+matching the existing REVOKE pattern already used for `kill_switch_audit` in `sql/kill_switch.sql`.
+Also tightened the file's adjacent comment so it no longer overclaims that RLS-zero-policies alone
+blocks all access (it doesn't cover TRUNCATE) and notes the REVOKE closes that specific gap.
+
+**File edit is done. Production is NOT yet patched** — `sql/admin_portal_rls.sql` was already applied
+live to project `ikghqdtlbwifwnooytmm` as part of INC-5's original rollout, before this fix existed, so
+this REVOKE statement must be run against the live project separately by whoever has Supabase
+write/SQL-editor access. Dev does not have that access in this session.
+
+**REV-083 [evidence-trail, minor] — AC8 live audit result was never recorded in a repo artifact.**
+`docs/test-report.md`'s GAP-001 flagged that the orchestrator's live `execute_sql` verification of
+AC8 (the REV-034 grant/policy audit) existed only as tribal knowledge, not a durable artifact. Recorded
+below.
+
+### AC8 / REV-034 live grant-and-policy audit — raw evidence
+
+**Date:** 2026-07-29. **Run by:** orchestrator, live query via Supabase MCP `execute_sql` against
+project `ikghqdtlbwifwnooytmm`.
+
+```
+-- RLS enabled check
+select relname, relrowsecurity, relforcerowsecurity from pg_class
+where relname in ('admin_allowlist','watchlist','holdings');
+=>
+ admin_allowlist | rls_enabled=true | rls_forced=false
+ holdings        | rls_enabled=true | rls_forced=false
+ watchlist       | rls_enabled=true | rls_forced=false
+
+-- policies
+select tablename, policyname, cmd, roles, qual, with_check from pg_policies
+where tablename in ('admin_allowlist','watchlist','holdings');
+=>
+ admin_allowlist: (zero rows — no policies, as designed)
+ holdings.admin_write_holdings: ALL, {authenticated}, qual=is_admin(), with_check=is_admin()
+ watchlist.admin_write_watchlist: ALL, {authenticated}, qual=is_admin(), with_check=is_admin()
+ watchlist."anon read watchlist": SELECT, {anon}, qual=true, with_check=null  (pre-existing, unrelated to INC-5)
+
+-- is_admin() shape
+select proname, prosecdef, pg_get_function_result(oid) from pg_proc
+where proname='is_admin';
+=>
+ is_admin | security_definer=true | returns=boolean
+
+-- grants on admin_allowlist (this is what surfaced REV-081)
+select grantee, privilege_type from information_schema.role_table_grants
+where table_name='admin_allowlist';
+=>
+ anon and authenticated both held full default grants (SELECT/INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER)
+ before the REV-081 fix; RLS blocked the four DML verbs but not TRUNCATE. See REV-081.
+```
+
+This closes `docs/test-report.md`'s GAP-001 (AC8 now has a reviewable evidence trail) and is the raw
+result underlying AC6/AC8's independently-confirmed status in that file's per-AC table.
+
 ## Post-handoff bug fix (2026-07-29): production build never inlined the Supabase env vars
 
 **Symptom:** every production build on Vercel threw `Missing required environment variable
