@@ -53,7 +53,7 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | File | Covers | Sections |
 |---|---|---|
 | `docs/design.md` (this file) | Load-bearing decisions, retired-work pointer, requirement coverage map | §0, §15 |
-| `docs/design/increment-plan.md` **(INC-3/INC-4/INC-5 IMPLEMENTED; INC-6–7 DRAFT)** | The project plan: INC-3 through INC-7, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
+| `docs/design/increment-plan.md` **(INC-3/INC-4/INC-5/INC-6 IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; INC-7 DRAFT)** | The project plan: INC-3 through INC-7, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
 | `docs/design/foundations.md` | Purpose, confirmed architecture choices, accepted risks, high-level architecture diagram | §1–§3 |
 | `docs/design/components.md` | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
 | `docs/design/data-and-flow.md` | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
@@ -61,9 +61,9 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(IMPLEMENTED, INC-3/INC-4)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
 | `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED; INC-7 sections DRAFT)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
-| `docs/design/admin-portal-tunables.md` **(DRAFT)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
-| `docs/design/tunables-fallback.md` **(DRAFT)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
-| `docs/design/tunables-workflow-writeback.md` **(DRAFT)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |
+| `docs/design/admin-portal-tunables.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
+| `docs/design/tunables-fallback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
+| `docs/design/tunables-workflow-writeback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |
 
 Section numbers are unchanged from the pre-split monolithic file — only the physical file location moved.
 Read §0 (below) and this index regardless of which module your increment touches; §0 is the "why it is
@@ -154,7 +154,7 @@ content backs them anymore.
 
 ---
 
-## Increment plan — 2026-07-26 change request (GATE 3 approved; INC-3/INC-4/INC-5 IMPLEMENTED, INC-6–7 DRAFT)
+## Increment plan — 2026-07-26 change request (GATE 3 approved; INC-3/INC-4/INC-5/INC-6 IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; INC-7 DRAFT)
 
 **Moved to `docs/design/increment-plan.md`** (2026-07-28, doc hygiene — `design.md` exceeded the
 ~400-line module-split guidance once the Pass-11 review fixes and Decision #29/REV-040 landed). That file
@@ -165,9 +165,11 @@ including the REV-033/034/036/040/041/044/045/046 fixes layered on since the ori
 reviewer-cleared with zero blockers through Pass 14 (`docs/review-log.md`). **INC-5 (admin portal
 foundation: auth, hosting, watchlist & holdings CRUD) has also shipped** — dev-implemented, live-deployed,
 qa-tested with a PASS verdict; reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero
-blockers (`docs/review-log.md`). **INC-6, INC-7 (admin portal: tunables editor, track-record view &
-kill-switch UI) remain DRAFT and unbuilt** — read the plan before starting either of them, in sequence, per
-the approved build order. **No open design questions remain for any of INC-3–INC-7.**
+blockers (`docs/review-log.md`). **INC-6 (admin portal: tunables editor, FR30) has also shipped** —
+dev-implemented, qa-tested with a PASS verdict (BUG-003 found and fixed, `docs/test-report.md`); reviewer
+Pass 19 verdict is CLEAR — REV-086/087/088/089 all RESOLVED, zero blockers (`docs/review-log.md`). **INC-7
+(admin portal: track-record view & kill-switch UI, FR31/FR32) remains DRAFT and unbuilt** — read the plan
+before starting it, per the approved build order. **No open design questions remain for any of INC-3–INC-7.**
 
 ---
 
@@ -197,7 +199,8 @@ the approved build order. **No open design questions remain for any of INC-3–I
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR24, FR25, FR26 (kill-switch, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §13. INC-3: dev-built, qa-tested, reviewer-cleared zero blockers through Pass 14. `sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral, review-log.md REV-070) — a deployment/scheduling obligation, not a design or code gap; Phase-4 closure must not treat FR24–FR26 as live-verified until that apply happens. |
 | FR27, FR28, FR29 (admin portal foundation, 2026-07-26 CR), NFR5, NFR6 | **IMPLEMENTED** — `admin-portal.md` §16.1–§16.3, §16.7–§16.8. INC-5: dev-built, live-deployed, qa-tested with a PASS verdict. Reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/review-log.md`); FR27–FR29/NFR5–6 are reviewer-clear. |
-| FR30, FR31, FR32 (admin portal, 2026-07-26 CR) | **DRAFT** — `admin-portal.md` §16.4–§16.6. INC-6/INC-7. Not yet built; no dev work has started. |
+| FR30 (admin portal — tunables editor, 2026-07-26 CR) | **IMPLEMENTED** — `admin-portal-tunables.md`, `tunables-fallback.md`, `tunables-workflow-writeback.md` (§16.4). INC-6: dev-built, qa-tested (PASS — BUG-003 found and fixed), reviewer Pass 19 verdict CLEAR — REV-086/087/088/089 all RESOLVED, zero blockers (`docs/review-log.md`). |
+| FR31, FR32 (admin portal — track-record view & kill-switch UI, 2026-07-26 CR) | **DRAFT** — `admin-portal.md` §16.5–§16.6. INC-7. Not yet built; no dev work has started. |
 | FR33 (AI provider abstraction, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §14. INC-4: dev-built, qa-tested (5 of 6 AC), reviewer-cleared zero blockers through Pass 14. AC6 (live-Gemini smoke test) is deferred, not failed — no `GEMINI_API_KEY` was available in the build environment; needs a follow-up run with real credentials before AC6 is marked PASS (`docs/handoff.md`). |
 
 **Coverage:** FR1–FR23, NFR1–NFR4, and NFR7 (core, live) are covered as-built across the module files
@@ -209,8 +212,11 @@ table above; the module files (`operational-controls.md` §13–§14) are as-bui
 not draft design. **FR27–FR29 and NFR5–NFR6 (current, 2026-07-26 CR) are also IMPLEMENTED** — INC-5
 shipped (dev-built, live-deployed, qa-tested PASS; reviewer Pass 17 CLEAR — REV-081/082/083 all
 RESOLVED), per the table above; `admin-portal.md` §16.1–§16.3, §16.7–§16.8 are as-built
-documentation for these, not draft design. **FR30–FR32 (current, 2026-07-26 CR) remain DRAFT design**,
-covered by the Increment Plan above (INC-6–INC-7) and the `admin-portal*`/`tunables-*` module files; not
-yet implemented, no dev work started. **No open design questions remain for any of INC-3–INC-7.** No dev
-work starts on INC-6 or INC-7 until each is reached in sequence per the approved build order (CLAUDE.md:
-no increment starts before the previous one passes QA).
+documentation for these, not draft design. **FR30 (current, 2026-07-26 CR) is also IMPLEMENTED** — INC-6
+shipped (dev-built, qa-tested PASS with BUG-003 found and fixed; reviewer Pass 19 CLEAR — REV-086/087/
+088/089 all RESOLVED, zero blockers), per the table above; `admin-portal-tunables.md`,
+`tunables-fallback.md`, and `tunables-workflow-writeback.md` are as-built documentation for this, not draft
+design. **FR31–FR32 (current, 2026-07-26 CR) remain DRAFT design**, covered by the Increment Plan above
+(INC-7) and `admin-portal.md` §16.5–§16.6; not yet implemented, no dev work started. **No open design
+questions remain for any of INC-3–INC-7.** No dev work starts on INC-7 until it is reached in sequence per
+the approved build order (CLAUDE.md: no increment starts before the previous one passes QA).
