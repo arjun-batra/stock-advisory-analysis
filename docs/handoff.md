@@ -1,5 +1,26 @@
 # Handoff — INC-6: Admin portal tunables editor (FR30)
 
+## Post-handoff fixes
+
+Three fixes landed after this increment's original build (commit `b2934c1`), all already committed:
+
+- **BUG-003** (commit `799cd35`) — `run_discovery.py`'s zero-candidates/zero-screen-errors early-return
+  branch didn't consult `config.TUNABLES_DEGRADED` before writing the heartbeat status. Fixed to OR it
+  in, per AC14's "all three entry points" wording — full writeup in the section below.
+- **REV-086** (commit `17fa5fd`) — `tunables` table was missing the same RLS-does-not-govern-TRUNCATE
+  REVOKE that INC-5's `admin_allowlist` got for REV-081; `anon`/`authenticated` otherwise retained
+  Supabase's default TRUNCATE grant. Added `revoke insert, delete, truncate on public.tunables from
+  public, anon, authenticated;` (deliberately omitting `update`/`select`, since `admin_write_tunables`
+  legitimately grants both to `authenticated` — that's FR30's whole point).
+- **RLS policy syntax fix** (commit `e46abf8`) — the orchestrator's live migration apply caught a real
+  Postgres syntax error: `admin_write_tunables`'s original policy used `for select, update to
+  authenticated`, but `CREATE POLICY ... FOR <command>` accepts exactly one command, never a comma
+  list — invalid SQL, never caught locally since no dev/qa/reviewer had live Supabase execution access
+  during the original build. Split into two valid policies: `admin_read_tunables` (`for select`) and
+  `admin_write_tunables` (`for update`, with check) — same effective authorization as before (REV-044's
+  select+update-only, no insert/delete), valid syntax. "Files changed" below and inline SQL comments
+  reflect this current two-policy shape.
+
 ## BUG-003 fix (post-QA-pass follow-up)
 
 Fixed per qa's finding (`docs/test-report.md` BUG-003) and AC14's literal "all three entry points"
@@ -61,8 +82,11 @@ alongside the job-scoped `write`), that's a one-line change — the diff is isol
 
 - **New `sql/admin_portal_tunables.sql`** — `tunables` table with the 10-key CHECK-constraint registry,
   `_stamp_tunable_update()` trigger (server-stamps `updated_at`/`updated_by`, never client-supplied),
-  `admin_write_tunables` RLS policy (`for select, update to authenticated` — **not** `for all`, REV-044),
-  and the 10-row seed migration. **Not applied to the live Supabase project** (no MCP/Supabase tool
+  two RLS policies — `admin_read_tunables` (`for select to authenticated`) and `admin_write_tunables`
+  (`for update to authenticated`, with check) — **not** `for all` (REV-044); split into two policies
+  because Postgres' `CREATE POLICY ... FOR <command>` accepts exactly one command, never a comma list
+  (post-handoff fix, see "Post-handoff fixes" below), and the 10-row seed migration. **Not applied to
+  the live Supabase project** (no MCP/Supabase tool
   access this session, same constraint as INC-5) — orchestrator applies this after handoff, same
   process as `sql/admin_portal_rls.sql`. `ALERTS_ENABLED` is explicitly seeded `"true"` (not
   `config.py`'s bare `"false"` literal) — see the file's own comment for why (Decision #27's
