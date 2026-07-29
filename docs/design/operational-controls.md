@@ -329,7 +329,10 @@ def get_provider(name: str | None = None) -> AIProvider:
 
 - **Prompt construction (`BATCH_SYSTEM_PROMPT`, `_ticker_block`, the user-prompt assembly) is
   unchanged** — that's product logic (the actual investment-judgment prompt), not provider plumbing; it
-  has nothing to do with FR33.
+  has nothing to do with FR33. (REV-096: `BATCH_SYSTEM_PROMPT`'s source moved from an inline Python string
+  to `prompts/batch_system_prompt.txt`, loaded at import time — a byte-identical, code-hygiene-only
+  location change that does not touch this construction/provider-plumbing boundary; see §4.4 in
+  `components.md`.)
 - **`_parse_batch()` is unchanged** — it already only touches JSON text, no Gemini types.
 - **`_generate()` becomes the provider-neutral retry loop**, taking an `AIProvider` instead of a
   `genai.Client`:
