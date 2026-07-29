@@ -90,6 +90,25 @@ test("no client-side source maps are emitted in production (would otherwise re-e
   assert.deepEqual(maps, []);
 });
 
+// --- INC-7 (FR31 track-record view): confirms the real build actually produces the route ---
+test("INC-7: /track-record is listed in the real build's routes-manifest.json", () => {
+  assert.equal(buildFailed, null, "skipped: build did not succeed");
+  const routesManifestPath = path.join(NEXT_DIR, "routes-manifest.json");
+  assert.ok(existsSync(routesManifestPath), "routes-manifest.json not produced");
+  const manifest = JSON.parse(readFileSync(routesManifestPath, "utf8"));
+  const staticRoutes: string[] = (manifest.staticRoutes ?? []).map((r: { page: string }) => r.page);
+  assert.ok(
+    staticRoutes.includes("/track-record"),
+    `/track-record not found in routes-manifest.json staticRoutes: ${JSON.stringify(staticRoutes)}`
+  );
+});
+
+test("INC-7: /track-record is statically prerendered in the real build output (server/app/track-record.html exists)", () => {
+  assert.equal(buildFailed, null, "skipped: build did not succeed");
+  const prerendered = path.join(NEXT_DIR, "server", "app", "track-record.html");
+  assert.ok(existsSync(prerendered), "prerendered track-record.html not found in build output");
+});
+
 test("no service_role/secret-looking string appears anywhere in the built output (server or client)", () => {
   assert.equal(buildFailed, null, "skipped: build did not succeed");
   const allFiles = walkFiles(NEXT_DIR).filter((f) => f.endsWith(".js") && !f.includes(`${path.sep}node_modules${path.sep}`));

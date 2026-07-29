@@ -5,186 +5,153 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-6 — Admin portal tunables editor (FR30) — 2026-07-29
+## INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — 2026-07-29
 
-**Scope:** `sql/admin_portal_tunables.sql`, `tunables_cache.json`, `admin-portal/app/(app)/tunables/page.tsx`
-(+ small edits to `admin-portal/components/AuthGuard.tsx`, `admin-portal/lib/validation.ts`),
-`scripts/config.py`'s two-tier tunables fallback chain, `scripts/run_hourly.py`/`run_discovery.py`/
-`publish_prices.py` (heartbeat + write-back wiring), `.github/workflows/hourly-watchlist.yml`/
-`publish-prices.yml` (concurrency rename, job-scoped permissions, commit step), `tests/conftest.py`.
-Branch: `claude/admin-portal-evaluation-txaehj`, commit `b2934c1`. Design: `docs/design/admin-portal-
-tunables.md`, `docs/design/tunables-fallback.md`, `docs/design/tunables-workflow-writeback.md` (all
-§16.4). Acceptance criteria: `docs/design/increment-plan.md` lines 189-282 (16 ACs). Dev's handoff:
-`docs/handoff.md`.
+**Scope:** `sql/kill_switch_portal_grant.sql` (new), `admin-portal/app/(app)/track-record/page.tsx` (new),
+`admin-portal/components/KillSwitchToggle.tsx` (new), `admin-portal/components/AuthGuard.tsx` (nav link +
+toggle wiring), `admin-portal/app/(app)/layout.tsx` (docstring only), `admin-portal/app/globals.css`
+(styling only). Branch: `claude/admin-portal-evaluation-txaehj`, commit `036e334`. Design:
+`docs/design/admin-portal.md` §16.5 (track-record), §16.6 (kill-switch UI); `docs/design/operational-
+controls.md` §13 (INC-3 kill-switch backend, context). Acceptance criteria: `docs/design/increment-
+plan.md` lines 286-300 (4 ACs). Dev's handoff: `docs/handoff.md`. This is the last increment in the
+approved build order.
 
-**Session constraint, same as INC-5:** no live Supabase network access (org egress denies
-`ikghqdtlbwifwnooytmm.supabase.co`) and no Supabase MCP / GitHub Actions dispatch tool bound to this
-session. Every AC requiring a live migration apply, live RLS/CRUD, or a real workflow dispatch could
-**not** be independently reproduced this run — reported as **deferred**, not as verified. See the
-per-AC table below.
+**Session constraint, same as every prior increment:** no live Supabase network access, no Supabase MCP /
+GitHub Actions dispatch tool bound to this session. Every AC requiring a live migration apply, live
+RLS/RPC round-trip, or a real dispatch suppression proof could **not** be independently reproduced this
+run — reported as **deferred**, not verified. See the per-AC table below.
 
-### Independent verification of dev's two flagged claims
+### SQL grammar review — `sql/kill_switch_portal_grant.sql` (the brief's specific ask, given INC-6's
+### `CREATE POLICY ... FOR select, update` bug that survived dev + qa + two reviewer passes)
 
-1. **"168 passed, 3 failed, all three intended, not regressions."** Independently re-ran the pre-existing
-   suite before adding anything: reproduced **exactly** the same 168/3 split, same three test IDs
-   (`test_nse_model_pair_inherits_watchlist_pair_by_default`,
-   `test_discovery_min_market_cap_override_propagates`,
-   `test_heartbeat_is_ok_when_every_ticker_processes_cleanly`). Read all three failures against the new
-   design contract, not the claim:
-   - The two `test_config.py` failures set `GEMINI_MODEL`/`DISCOVERY_MIN_MARKET_CAP` via env var and
-     asserted propagation. Both keys are curated tunables as of Decision #27 — `scripts/config.py:194,
-     313` sources them only from `_tunable()` (table → cache), never `os.environ`; confirmed by reading
-     the code, not inferring it. **Genuine, intended contract change — updated, not a regression.**
-   - `test_heartbeat_is_ok_when_every_ticker_processes_cleanly` asserted `status == "ok"` for a clean
-     ticker run. `tests/conftest.py`'s new `SKIP_TUNABLES_FETCH=true` default makes every curated key
-     resolve from tier 2 for the whole suite, so `config.TUNABLES_DEGRADED` is `True` throughout, and
-     `run_hourly.py:161`'s `status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"`
-     correctly reports `"partial"`. **Genuine, intended (AC14/REV-045) — the test conflated two
-     independent conditions (ticker cleanliness vs. tunables degradation) that INC-6 correctly split.**
-   - **Verdict: all 3 are confirmed-intended contract changes, not regressions.** Fixed in `tests/`
-     (below), not in production code. Full suite is now 201 passed, 0 failed: 171 baseline (168 passed +
-     3 failed, all 3 now fixed forward rather than carried as red) + 30 new tests (28 in
-     `test_tunables.py`, 1 in `test_config.py`, 1 in `test_run_orchestration.py`).
-2. **The stale-permissions-premise account.** `git log --oneline -- .github/workflows/hourly-
-   watchlist.yml` shows exactly the sequence dev described: commit `920876f` ("release+pm+dev+qa: fix
-   Pass 11 audit findings", dated 2026-07-28 04:53 UTC) added a **top-level** `permissions: {contents:
-   read}` block, predating INC-6's build commit `b2934c1` (2026-07-29 04:07 UTC) by nearly a day.
-   `docs/design/tunables-fallback.md`'s premise ("hourly-watchlist.yml has no permissions: block at all
-   today") was accurate when drafted (2026-07-27/28) but stale by the time INC-6 built. **Account
-   confirmed accurate via `git log -p`, independently, not taken on trust.** The resulting file was also
-   independently confirmed to satisfy AC16's literal text: exactly one `permissions:` block in the file,
-   indented under `jobs.watchlist` (`grep -n permissions:` → line 45 only, inside the job body, no
-   top-level occurrence) — `tests/test_tunables.py::test_ac16_permissions_block_is_job_scoped_not_top_level`
-   locks this in permanently.
+Read line-by-line against actual PostgreSQL `CREATE POLICY` / `CREATE OR REPLACE FUNCTION` / `GRANT` /
+`REVOKE` grammar, independently (not taking dev's "syntax self-check performed" note in the handoff on
+trust):
 
-### What was added / changed in `tests/`
+- **`create policy "admin_read_kill_switch" ... for select to authenticated using (public.is_admin());`**
+  — `FOR` clause names exactly one command (`select`), not a comma list. This is precisely the class of
+  bug that broke `admin_portal_tunables.sql` the first time (REV-091/REV-092) — confirmed fixed here, and
+  now locked in as a permanent regression test (`tests/admin_portal/kill_switch_static.test.ts`). Clause
+  order (`ON table` → `FOR command` → `TO role` → `USING (expr)`) matches Postgres grammar exactly.
+- **`create or replace function public.set_kill_switch(...) ... language plpgsql security definer set
+  search_path = '' as $$ ... end; $$;`** — `$$` dollar-quote delimiters are balanced (2 occurrences, one
+  open/one close); `declare`/`begin`/`if ... then ... end if;`/`update`/`insert ... values (...);`/`end;`
+  structure is syntactically valid; diffed the signature/language/security preamble against
+  `sql/kill_switch.sql`'s already-proven-live `set_kill_switch` definition — byte-identical except for the
+  new `if auth.uid() is not null and not public.is_admin() then raise exception 'not authorized'; end if;`
+  block inserted after `begin`. All object references (`auth.jwt()`, `auth.uid()`, `public.kill_switch_state`,
+  `public.kill_switch_audit`, `public.is_admin()`) are schema-qualified, consistent with `search_path = ''`;
+  unqualified `now()`/`session_user` resolve correctly regardless (`pg_catalog` and SQL-standard keywords
+  are always implicitly searched — same as the proven-live INC-3 original, unchanged in that respect).
+- **`grant execute on function public.set_kill_switch(boolean, text) to authenticated;`** — valid GRANT
+  grammar, correct function signature (matches the `(boolean, text)` overload).
+- **`revoke insert, update, delete, truncate on public.kill_switch_state from public, anon, authenticated;`**
+  and **`revoke truncate on public.kill_switch_audit from public, anon, authenticated;`** — valid REVOKE
+  grammar (comma-separated privilege lists ARE allowed in `REVOKE`, unlike `CREATE POLICY`'s single-command
+  `FOR` clause — dev did not conflate the two, which is exactly where a mistake could plausibly have crept
+  in). `kill_switch_audit`'s REVOKE only adds the previously-missing `truncate` verb (confirmed against
+  `sql/kill_switch.sql`'s baseline REVOKE, which already had insert/update/delete but not truncate — the
+  gap being closed is real, not a redundant no-op). Neither REVOKE touches `SELECT` — the new policy's
+  grant is unaffected.
+- **REVOKE-doesn't-break-anything reasoning, independently confirmed:** both tables' only legitimate write
+  path is `set_kill_switch()`, which is `SECURITY DEFINER` and executes as the function/table owner — REVOKE
+  from `public, anon, authenticated` never restricts the owner's own implicit privileges, so the function's
+  internal `UPDATE`/`INSERT` are unaffected by this REVOKE. No other code path (application, portal, or
+  design doc) claims a legitimate direct authenticated `INSERT`/`UPDATE`/`DELETE` on either table —
+  confirmed by re-reading `operational-controls.md` §13.2-§13.3 and `admin-portal.md` §16.6, not inferred.
+  Verdict: the REVOKE addition is correct and doesn't regress any legitimate access path.
 
-- **New `tests/test_tunables.py`** (28 tests) — the two-tier fallback chain end to end. Two techniques,
-  both established by the design itself (`tunables-fallback.md` REV-041's "single patchable seam" note):
-  (a) most tests monkeypatch `config._TUNABLES`/`_TUNABLES_CACHE`/`_CACHE_PATH` directly and call
-  `_tunable()`/`write_tunables_cache_if_fetched()` — no reload needed; (b) tests needing a real tier-1
-  fetch to run (AC5/AC10/AC13 propagation) patch `supabase.create_client` before `reload_config()`
-  reloads `config.py`. Covers AC2 (byte-for-byte seed diff, independent of dev's own diff), AC5 (import-time-
-  only pickup, empty-string-is-a-value edge case), AC8 (static: only `run_hourly.py` calls the writer),
-  AC9 (direct-unit + a real subprocess `import config` reproduction in an isolated tmp-copy of `scripts/`
-  — never touches the real repo `tunables_cache.json`), AC10 (both AND-gate directions, mocked table
-  fetch), AC12 (validate-before-write, never-shrinks, tier-1 cast-failure fails loud), AC13 (timeout
-  default/override, timeout actually reaches `ClientOptions`, zero network calls under
-  `SKIP_TUNABLES_FETCH` via a `socket.socket.connect` trap), AC14 (degraded → heartbeat at
-  `run_discovery.py`/`publish_prices.py`, both the degraded and not-degraded halves), and AC11/AC15/AC16
-  as durable structural checks over the current workflow YAML content (not a git-diff-against-a-commit,
-  which would break on the next increment's commits — the one-time diff-vs-baseline for *this* increment
-  was confirmed directly via `git diff`, see above/below, not encoded as a standing test).
-- **New `tests/admin_portal/tunables_static.test.ts`** (14 tests) — closes the gap dev flagged in Known
-  Limitations ("no admin-portal-side test yet exercises the new `/tunables` page"). Static/source-level,
-  same convention as `static_source_checks.test.ts`: `tunables` table RLS-enabled, CHECK registry is
-  exactly the 10 keys, `admin_read_tunables` (select) and `admin_write_tunables` (update) are two
-  separate policies, each scoped to exactly one command (not `for all`, and never a comma-separated
-  `select, update` clause, which Postgres rejects — REV-091/`e46abf8`), zero insert/delete policy,
-  `updated_at`/`updated_by` server-stamped by trigger; portal page's `.update()`
-  call sends exactly `{ value }` (never `id`/`key`/`updated_at`/`updated_by`), no `.insert()`/`.delete()`
-  against `tunables`, reads via `.from("tunables").select("*")`; `AuthGuard` nav includes `/tunables`;
-  `validateTunableValue` happy path / whitespace edge case / empty invalid-input case.
-- **Updated `tests/test_config.py`** — `test_nse_model_pair_inherits_watchlist_pair_by_default` rewritten
-  to test only the inheritance mechanism itself (unaffected by INC-6), since it can no longer prove
-  inheritance by setting `GEMINI_MODEL` via env var; added
-  `test_gemini_model_env_var_no_longer_has_any_effect` to explicitly cover that half of the new contract.
-  `test_discovery_min_market_cap_override_propagates` renamed to
-  `test_discovery_min_market_cap_resolves_from_cache_not_env_var` and rewritten the same way.
-- **Updated `tests/test_run_orchestration.py`** — `test_heartbeat_is_ok_when_every_ticker_processes_cleanly`
-  now neutralizes `config.TUNABLES_DEGRADED = False` so it isolates the ticker-cleanliness half of the
-  "ok" rule it was originally written for; added
-  `test_heartbeat_is_partial_when_tunables_are_degraded` as the sibling assertion for the degraded half
-  (AC14, `run_hourly.py`).
+**No grammar defect found.** All statements are individually valid, balanced, and terminated with semicolons.
+This is a strong static signal but — per the same caveat that applied to INC-6's undetected bug — not a
+substitute for actually applying the migration against a live Postgres instance, which this session still
+cannot do.
+
+### New tests added
+
+- **New `tests/admin_portal/kill_switch_static.test.ts`** (21 tests) — static/source-level checks, same
+  convention as `static_source_checks.test.ts`/`tunables_static.test.ts`. Covers: the SQL grammar points
+  above as permanent regression tests (not just this session's manual read); AC1's hard boundary (no
+  `.reduce`, no win-rate/score/trend keyword, in live code — comment-only mentions of the historical bug
+  class or the `latest_call_per_ticker` design decision are excluded via a `codeOnly`-style filter so prose
+  doesn't trip the check); every `CALL_LOG_SELECT` field is a raw column or a single `->>'key'` extraction;
+  no `.insert(`/`.update(`/`.delete(` anywhere in `track-record/page.tsx` (true read-only); pagination via
+  `.range()`, sort via `.order()`, filters via `.ilike()`/`.eq()` only; `KillSwitchToggle` reads
+  `kill_switch_state.paused` via the singleton row on mount; the toggle RPC call is
+  `set_kill_switch({ p_paused: !paused, p_source: "admin-portal" })` exactly; **`handleToggle` never calls
+  `setPaused` directly and always re-reads via `await loadState()` after the RPC call** (locks in the
+  design's explicit "not an optimistic flip" requirement, not just presence of a reload call but its
+  ordering relative to the RPC); `AuthGuard` renders `<KillSwitchToggle />` and links `/track-record`.
+- **Extended `tests/admin_portal/build_bundle.test.ts`** (+2 tests, reusing the existing real-`next-build`
+  fixture rather than a second slow build) — `/track-record` appears in the real build's
+  `routes-manifest.json` `staticRoutes`, and `server/app/track-record.html` is actually produced
+  (statically prerendered), mirroring the established build-bundle pattern for INC-5/INC-6's routes.
 - No production code touched by qa, per `CLAUDE.md`.
 
 ### Suite results
 
-- **Python:** `python3 -m pytest -q --tb=short` → **201 passed, 0 failed** (was 168 passed/3 failed on
-  dev's handoff; the 3 failures are fixed here as described above, and 30 new tests added: 28 in
-  `test_tunables.py` + 2 net-new in `test_config.py`/`test_run_orchestration.py`).
+- **Python:** `python3 -m pytest -q --tb=short` → **201 passed, 0 failed** — identical to the pre-increment
+  baseline (this increment touches no Python file; confirmed via `git diff --stat`).
 - **Admin-portal JS/TS:** `node --experimental-strip-types --test tests/admin_portal/*.test.ts` →
-  **40 passed, 0 failed** (26 pre-existing + 14 new in `tunables_static.test.ts`).
-- **Lint:** `npx eslint .` (admin-portal) → clean, zero errors/warnings.
+  **63 passed, 0 failed** (40 pre-existing baseline + 21 new in `kill_switch_static.test.ts` + 2 new in
+  `build_bundle.test.ts`).
+- **Lint:** `cd admin-portal && npm run lint` → clean, zero errors/warnings.
 
 ### Shippability check (real entry point)
 
 `npm run build` (real `next build`, not dev mode) with disposable `qa-test-marker-...` env values:
-succeeded, `/tunables` appears in the route table alongside `/`, `/login`, `/watchlist`, `/holdings`,
-statically prerendered. `next start -p 3312` + `curl`:
-- `GET /tunables` (no session) → 200, renders `AuthGuard`'s "Checking session…" shell — same pattern as
-  INC-5's `/watchlist`/`/holdings` (client-side redirect after hydration; RLS is the real server-side
-  gate regardless of what the shell renders pre-hydration).
+succeeded, all 8 routes compile (`/`, `/_not-found`, `/auth/callback`, `/holdings`, `/login`,
+`/track-record`, `/tunables`, `/watchlist`), TypeScript check passes, `/track-record` statically
+prerendered. `next start -p 3313` + `curl`, independently re-run (not reused from dev's handoff claim):
+- `GET /track-record` (no session) → 200, renders `AuthGuard`'s "Checking session…" shell — same
+  client-side-redirect-after-hydration pattern as every other gated route (`/watchlist`, `/holdings`,
+  `/tunables`); RLS is the real server-side gate regardless of what the pre-hydration shell renders.
 - `GET /` → 200.
-No server errors in the `next start` log. `.next/` build artifact cleaned up afterward.
+- No server errors in the `next start` log; `.next/` build artifact cleaned up afterward.
 
-### Acceptance criteria — per-AC verdict
+### Acceptance criteria — per-AC verdict (`docs/design/increment-plan.md` lines 286-300)
 
 | AC | Verdict | Evidence |
 |---|---|---|
-| 1. `tunables` seeded w/ 10 FR30 keys, `ALERTS_ENABLED="true"` | **PASS (static+live-seed-diff); RLS/CRUD live-behavior DEFERRED** | SQL migration shape/CHECK/seed values confirmed by direct read + `tunables_static.test.ts`. Live RLS rejection and live CHECK-constraint violation need the migration applied to the real project (not done — same as INC-5's `sql/admin_portal_rls.sql` pattern; orchestrator applies post-handoff). |
-| 2. `tunables_cache.json` byte-for-byte matches SQL seed | **PASS — independently re-verified** | `test_ac2_cache_seed_matches_sql_seed_byte_for_byte` diffs the two files directly (own transcription, not reused from dev's diff); `ALERTS_ENABLED: "true"` confirmed in both. |
-| 3. Anon/no-session write rejected; admin insert/delete rejected; bad `key` fails CHECK | **PASS (static shape); live curl DEFERRED** | Policy text confirmed as two separate policies — `admin_read_tunables` (`for select to authenticated`) and `admin_write_tunables` (`for update to authenticated`) — neither `for all` nor a single comma-separated `for select, update` clause (that syntax is invalid Postgres; fixed by dev in `e46abf8` after REV-091 caught it); zero insert/delete policy exists (RLS-enabled + zero policy = denied by construction). No live Supabase to fire the actual `curl`/insert/delete attempts. |
-| 4. Update stamps `updated_at`/`updated_by` server-side, visible on next read | **PASS (static trigger shape + portal never sends those fields); live round-trip DEFERRED** | Trigger body confirmed (`new.updated_at := now()`, `new.updated_by := coalesce(auth.jwt()->>'email', session_user)`); portal's `.update()` call confirmed to send only `{ value }` (`tunables_static.test.ts`). No live write to round-trip through `select *`. |
-| 5. `_tunable()`-derived values pick up an edit on next process start only | **PASS — independently re-verified** | `test_ac5_table_edit_propagates_on_next_process_start` + `test_ac5_resolved_value_does_not_change_mid_process` (mocked tier-1 fetch, real `importlib.reload`). |
-| 6. Cache write-back, unchanged case: zero commits | **DEFERRED** | Needs a live `hourly-watchlist.yml` dispatch against an unmodified live table. |
-| 7. Cache write-back, changed case: exactly one `github-actions[bot]` commit | **DEFERRED** | Needs a live dispatch + a portal edit against the applied migration. |
-| 8. Read-only workflows never write | **PASS — independently re-verified** | `test_ac8_run_discovery_and_publish_prices_never_call_write_tunables_cache` / `test_ac8_run_hourly_calls_write_tunables_cache_exactly_once` (static source checks, own greps, not reused from dev's). |
-| 9. Double-failure fails loud, non-zero exit | **PASS — independently re-verified** | `test_ac9_direct_double_miss_raises_systemexit_naming_the_key` (unit) + `test_ac9_entry_point_import_exits_nonzero_on_double_miss` (real `import config` subprocess in an isolated tmp copy of `scripts/`, no real cache file touched) + `test_ac9_corrupted_cache_file_is_treated_as_a_miss`. |
-| 10. `ALERTS_ENABLED` AND-gate direction (both halves) | **PASS — independently re-verified, both directions** | `test_ac10_table_false_suppresses_a_scheduled_default_true_run`, `test_ac10_manual_dry_run_input_suppresses_even_when_table_true`, `test_ac10_both_true_is_the_only_combination_that_alerts` (mocked tier-1 fetch — dev had only unit-proved the formula and left this AC's live half deferred; qa closed it using the seam the design built specifically for this). |
-| 11. Workflow diff scope (`daily-discovery.yml` untouched; `publish-prices.yml` one line; `hourly-watchlist.yml` limited to 3 changes) | **PASS — independently re-verified via `git diff` this session, plus durable structural tests** | `git diff 1f48e45 b2934c1 -- .github/workflows/*.yml` confirmed the exact scope by hand; `test_ac11_*` tests lock in the durable structural properties (no `tunables` references in `daily-discovery.yml`/`publish-prices.yml`) so future commits don't silently regress this. |
-| 12. (REV-036) Write-back validates, never shrinks | **PASS — independently re-verified** | `test_ac12_write_back_never_shrinks_and_rejects_bad_casts`, `test_ac12_write_back_is_a_noop_when_this_runs_fetch_entirely_failed`, `test_ac12_tier1_cast_failure_fails_loud_never_reaches_cache_write`. |
-| 13. (REV-041) Timeout tunable + offline seam | **PASS — independently re-verified** | `test_ac13_timeout_tunable_default_and_override`, `test_ac13_timeout_is_actually_passed_into_client_options` (asserts the real `ClientOptions.postgrest_client_timeout` value, not just the env var), `test_ac13_skip_tunables_fetch_makes_zero_network_calls` (a `socket.socket.connect` trap — proves zero calls, not just "no exception seen"). |
-| 14. (REV-045) `TUNABLES_DEGRADED` reaches heartbeat at all 3 entry points | **PASS — all 3 entry points, including BUG-003 fix** | `run_hourly.py`: `test_heartbeat_is_partial_when_tunables_are_degraded` (test_run_orchestration.py). `publish_prices.py`: `test_ac14_publish_prices_heartbeat_is_partial_when_degraded_even_with_zero_skips` / `..._is_ok_when_not_degraded...`. `run_discovery.py`: PASS for the normal candidate-processing path (`test_ac14_run_discovery_heartbeat_is_partial_when_degraded_even_with_a_clean_candidate_run`); the zero-candidates/no-screen-errors early-return branch (`run_discovery.py:59`) originally hardcoded `"ok"` and never consulted `config.TUNABLES_DEGRADED` — found via `test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`, filed as **BUG-003** and since **FIXED** by dev (commit `799cd35`): the branch now ORs in `config.TUNABLES_DEGRADED` (`if screens_errored or config.TUNABLES_DEGRADED:`), and the same test now asserts `"partial"`. See Gaps/Open Bugs sections below for full history. |
-| 15. (REV-040a) Shared concurrency group prevents the race | **PASS (structural); live race/serialization DEFERRED** | `test_ac15_hourly_and_publish_prices_share_the_repo_commit_concurrency_group` confirms both files use `group: repo-commit`, neither still says the old per-file group name. Live two-dispatch race/serialization proof needs GitHub Actions dispatch access. |
-| 16. (REV-040b) Push retry fires; permissions job-scoped | **PASS (structural); live retry-firing DEFERRED** | `test_ac16_permissions_block_is_job_scoped_not_top_level` (confirms zero top-level `permissions:`, job-scoped `contents: write` present — this is the stale-premise-independent-verification test) + `test_ac16_commit_step_has_a_bounded_retry_loop_with_error_annotation` (retry loop, `::error::` message present). Live lost-race/retry-firing proof needs a real workflow run. |
+| 1. Read-only, paginated `call_log` presentation, no new aggregation/scoring | **PASS — independently re-verified** | `kill_switch_static.test.ts`'s field-shape and no-write-call tests confirm every rendered field is a raw column or single `->>'key'` extraction (matching `latest_call_per_ticker`'s already-proven three-field extraction), no `.reduce`/win-rate/score/trend computation in live code, no `.insert`/`.update`/`.delete` calls. `npm run build` + `next start` confirm the route compiles, statically prerenders, and serves 200. |
+| 2. Toggle shows live `paused` on load; flip calls `set_kill_switch(..., p_source:='admin-portal')`, produces `kill_switch_audit` row with `source='admin-portal'`/`actor`=admin email | **Statically verified (independently re-derived, not taken on dev's claim); live RPC/audit round-trip DEFERRED** | `KillSwitchToggle.tsx`'s RPC call body confirmed to pass exactly `{ p_paused: !paused, p_source: "admin-portal" }`; confirmed it re-reads state via `await loadState()` after the RPC rather than optimistically flipping (`setPaused` is never called directly inside `handleToggle`, and the reload happens strictly after the RPC call in source order). `set_kill_switch`'s body (SQL grammar-reviewed above) stamps `actor` from `auth.jwt()->>'email'`. **Cannot verify the live INSERT/UPDATE actually happens** without the migration applied + a real authenticated session (no Supabase MCP access this session). |
+| 3. Pause via portal → subsequent dispatch makes no `pg_net` call | **DEFERRED, needs live Supabase** | Confirmed via `git diff --stat` that `sql/scheduler_pgcron.sql` (where `dispatch_github_workflow`'s pause-check lives, per `operational-controls.md` §13.1) is untouched by this commit — this increment only adds a second caller to the same `kill_switch_state.paused` flag, no new dispatch-suppression logic to verify beyond AC2's live-write gap above. |
+| 4. Full INC-5/INC-6 regression holds | **PASS** | See Suite results above: 201/201 Python (0 regressions, no Python file touched), 63/63 admin-portal JS/TS (40 pre-existing baseline all still pass unmodified + 23 new). `static_source_checks.test.ts`'s AC6/AC7 checks (no secret-looking string, no dynamic `process.env[...]`, `admin_allowlist` zero-policy shape, `is_admin()` shape) and `tunables_static.test.ts` (INC-6) all still pass unchanged. |
 
-### Gaps / bugs found this session
+### SQL/code review beyond the ACs (per the brief's explicit ask)
 
-**BUG-003 — AC14 (REV-045): `run_discovery.py`'s zero-candidates early-return branch doesn't consult
-`config.TUNABLES_DEGRADED`.**
-- **Increment:** INC-6. **FR/NFR:** FR30 / REV-045 (design: `docs/design/tunables-fallback.md` lines
-  280-288, increment-plan.md AC14).
-- **Repro:** `tests/test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
-  — mock `prefilter.find_candidates` to return zero candidates with zero screen errors, set
-  `config.TUNABLES_DEGRADED = True`, run `run_discovery.main()`.
-- **Expected (per AC14's literal text, "all three entry points"):** `run_heartbeat.status == "partial"`.
-- **Actual:** `run_heartbeat.status == "ok"` — `run_discovery.py:64` (`state.write_heartbeat(sb,
-  heartbeat_key, "ok")`) is a hardcoded literal in the early-return branch, never OR'd with
-  `config.TUNABLES_DEGRADED` the way the later computed `status =` line (`run_discovery.py:115`) is.
-- **Note:** dev already surfaced this exact gap in `docs/handoff.md`'s Known Limitations, reading the
-  brief's "the existing status-computation line" (singular) narrowly to exclude this branch, and
-  explicitly asked tech-lead/qa to confirm scope. This is a genuine open design-scope question, not
-  clearly a coding mistake — routing to dev/tech-lead to decide (fix the branch to include
-  `config.TUNABLES_DEGRADED`, or amend AC14's text to carve out the zero-candidates case) rather than
-  qa deciding unilaterally by editing production code.
-- **Status:** FIXED (dev). `run_discovery.py:59`'s early-return branch now ORs in
-  `config.TUNABLES_DEGRADED` (`if screens_errored or config.TUNABLES_DEGRADED:`), mirroring the later
-  computed `status =` line. `test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
-  updated to assert `"partial"` (was pinning the gap). Full suite re-run clean, no regressions.
+- **`sql/kill_switch_portal_grant.sql` grammar:** no defect found — see dedicated section above. This is
+  the strongest available signal this session; live application remains the final confirmation step
+  (orchestrator's job, same as every prior increment's SQL).
+- **REVOKE correctness (TRUNCATE-grant gap closure):** confirmed correct — see reasoning above. Does not
+  remove any legitimate access path; matches the `admin_allowlist` (REV-081) precedent exactly.
+- **`admin-portal/app/(app)/track-record/page.tsx` AC1 hard boundary:** confirmed via both manual read and
+  a new permanent regression test — no derived-analytics code exists.
+- **`KillSwitchToggle.tsx`/`AuthGuard.tsx`/`layout.tsx`/`globals.css`:** all match the design/handoff
+  description exactly (`git diff 7f0a18c 036e334` read in full) — nav link, toggle wiring inside
+  `AuthGuard`'s shared header (not `layout.tsx`, matching the design's "shared header, not a standalone
+  page" text and INC-6's own precedent for the same reasoning), CSS additions scoped to the two new badge
+  classes plus one new `--ok` variable in both light/dark `:root` blocks.
 
-**No other functional bugs found.** All other code-level checks this session (fallback-chain behavior,
-write-back validation, workflow YAML structure, portal RLS/UI shape) match their design/requirement text
-exactly.
+**No functional bugs found.** No production code modified by qa.
 
 ### Verdict
 
-**PASS. BUG-003 found this session and FIXED by dev (commit `799cd35`); no bugs remain open.** Python:
-201/201 passed (0 regressions from a 168/3 baseline — the 3 were confirmed intended and are now fixed
-forward in `tests/`, not carried as red). Admin-portal JS/TS: 40/40 passed (14 new). Shippability: real
-`next build` + `next start` serves `/tunables` and every other route correctly. 12 of 16 ACs independently
-re-verified this session (AC2, AC5, AC8, AC9, AC10, AC11, AC12, AC13, AC14, AC15 structural, AC16
-structural); AC1/AC3/AC4/AC6/AC7's live-project halves and AC15/AC16's live-dispatch halves remain
-deferred pending live Supabase/GitHub Actions access (same constraint as INC-5). Both of dev's flagged
-claims (the 3-failure characterization, the stale-permissions-premise account) were independently
-confirmed accurate via direct re-execution and `git log -p`, not taken on trust. No production code
-modified by qa.
+**PASS.** Python: 201/201 passed (0 regressions, no Python file touched by this increment). Admin-portal
+JS/TS: 63/63 passed (40 pre-existing baseline unchanged + 23 new: 21 in `kill_switch_static.test.ts`, 2 in
+`build_bundle.test.ts`). Shippability: real `next build` + `next start` serves `/track-record` and every
+other route correctly, zero server errors. SQL grammar reviewed line-by-line against actual PostgreSQL
+`CREATE POLICY`/`CREATE OR REPLACE FUNCTION`/`GRANT`/`REVOKE` syntax — no defect found, and the specific
+class of bug that broke INC-6 (`FOR select, update` comma list) is now a permanent regression test. AC1,
+AC4 fully independently re-verified this session; AC2 statically verified (RPC call shape, re-read-not-
+optimistic-flip ordering) with the live round-trip deferred; AC3 confirmed via diff-scope (no dispatch
+logic touched) with the live suppression proof deferred. All AC2/AC3 live-verification gaps require
+Supabase MCP/live-session access this environment does not provide — same constraint as every prior
+increment this delivery. This is the last increment in the approved build order; qa's remaining work is
+the closure end-to-end pass once `sql/kill_switch_portal_grant.sql` is applied live.
 
 ---
 
 ## Open bugs
 
-**BUG-003** — `run_discovery.py`'s zero-candidates/zero-screen-errors early-return branch doesn't OR in
-`config.TUNABLES_DEGRADED` before writing the heartbeat status (AC14, FR30/REV-045). See INC-6 section
-above for full repro. **FIXED** — dev OR'd in `config.TUNABLES_DEGRADED` at the early-return branch
-(`run_discovery.py:59`); the locking test now asserts `"partial"`.
+None open. (BUG-003, filed and fixed during INC-6, is archived with that run — see
+`docs/archive/test-report-archive.md`.)

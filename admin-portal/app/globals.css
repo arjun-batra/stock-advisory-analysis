@@ -4,6 +4,7 @@
   --border: #d9d9d9;
   --accent: #1a56db;
   --error: #b91c1c;
+  --ok: #15803d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -12,6 +13,7 @@
     --foreground: #ededed;
     --border: #333333;
     --accent: #6ea8fe;
+    --ok: #4ade80;
   }
 }
 
@@ -135,4 +137,28 @@ button.link {
   background: none;
   color: var(--accent);
   padding: 0;
+}
+
+.kill-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.kill-switch-badge {
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.kill-switch-badge.paused {
+  color: white;
+  background: var(--error);
+}
+
+.kill-switch-badge.running {
+  color: white;
+  background: var(--ok);
 }

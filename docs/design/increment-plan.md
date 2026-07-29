@@ -1,21 +1,31 @@
-# Increment plan — 2026-07-26 change request — INC-3/INC-4/INC-5 IMPLEMENTED, INC-6 built pending reviewer clearance, INC-7 DRAFT
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED (INC-5 backfill + INC-6 merged to main), INC-7 reviewer-CLEAR Pass 20
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
 dev-built, qa-tested, and reviewer-reviewed through Pass 15 (INC-3/INC-4) and Pass 17 (INC-5)
 (`docs/review-log.md`). "IMPLEMENTED" here does **not** mean fully live-verified for INC-3/INC-4:
-INC-3's `sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral,
-`review-log.md` REV-070) — a deployment/scheduling obligation, not a design or code gap; INC-4's AC6
-(live-Gemini smoke test) is deferred, not failed, pending a real `GEMINI_API_KEY` (`docs/handoff.md`); and
-INC-5's Pass 17 verdict is **CLEAR** — REV-081 (a minor, not-currently-exploitable least-privilege gap on
-`admin_allowlist`'s grants), REV-082, and REV-083 are all independently re-verified RESOLVED
-(`docs/review-log.md`), zero blockers, zero majors. Phase-4 closure must not treat FR24–FR26/FR33 as
-live-verified until INC-3's and INC-4's two deferred items resolve; FR27–FR29/NFR5–6 are reviewer-clear as
-of Pass 17. **INC-6 (admin portal: tunables editor) is IMPLEMENTED** — dev-built, qa-tested (PASS —
-`docs/test-report.md`; BUG-003 found and fixed), reviewer Pass 18 verdict **NOT CLEAR pending REV-086 fix
-in progress** (a minor `[SECURITY]` gap on the `tunables` table's TRUNCATE grant, being fixed by dev in
-parallel; `docs/review-log.md`) — not yet reviewer-clear. **INC-7 (admin portal: track-record view &
-kill-switch UI) remains genuinely DRAFT** — no dev work has started on it.
+INC-3's `sql/kill_switch.sql` **is applied and live** in the Supabase project — what remains deferred
+(Arjun's explicit instruction, `review-log.md` REV-070) is the functional pause/resume verification test
+(AC1–AC5), to be run as part of a final end-to-end pass covering all increments, not the SQL's
+application; INC-4's AC6 (live-Gemini smoke test) is deferred, not failed, pending a real
+`GEMINI_API_KEY` (`docs/handoff.md`); and INC-5's Pass 17 verdict is **CLEAR** — REV-081 (a minor,
+not-currently-exploitable least-privilege gap on `admin_allowlist`'s grants), REV-082, and REV-083 are
+all independently re-verified RESOLVED (`docs/review-log.md`), zero blockers, zero majors. Phase-4
+closure must not treat FR24–FR26 as live-verified until INC-3's functional pause/resume test runs, nor
+FR33 until INC-4's AC6 runs; FR27–FR29/NFR5–6 are reviewer-clear as of Pass 17. **INC-6 (admin portal:
+tunables editor) is IMPLEMENTED and fully reviewer-clear** — dev-built, qa-tested (PASS —
+`docs/test-report.md`; BUG-003 found and fixed), reviewer Pass 19 verdict **CLEAR** — REV-086/087/088/089
+all independently re-verified RESOLVED, zero blockers, zero majors (`docs/review-log.md`). A
+post-clearance, live-execution-only Postgres syntax bug was then found applying the cleared SQL live
+(`CREATE POLICY ... FOR select, update` is not valid Postgres — a `FOR` clause accepts only one verb);
+dev split it into two valid policies, and the fix was confirmed by a Pass 19 addendum (independently
+re-verified live, `docs/review-log.md`). INC-6, together with INC-5's backfill (qa/reviewer clearance),
+has since been merged to `main` (merge commit `887936b`). **INC-7 (admin portal: track-record view &
+kill-switch UI) is IMPLEMENTED and reviewer-clear** — dev-built, qa-tested (PASS — zero bugs,
+`docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (two non-blocking
+doc-hygiene minors, REV-093/094, both closed by tech-lead's design-doc update; `docs/review-log.md`).
+This was the last increment in the approved build order — all seven increments (INC-3–INC-7) are now
+IMPLEMENTED.
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -70,8 +80,8 @@ lost race). See `docs/design/tunables-workflow-writeback.md` §16.4 for the full
 diff (and `docs/design/tunables-fallback.md` §16.4 for `scripts/config.py`'s fetch/fallback side).
 
 ### INC-3 — Kill-switch (FR24, FR25, FR26, NFR2) — **IMPLEMENTED** (dev-built, qa-tested, reviewer-cleared
-zero blockers through Pass 15; `sql/kill_switch.sql` not yet applied to the live Supabase project — see
-status note above)
+zero blockers through Pass 15; `sql/kill_switch.sql` applied and live — functional pause/resume test
+(REV-070) deferred to a final end-to-end pass, see status note above)
 **Design:** `docs/design/operational-controls.md` §13. **Files:** new `sql/kill_switch.sql`
 (`kill_switch_state`, `kill_switch_audit`, `set_kill_switch()`); edits to `dispatch_github_workflow` and
 `check_pipeline_health` in `sql/scheduler_pgcron.sql` / `sql/phase5_monitoring.sql`. **No Python changes**
@@ -158,7 +168,7 @@ Keep the migration's function signature stable once INC-6 is built against it.
    version-controlled starting point, but INC-5 must re-check the live project directly since it's the
    first increment that makes `authenticated` an internet-reachable principal at all.
 
-### INC-6 — Admin portal: tunables editor (FR30) — **IMPLEMENTED** (dev-built, qa-tested — PASS, BUG-003 found and fixed, `docs/test-report.md`; reviewer Pass 18 verdict NOT CLEAR pending REV-086 fix in progress — see status note above) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
+### INC-6 — Admin portal: tunables editor (FR30) — **IMPLEMENTED, reviewer Pass 19 CLEAR, merged to `main`** (dev-built, qa-tested — PASS, BUG-003 found and fixed, `docs/test-report.md`; REV-086/087/088/089 all RESOLVED, zero blockers — see status note above) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI),
 `docs/design/tunables-fallback.md` §16.4 (`scripts/config.py`'s fetch/cache-fallback chain, timeout), and
 `docs/design/tunables-workflow-writeback.md` §16.4 (which workflow commits the cache, REV-040's
@@ -283,7 +293,7 @@ REV-040 mitigations, both incorporated above.
     `jobs.watchlist`, not at the workflow's top level (`yq`/`grep` the YAML structure) — no top-level
     `permissions:` block exists in the file.
 
-### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — **DRAFT** (not yet built)
+### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — **IMPLEMENTED, reviewer Pass 20 CLEAR** (dev-built, qa-tested — PASS, zero bugs, `docs/test-report.md`; zero blockers, zero majors — see status note above)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
 reference). **Files:** `admin-portal/app/track-record/`; kill-switch toggle on the shared authenticated
 layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds

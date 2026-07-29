@@ -9,9 +9,11 @@ stays in `docs/design.md` itself, so this file skips it.
 abstraction, FR33). Both increments have shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction)
 were dev-built, qa-tested, and reviewer-cleared with zero blockers through Pass 14
 (`docs/review-log.md`). This file is now as-built documentation for §13–§14, not draft design. Two
-deployment/verification items remain open and are tracked in `docs/review-log.md`, not here: INC-3's
-`sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's deferral, REV-070), and
-INC-4's AC6 (live-Gemini smoke test) is deferred pending real credentials (`docs/handoff.md`).
+verification items remain open and are tracked in `docs/review-log.md`, not here: INC-3's
+`sql/kill_switch.sql` **is applied and live** in the Supabase project — what's deferred (Arjun's
+instruction, REV-070) is the functional pause/resume verification test (AC1–AC5), to be run as part of a
+final end-to-end pass covering all increments; and INC-4's AC6 (live-Gemini smoke test) is deferred
+pending real credentials (`docs/handoff.md`).
 
 ---
 
