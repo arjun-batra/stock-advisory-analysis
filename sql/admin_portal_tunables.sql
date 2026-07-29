@@ -22,6 +22,14 @@ create table public.tunables (
   updated_by  text
 );
 alter table public.tunables enable row level security;
+revoke insert, delete, truncate on public.tunables from public, anon, authenticated;
+-- REV-086 fix: same RLS-does-not-govern-TRUNCATE gap as admin_allowlist's REV-081
+-- (sql/admin_portal_rls.sql) — Supabase's default grants otherwise leave
+-- anon/authenticated with unrestricted TRUNCATE on this table. Unlike that REVOKE,
+-- this one deliberately omits UPDATE and SELECT: admin_write_tunables (below) grants
+-- both legitimately to `authenticated` — that's the whole FR30 feature, admins
+-- editing tunables via the portal — so revoking either would break INC-6. Do not
+-- "align" this list with admin_allowlist's; the tables have different policies.
 
 -- actor stamped server-side on every write, same "never trust the client's
 -- self-reported identity" principle as kill_switch_audit (operational-controls.md §13.3):
