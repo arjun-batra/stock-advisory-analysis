@@ -43,19 +43,30 @@ test("tunables: CHECK constraint registry is exactly the 10 curated keys, no mor
   assert.deepEqual(new Set(registered), new Set(THE_10_KEYS));
 });
 
-test("tunables: admin_write_tunables policy is scoped to select/update only (REV-044), not `for all`", () => {
+test("tunables: admin_read_tunables policy grants select only (REV-044/e46abf8), not `for all`", () => {
   const sql = readFileSync(TUNABLES_SQL, "utf8");
-  const policyMatch = sql.match(/create policy "admin_write_tunables"[\s\S]*?with check \(public\.is_admin\(\)\)/i);
-  assert.ok(policyMatch, "admin_write_tunables policy not found or not fully gated on is_admin()");
-  assert.match(policyMatch![0], /for select, update to authenticated/i);
+  const policyMatch = sql.match(/create policy "admin_read_tunables"[\s\S]*?using \(public\.is_admin\(\)\);/i);
+  assert.ok(policyMatch, "admin_read_tunables policy not found or not fully gated on is_admin()");
+  assert.match(policyMatch![0], /for select to authenticated/i);
   assert.doesNotMatch(policyMatch![0], /for all/i);
   assert.match(policyMatch![0], /using \(public\.is_admin\(\)\)/i);
 });
 
-test("tunables: no insert/delete policy exists for any role (REV-033/044 — RLS-enabled + zero policy = denied)", () => {
+test("tunables: admin_write_tunables policy grants update only (REV-044/e46abf8), not `for all`", () => {
+  const sql = readFileSync(TUNABLES_SQL, "utf8");
+  const policyMatch = sql.match(/create policy "admin_write_tunables"[\s\S]*?with check \(public\.is_admin\(\)\)/i);
+  assert.ok(policyMatch, "admin_write_tunables policy not found or not fully gated on is_admin()");
+  assert.match(policyMatch![0], /for update to authenticated/i);
+  assert.doesNotMatch(policyMatch![0], /for all/i);
+  assert.match(policyMatch![0], /using \(public\.is_admin\(\)\)/i);
+});
+
+test("tunables: exactly two policies (admin_read_tunables for select, admin_write_tunables for update), no insert/delete/all policy for any role (REV-033/044/e46abf8 — RLS-enabled + zero policy = denied)", () => {
   const sql = readFileSync(TUNABLES_SQL, "utf8");
   const policyLines = sql.split("\n").filter((l) => /create policy/i.test(l) && /tunables/i.test(l));
-  assert.equal(policyLines.length, 1, "expected exactly one policy on tunables (admin_write_tunables)");
+  assert.equal(policyLines.length, 2, "expected exactly two policies on tunables (admin_read_tunables, admin_write_tunables)");
+  const names = policyLines.map((l) => l.match(/create policy "([a-z_]+)"/i)?.[1]);
+  assert.deepEqual(new Set(names), new Set(["admin_read_tunables", "admin_write_tunables"]));
   for (const line of policyLines) {
     assert.doesNotMatch(line, /for (all|insert|delete)\b/i);
   }

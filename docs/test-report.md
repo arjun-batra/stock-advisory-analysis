@@ -75,11 +75,13 @@ per-AC table below.
   as durable structural checks over the current workflow YAML content (not a git-diff-against-a-commit,
   which would break on the next increment's commits — the one-time diff-vs-baseline for *this* increment
   was confirmed directly via `git diff`, see above/below, not encoded as a standing test).
-- **New `tests/admin_portal/tunables_static.test.ts`** (13 tests) — closes the gap dev flagged in Known
+- **New `tests/admin_portal/tunables_static.test.ts`** (14 tests) — closes the gap dev flagged in Known
   Limitations ("no admin-portal-side test yet exercises the new `/tunables` page"). Static/source-level,
   same convention as `static_source_checks.test.ts`: `tunables` table RLS-enabled, CHECK registry is
-  exactly the 10 keys, `admin_write_tunables` policy is `select, update` only (not `for all`), zero
-  insert/delete policy, `updated_at`/`updated_by` server-stamped by trigger; portal page's `.update()`
+  exactly the 10 keys, `admin_read_tunables` (select) and `admin_write_tunables` (update) are two
+  separate policies, each scoped to exactly one command (not `for all`, and never a comma-separated
+  `select, update` clause, which Postgres rejects — REV-091/`e46abf8`), zero insert/delete policy,
+  `updated_at`/`updated_by` server-stamped by trigger; portal page's `.update()`
   call sends exactly `{ value }` (never `id`/`key`/`updated_at`/`updated_by`), no `.insert()`/`.delete()`
   against `tunables`, reads via `.from("tunables").select("*")`; `AuthGuard` nav includes `/tunables`;
   `validateTunableValue` happy path / whitespace edge case / empty invalid-input case.
@@ -102,7 +104,7 @@ per-AC table below.
   dev's handoff; the 3 failures are fixed here as described above, and 30 new tests added: 28 in
   `test_tunables.py` + 2 net-new in `test_config.py`/`test_run_orchestration.py`).
 - **Admin-portal JS/TS:** `node --experimental-strip-types --test tests/admin_portal/*.test.ts` →
-  **39 passed, 0 failed** (26 pre-existing + 13 new in `tunables_static.test.ts`).
+  **40 passed, 0 failed** (26 pre-existing + 14 new in `tunables_static.test.ts`).
 - **Lint:** `npx eslint .` (admin-portal) → clean, zero errors/warnings.
 
 ### Shippability check (real entry point)
@@ -122,7 +124,7 @@ No server errors in the `next start` log. `.next/` build artifact cleaned up aft
 |---|---|---|
 | 1. `tunables` seeded w/ 10 FR30 keys, `ALERTS_ENABLED="true"` | **PASS (static+live-seed-diff); RLS/CRUD live-behavior DEFERRED** | SQL migration shape/CHECK/seed values confirmed by direct read + `tunables_static.test.ts`. Live RLS rejection and live CHECK-constraint violation need the migration applied to the real project (not done — same as INC-5's `sql/admin_portal_rls.sql` pattern; orchestrator applies post-handoff). |
 | 2. `tunables_cache.json` byte-for-byte matches SQL seed | **PASS — independently re-verified** | `test_ac2_cache_seed_matches_sql_seed_byte_for_byte` diffs the two files directly (own transcription, not reused from dev's diff); `ALERTS_ENABLED: "true"` confirmed in both. |
-| 3. Anon/no-session write rejected; admin insert/delete rejected; bad `key` fails CHECK | **PASS (static shape); live curl DEFERRED** | Policy text confirmed `for select, update to authenticated`, not `for all`; zero insert/delete policy exists (RLS-enabled + zero policy = denied by construction). No live Supabase to fire the actual `curl`/insert/delete attempts. |
+| 3. Anon/no-session write rejected; admin insert/delete rejected; bad `key` fails CHECK | **PASS (static shape); live curl DEFERRED** | Policy text confirmed as two separate policies — `admin_read_tunables` (`for select to authenticated`) and `admin_write_tunables` (`for update to authenticated`) — neither `for all` nor a single comma-separated `for select, update` clause (that syntax is invalid Postgres; fixed by dev in `e46abf8` after REV-091 caught it); zero insert/delete policy exists (RLS-enabled + zero policy = denied by construction). No live Supabase to fire the actual `curl`/insert/delete attempts. |
 | 4. Update stamps `updated_at`/`updated_by` server-side, visible on next read | **PASS (static trigger shape + portal never sends those fields); live round-trip DEFERRED** | Trigger body confirmed (`new.updated_at := now()`, `new.updated_by := coalesce(auth.jwt()->>'email', session_user)`); portal's `.update()` call confirmed to send only `{ value }` (`tunables_static.test.ts`). No live write to round-trip through `select *`. |
 | 5. `_tunable()`-derived values pick up an edit on next process start only | **PASS — independently re-verified** | `test_ac5_table_edit_propagates_on_next_process_start` + `test_ac5_resolved_value_does_not_change_mid_process` (mocked tier-1 fetch, real `importlib.reload`). |
 | 6. Cache write-back, unchanged case: zero commits | **DEFERRED** | Needs a live `hourly-watchlist.yml` dispatch against an unmodified live table. |
@@ -169,7 +171,7 @@ exactly.
 
 **PASS. BUG-003 found this session and FIXED by dev (commit `799cd35`); no bugs remain open.** Python:
 201/201 passed (0 regressions from a 168/3 baseline — the 3 were confirmed intended and are now fixed
-forward in `tests/`, not carried as red). Admin-portal JS/TS: 39/39 passed (13 new). Shippability: real
+forward in `tests/`, not carried as red). Admin-portal JS/TS: 40/40 passed (14 new). Shippability: real
 `next build` + `next start` serves `/tunables` and every other route correctly. 12 of 16 ACs independently
 re-verified this session (AC2, AC5, AC8, AC9, AC10, AC11, AC12, AC13, AC14, AC15 structural, AC16
 structural); AC1/AC3/AC4/AC6/AC7's live-project halves and AC15/AC16's live-dispatch halves remain
