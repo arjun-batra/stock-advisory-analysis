@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 from datetime import datetime, time, timedelta
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 import httpx

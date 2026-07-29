@@ -82,46 +82,54 @@ class FakeSupabase:
 
     def _execute(self, verb: _Verb):
         if verb.kind == "select":
-            if verb.table == "watchlist":
-                return _Result(list(self.watchlist))
-            if verb.table == "holdings":
-                return _Result(list(self.holdings))
-            if verb.table == "verdict_state":
-                ticker = verb._filters.get("ticker")
-                row = self.verdict_state.get(ticker)
-                return _Result([row] if row else [])
-            if verb.table == "call_log":
-                rows = self.call_log
-                for col, val in verb._filters.items():
-                    rows = [r for r in rows if r.get(col) == val]
-                return _Result(rows)
-            return _Result([])
-
+            return self._execute_select(verb)
         if verb.kind == "insert":
-            row = dict(verb.payload)
-            row["id"] = f"log-{self._next_id}"
-            self._next_id += 1
-            self.call_log.append(row)
-            return _Result([row])
-
+            return self._execute_insert(verb)
         if verb.kind == "upsert":
-            if verb.table == "verdict_state":
-                ticker = verb.payload["ticker"]
-                self.verdict_state[ticker] = dict(verb.payload)
-                return _Result([verb.payload])
-            if verb.table == "run_heartbeat":
-                self.run_heartbeat[verb.payload["workflow_name"]] = verb.payload
-                return _Result([verb.payload])
-            return _Result([verb.payload])
-
+            return self._execute_upsert(verb)
         if verb.kind == "update":
-            if verb.table == "verdict_state":
-                ticker = verb._filters.get("ticker")
-                self.verdict_state.setdefault(ticker, {}).update(verb.payload)
-                return _Result([self.verdict_state[ticker]])
-            return _Result([])
-
+            return self._execute_update(verb)
         raise AssertionError(f"unexpected verb {verb.kind}")
+
+    def _execute_select(self, verb: _Verb):
+        if verb.table == "watchlist":
+            return _Result(list(self.watchlist))
+        if verb.table == "holdings":
+            return _Result(list(self.holdings))
+        if verb.table == "verdict_state":
+            ticker = verb._filters.get("ticker")
+            row = self.verdict_state.get(ticker)
+            return _Result([row] if row else [])
+        if verb.table == "call_log":
+            rows = self.call_log
+            for col, val in verb._filters.items():
+                rows = [r for r in rows if r.get(col) == val]
+            return _Result(rows)
+        return _Result([])
+
+    def _execute_insert(self, verb: _Verb):
+        row = dict(verb.payload)
+        row["id"] = f"log-{self._next_id}"
+        self._next_id += 1
+        self.call_log.append(row)
+        return _Result([row])
+
+    def _execute_upsert(self, verb: _Verb):
+        if verb.table == "verdict_state":
+            ticker = verb.payload["ticker"]
+            self.verdict_state[ticker] = dict(verb.payload)
+            return _Result([verb.payload])
+        if verb.table == "run_heartbeat":
+            self.run_heartbeat[verb.payload["workflow_name"]] = verb.payload
+            return _Result([verb.payload])
+        return _Result([verb.payload])
+
+    def _execute_update(self, verb: _Verb):
+        if verb.table == "verdict_state":
+            ticker = verb._filters.get("ticker")
+            self.verdict_state.setdefault(ticker, {}).update(verb.payload)
+            return _Result([self.verdict_state[ticker]])
+        return _Result([])
 
 
 class FakeNotifier:
