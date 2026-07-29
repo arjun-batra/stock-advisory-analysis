@@ -1,5 +1,33 @@
 # Handoff — INC-6: Admin portal tunables editor (FR30)
 
+## BUG-003 fix (post-QA-pass follow-up)
+
+Fixed per qa's finding (`docs/test-report.md` BUG-003) and AC14's literal "all three entry points"
+wording: `scripts/run_discovery.py`'s zero-candidates/zero-screen-errors early-return branch (line 59)
+now ORs in `config.TUNABLES_DEGRADED` before writing the heartbeat status, mirroring the later computed
+`status =` line (line 115) — one-line change (`if screens_errored:` -> `if screens_errored or
+config.TUNABLES_DEGRADED:`), print-message text left unchanged (matches the later block's own minimal,
+not-fully-cause-descriptive message pattern).
+
+Also updated (regressions this fix surfaced, not scope creep):
+- `tests/test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
+  — qa's own gap-locking test, inverted to assert `"partial"` per this task's explicit instruction.
+- `tests/test_run_orchestration.py::test_quiet_day_all_screens_ok_reports_ok` — this pre-existing test
+  asserted `"ok"` without neutralizing `config.TUNABLES_DEGRADED`, which is `True` by default under
+  `tests/conftest.py`'s `SKIP_TUNABLES_FETCH=true`. Once the branch started consulting
+  `TUNABLES_DEGRADED`, this test broke as a direct, necessary consequence of the correct production fix
+  (not touched otherwise) — neutralized with `monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)`,
+  the exact established pattern already used in this same file's
+  `test_heartbeat_is_ok_when_every_ticker_processes_cleanly`/`test_heartbeat_is_partial_when_tunables_are_degraded`
+  pair. `test_zero_candidates_with_screen_errors_reports_partial_not_ok` and
+  `test_zero_candidates_with_all_screens_errored_is_still_partial` needed no change (already `partial`
+  via `screens_errored`, message text unchanged).
+
+Full suite: `python3 -m pytest -q --tb=short` -> **201 passed, 0 failed** (no change in count; the 2
+transiently-broken tests above are fixed forward, not net-new). `docs/test-report.md`'s BUG-003 entries
+(the detailed writeup and the "Open bugs" section) marked FIXED — no other text in that file touched.
+
+
 Branch: `claude/admin-portal-evaluation-txaehj` (shared feature branch for this change request, per
 project convention — not a per-increment branch). Depends on INC-5's `admin_allowlist`/`is_admin()`
 (`sql/admin_portal_rls.sql`), already reviewer-CLEAR. INC-5's own handoff history (foundation, live
@@ -224,13 +252,12 @@ brief's file list for this increment named only `tests/conftest.py`.
 
 ## Known limitations
 
-- `run_discovery.py`'s zero-candidates early-return branch (two hardcoded `"partial"`/`"ok"` string
-  literals, not a computed `status =` expression) does not consult `config.TUNABLES_DEGRADED`. If
-  discovery finds zero candidates in the same run that a curated key degrades to tier 2, the heartbeat
-  will report `"ok"` via that branch instead of `"partial"`. The design/brief both describe changing
-  "the existing status-computation line" (singular, matching `run_hourly.py:155`'s example) — I read
-  that narrowly rather than expanding scope into the early-return branch. Flagging for tech-lead/qa to
-  confirm whether AC14 is meant to cover this branch too.
+- ~~`run_discovery.py`'s zero-candidates early-return branch ... does not consult
+  `config.TUNABLES_DEGRADED`~~ — **FIXED (BUG-003).** Per qa's finding and AC14's literal "all three
+  entry points" wording, the early-return branch (`run_discovery.py:59`) now also ORs in
+  `config.TUNABLES_DEGRADED` before writing the heartbeat status, same pattern as the later computed
+  `status =` line. `tests/test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
+  updated to assert `"partial"`.
 - AC10's "table=`false`" half and AC6/AC7 (cache write-back) and AC1/AC3/AC4 (live RLS) are unverified
   without live Supabase/GitHub Actions access, as detailed above.
 - No admin-portal-side test yet exercises the new `/tunables` page's read/update flow (qa's

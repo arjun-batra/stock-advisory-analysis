@@ -402,16 +402,12 @@ def test_ac14_run_discovery_heartbeat_is_ok_when_not_degraded_and_run_is_clean(m
 
 
 def test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded(monkeypatch):
-    """DOCUMENTS A GAP, not a spec pass: run_discovery.py:55-66's early-return
-    branch (zero candidates, no screen errors) hardcodes "ok" and never
-    consults config.TUNABLES_DEGRADED -- unlike the later computed `status =`
-    line (run_discovery.py:115) that every other branch goes through. AC14's
-    text ("all three entry points") does not carve out this branch. Filed as
-    BUG-003 (docs/test-report.md) -- dev already flagged this exact gap in
-    docs/handoff.md's Known Limitations, unresolved. This test locks in and
-    documents the CURRENT (gap) behavior; it is expected to start failing
-    (in a good way) once BUG-003 is fixed, at which point invert the
-    assertion to "partial"."""
+    """BUG-003 fixed: run_discovery.py:55-66's early-return branch (zero
+    candidates, no screen errors) now also ORs in config.TUNABLES_DEGRADED
+    before writing the heartbeat status, same as the later computed `status =`
+    line (run_discovery.py:115) that every other branch goes through -- AC14's
+    "all three entry points" wording covers this branch too. Was previously
+    pinning the gap behavior ("ok"); now asserts the intended contract."""
     sb = FakeSupabase()
     monkeypatch.setattr(run_discovery.state, "client", lambda: sb)
     monkeypatch.setattr(run_discovery.notify, "get_notifier", lambda: FakeNotifier())
@@ -421,7 +417,7 @@ def test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degrad
 
     run_discovery.main()
 
-    assert sb.run_heartbeat["daily-discovery"]["status"] == "ok"   # see BUG-003 -- should arguably be "partial"
+    assert sb.run_heartbeat["daily-discovery"]["status"] == "partial"
 
 
 def test_ac14_publish_prices_heartbeat_is_partial_when_degraded_even_with_zero_skips(monkeypatch, tmp_path):

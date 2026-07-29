@@ -249,10 +249,19 @@ _EMPTY_FUNNEL = {"raw": 10, "after_dedup": 10, "passed_quality": 0, "passed_sign
 
 def test_quiet_day_all_screens_ok_reports_ok(monkeypatch, wire_discovery, capsys):
     """issue #8: zero candidates with every screen having run cleanly is a
-    genuine quiet day, not a failure."""
+    genuine quiet day, not a failure.
+
+    BUG-003 fix note: the early-return branch now also ORs in
+    config.TUNABLES_DEGRADED (True by default under conftest.py's
+    SKIP_TUNABLES_FETCH=true) -- neutralize it here so this test isolates the
+    screen-cleanliness half of the "ok" rule, same pattern as
+    test_heartbeat_is_ok_when_every_ticker_processes_cleanly above. The
+    degraded half of this branch is covered by
+    test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded."""
     sb = wire_discovery
     monkeypatch.setattr(run_discovery.prefilter, "find_candidates",
                          lambda exclude, region: ([], 5, 0, _EMPTY_FUNNEL))
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
 
     run_discovery.main()
 

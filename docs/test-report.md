@@ -156,9 +156,10 @@ No server errors in the `next start` log. `.next/` build artifact cleaned up aft
   clearly a coding mistake — routing to dev/tech-lead to decide (fix the branch to include
   `config.TUNABLES_DEGRADED`, or amend AC14's text to carve out the zero-candidates case) rather than
   qa deciding unilaterally by editing production code.
-- **Status:** OPEN. Not blocking merge on its own severity (a rare compound condition: zero candidates
-  AND zero screen errors AND a degraded tunables resolution, on the lowest-frequency of the three entry
-  points), but should be resolved before INC-6 closes.
+- **Status:** FIXED (dev). `run_discovery.py:59`'s early-return branch now ORs in
+  `config.TUNABLES_DEGRADED` (`if screens_errored or config.TUNABLES_DEGRADED:`), mirroring the later
+  computed `status =` line. `test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
+  updated to assert `"partial"` (was pinning the gap). Full suite re-run clean, no regressions.
 
 **No other functional bugs found.** All other code-level checks this session (fallback-chain behavior,
 write-back validation, workflow YAML structure, portal RLS/UI shape) match their design/requirement text
@@ -183,5 +184,5 @@ modified by qa.
 
 **BUG-003** — `run_discovery.py`'s zero-candidates/zero-screen-errors early-return branch doesn't OR in
 `config.TUNABLES_DEGRADED` before writing the heartbeat status (AC14, FR30/REV-045). See INC-6 section
-above for full repro. OPEN — routed to dev/tech-lead to decide the intended scope, not a unilateral qa
-production-code fix.
+above for full repro. **FIXED** — dev OR'd in `config.TUNABLES_DEGRADED` at the early-return branch
+(`run_discovery.py:59`); the locking test now asserts `"partial"`.
