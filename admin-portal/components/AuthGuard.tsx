@@ -4,13 +4,20 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { checkAuthorization } from "@/lib/admin-guard";
+import KillSwitchToggle from "@/components/KillSwitchToggle";
 
 /**
- * Wraps every authenticated page (watchlist, holdings, tunables). Redirects
- * to /login if there's no session, or if the signed-in account isn't in
- * admin_allowlist (docs/design/admin-portal.md §16.2). This is a UX gate
- * only — RLS is the real enforcement, so a failure here never blocks a
- * malicious client from being rejected server-side too.
+ * Wraps every authenticated page (watchlist, holdings, tunables, track
+ * record). Redirects to /login if there's no session, or if the signed-in
+ * account isn't in admin_allowlist (docs/design/admin-portal.md §16.2). This
+ * is a UX gate only — RLS is the real enforcement, so a failure here never
+ * blocks a malicious client from being rejected server-side too.
+ *
+ * Also renders the FR32 kill-switch toggle (docs/design/admin-portal.md
+ * §16.6) in the header — this is the one shared chrome every authenticated
+ * route passes through (`app/(app)/layout.tsx` is a thin
+ * `<AuthGuard>{children}</AuthGuard>` pass-through), so the toggle is visible
+ * everywhere without a standalone page, per the design's own text.
  */
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -58,8 +65,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           <a href="/watchlist">Watchlist</a>
           <a href="/holdings">Holdings</a>
           <a href="/tunables">Tunables</a>
+          <a href="/track-record">Track record</a>
         </nav>
         <div className="app-header-user">
+          <KillSwitchToggle />
           <span>{email}</span>
           <SignOutButton />
         </div>
