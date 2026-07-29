@@ -54,6 +54,14 @@ create table public.tunables (
   updated_by  text
 );
 alter table public.tunables enable row level security;
+revoke insert, delete, truncate on public.tunables from public, anon, authenticated;
+-- REV-086 fix: same RLS-does-not-govern-TRUNCATE gap as admin_allowlist's REV-081
+-- (sql/admin_portal_rls.sql) — Supabase's default grants otherwise leave
+-- anon/authenticated with unrestricted TRUNCATE on this table. This REVOKE
+-- deliberately omits UPDATE and SELECT: admin_read_tunables and
+-- admin_write_tunables (below) grant those legitimately to `authenticated` —
+-- that's the whole FR30 feature, admins editing tunables via the portal — so
+-- revoking either would break INC-6.
 
 -- actor stamped server-side on every write, same "never trust the client's
 -- self-reported identity" principle as kill_switch_audit (operational-controls.md §13.3):
@@ -69,19 +77,20 @@ create trigger tunables_stamp_update
   before update on public.tunables
   for each row execute function public._stamp_tunable_update();
 
--- REV-044 fix, 2026-07-28: narrowed from `for all` to `for select, update` only.
--- FR30 needs UPDATE on the ten migration-seeded rows — nothing more. `for all`
--- (the original draft) also granted INSERT/DELETE, which nothing in the
--- portal UI uses; a stray DELETE would silently pin that key to whatever the
--- cache/hardcoded-seed-time value was forever (no error surfaces — tier 2
--- still resolves it, see the fallback chain below), and an INSERT could add a
--- row for a key `scripts/config.py` never reads. The CHECK constraint above is
--- the second half of this fix — even a same-admin UPDATE (the only op this
--- policy allows) cannot rename a row's `key` to something outside the fixed
--- 10, since `key` is the primary key and any UPDATE that changed it would
--- have to satisfy the CHECK on the new value.
+-- REV-044 fix: select + update only (NOT `for all`) — FR30 needs UPDATE on the ten
+-- migration-seeded rows, nothing more. Postgres' `CREATE POLICY ... FOR <command>` clause accepts
+-- exactly one of ALL | SELECT | INSERT | UPDATE | DELETE, never a comma-separated list, so this is
+-- expressed as two separate policies rather than one. No insert/delete policy exists for any role,
+-- including `authenticated` — with RLS enabled, that means insert/delete on this table is denied to
+-- everyone except the table owner (the seed insert below, run as owner, is unaffected). The CHECK
+-- constraint above is the second half of this fix: even a same-admin UPDATE (the only op these
+-- policies allow) cannot rename a row's `key` to something outside the fixed 10.
+create policy "admin_read_tunables" on public.tunables
+  for select to authenticated
+  using (public.is_admin());
+
 create policy "admin_write_tunables" on public.tunables
-  for select, update to authenticated
+  for update to authenticated
   using (public.is_admin())
   with check (public.is_admin());
 ```
