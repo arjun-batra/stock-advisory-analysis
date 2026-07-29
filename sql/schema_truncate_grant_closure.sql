@@ -42,9 +42,13 @@
 -- that reason; `docs/runbook.md`'s RLS posture section should be refreshed
 -- by its owner (release) to reflect the INC-5 policy addition.
 --
--- NOT APPLIED. dev has no Supabase MCP/tool access this session — orchestrator
--- applies this against the live project after handoff, same process as
--- sql/admin_portal_rls.sql / sql/admin_portal_tunables.sql / sql/kill_switch_portal_grant.sql.
+-- APPLIED AND LIVE (REV-099 fix, already live across all six tables) — confirmed directly against
+-- production (project ikghqdtlbwifwnooytmm) via information_schema.role_table_grants: watchlist,
+-- holdings, call_log, verdict_state, run_heartbeat, and monitor_alerts all show exactly the intended
+-- grant shape (TRUNCATE closed everywhere; authenticated keeps its live write grants on watchlist/
+-- holdings only). This file's header previously read "NOT APPLIED" (same class of gap as BUG-004) —
+-- stale from early in this change request's build; the SQL below went live and was simply never
+-- updated afterward.
 -- =====================================================================
 
 -- --- watchlist (FR28): anon_read_watchlist (anon+authenticated SELECT) and
