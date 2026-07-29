@@ -1,3 +1,101 @@
+# Handoff — Evidence record: INC-3 kill-switch live test (AC2/AC4/AC5) + ClientOptions hotfix live confirmation
+
+## Context
+
+`docs/test-report.md`'s Phase-4 whole-system end-to-end entry correctly declined to mark INC-3's
+AC2/AC4/AC5 as independently verified: it checked `docs/review-log.md` (Pass 21's "Open items" still
+lists REV-070 open) and `docs/handoff.md` in full, found no dated evidence block for a live kill-switch
+pause/resume test anywhere in the repo (unlike REV-083's precedent for INC-5's AC8), and correctly left
+REV-070/INC-3's status as still deferred rather than take an unrecorded claim on faith. That was the
+right call — no code or doc change from dev was warranted on the strength of an unwritten claim. This
+entry supplies the missing evidence, in the same dated/attributed/checkable format REV-083 established,
+so qa can independently corroborate it and update `docs/test-report.md` accordingly (qa's file, not
+touched here — see the handoff note in this session's final summary).
+
+### AC2/AC4/AC5 / REV-070 live kill-switch pause/resume audit — raw evidence
+
+**Date:** 2026-07-29. **Run by:** orchestrator, live query via Supabase MCP `execute_sql` against
+project `ikghqdtlbwifwnooytmm` (user explicitly authorized live testing against production for this
+session, being the sole user and accepting the risk).
+
+```
+-- Baseline before test
+select max(id) as max_id_before from net._http_response;
+=> max_id_before = 1362
+
+-- Pause
+select public.set_kill_switch(true, 'e2e-test-orchestrator');
+=> (void, no error)
+
+-- Attempt dispatch while paused (AC2)
+select public.dispatch_github_workflow('hourly-watchlist.yml') as result;
+=> result = null   (function's own source: returns null immediately when
+   kill_switch_state.paused=true, before ever reaching net.http_post --
+   confirmed by reading pg_get_functiondef(oid) for dispatch_github_workflow
+   before running this test)
+
+-- Confirm zero new pg_net requests (AC2)
+select max(id) as max_id_after_paused_dispatch from net._http_response;
+=> max_id_after_paused_dispatch = 1362   (unchanged -- zero new HTTP requests
+   were made while paused)
+
+-- Resume
+select public.set_kill_switch(false, 'e2e-test-orchestrator');
+=> (void, no error)
+
+-- Audit trail (AC4)
+select * from public.kill_switch_audit order by changed_at asc;
+=> [
+     {id: d9f6b308-..., action: pause,  actor: postgres, source: e2e-test-orchestrator, changed_at: 2026-07-29 17:45:58.972166+00},
+     {id: e57f7053-..., action: resume, actor: postgres, source: e2e-test-orchestrator, changed_at: 2026-07-29 17:46:03.68885+00}
+   ]
+   -- exactly 2 rows, correct action values, non-null actor, source correctly
+   -- attributed, ~5 seconds apart (pause then resume)
+
+-- Final state confirmed restored to normal
+select * from public.kill_switch_state;
+=> {id: true, paused: false, updated_at: 2026-07-29 17:46:03.68885+00, updated_by: postgres}
+
+-- RLS check (AC5)
+select relname, relrowsecurity, relforcerowsecurity from pg_class
+where relname in ('kill_switch_state','kill_switch_audit');
+=> [
+     {kill_switch_audit, rls_enabled: true, rls_forced: true},
+     {kill_switch_state, rls_enabled: true, rls_forced: false}
+   ]
+```
+
+This closes `docs/test-report.md`'s open evidence gap for INC-3's **AC2** (pausing suppresses dispatch
+before any `pg_net` call — `dispatch_github_workflow` returned `null` and `net._http_response`'s max id
+was unchanged across the paused-dispatch attempt, confirming zero HTTP requests were made while paused),
+**AC4** (audit trail — exactly 2 rows, correct `action` values, non-null `actor`, `source` correctly
+attributed to the caller, pause/resume ~5 seconds apart), and **AC5** (RLS enabled on both
+`kill_switch_state` and `kill_switch_audit`, matching `sql/kill_switch.sql`'s design). AC1 (objects
+exist) was already covered by INC-3's original build. **AC3 (resume-baseline / no-false-alarm test under
+synthetic staleness) is a separate test this evidence does not cover and remains deferred** — do not
+mark it verified from this record.
+
+### ClientOptions hotfix — live production confirmation (separate, later run)
+
+**Date:** 2026-07-29. **Run by:** orchestrator, live query via Supabase MCP `execute_sql` against
+project `ikghqdtlbwifwnooytmm`, after the hotfix (main commit `79cea50`) was picked up by the next real
+scheduled run.
+
+```
+-- Before fix (run at 17:31:41 UTC, pre-fix commit): status='partial' for both hourly-watchlist and publish-prices
+
+-- After fix merged (main commit 79cea50) and picked up by the 18:00:01 UTC scheduled run:
+select workflow_name, last_run_at, status from public.run_heartbeat order by workflow_name;
+=> hourly-watchlist:  last_run_at=2026-07-29 18:01:49, status=ok
+   publish-prices:    last_run_at=2026-07-29 18:03:32, status=ok
+```
+
+Confirms the `ClientOptions` hotfix (this file's "Production bug fix" section immediately below)
+resolved the live tunables-fetch failure in production, not just in local reproduction — both scheduled
+workflows moved from `status=partial` (pre-fix) to `status=ok` (post-fix) on the very next real run.
+
+---
+
 # Handoff — Production bug fix: `ClientOptions` incompatibility broke live tunables fetch
 
 ## Build plan (written before coding, per dev's updated workflow)
