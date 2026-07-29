@@ -993,3 +993,126 @@ does not change their status either way.
 **Doc hygiene applied this pass:** the Pass 19 addendum's full write-up and REV-090/091/092's closing
 dispositions moved to `docs/archive/review-log-archive.md`, per `CLAUDE.md`'s doc-hygiene rule. The live log
 above keeps only the carried-forward item list and this pass's own findings.
+
+---
+
+## Pass 21 — 2026-07-29 (Targeted hotfix review, out-of-band — REV-095: `ClientOptions` crash fix,
+`scripts/config.py._fetch_tunables()`) — CLEAR
+
+**Scope.** Not a diff-scoped increment audit (no INC-N in flight) and not the Phase-4 six-pass audit — a
+fast, targeted review of one production hotfix per the orchestrator's explicit brief, ahead of the next
+scheduled `hourly-watchlist.yml` run. Branch `claude/admin-portal-evaluation-txaehj`, commit `77e535e`
+(dev) + qa's verification commit immediately after. Files read: `scripts/config.py` (in full),
+`docs/design/tunables-fallback.md:100-198` (REV-095's incident note + as-built code block),
+`tests/test_tunables.py` (in full — fixture + AC13 tests), `tests/test_fetch_tunables_real_client_construction.py`
+(in full, new file), `docs/handoff.md:1-71` (hotfix section), `docs/test-report.md:1-107` (hotfix section).
+`REV-095` is the ID dev/qa already used for this fix throughout the design doc, code comments, and test
+docstrings before this review ran — adopted here as this log's own ID for the same event, keeping one
+identifier across all four documents rather than minting a second number for what everyone already calls
+REV-095.
+
+**Method caveat (standing, unchanged since Pass 2).** No shell/execute tool bound to this session — this
+session has no installed Python packages (`supabase`/`postgrest`/`httpx` are absent from every path
+searched), so `git diff`, `pytest`, and a live `create_client()` construction were not independently
+re-executed. This pass's verification therefore rests on (a) direct reads of the actual current file
+content — not commit messages or the handoff/test-report's own characterization — for everything a
+static read can settle, and (b) qa's documented reproduction trail for the one claim that requires
+executing code against the real installed library, which is treated as corroborating evidence, not taken
+on faith: `docs/test-report.md:26-68` records specific, checkable technical detail (the exact
+`AttributeError` text reproduced against the pre-fix code and the real installed `supabase-py==2.31.0`;
+the fixed path's construction confirmed not to raise, failing instead at the network layer with a
+network/proxy-class error; `204 passed, 0 failed` for the full suite) rather than a vague "it works" — the
+same evidentiary posture this log has applied to every other live-only check in this project (REV-070,
+REV-081's live-application half, REV-083's raw-evidence block).
+
+### Check 1 — Does the fix achieve the same functional goal on the actual call path?
+
+**Yes, independently re-derived.** `scripts/config.py:72-74`:
+```python
+client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+client.postgrest.session.timeout = httpx.Timeout(TUNABLES_FETCH_TIMEOUT_MS / 1000)
+rows = client.table("tunables").select("key,value").execute().data
+```
+`client.table(...)` is a request built through `client.postgrest` (the client's PostgREST sub-client);
+`client.postgrest.session` is that sub-client's underlying HTTP session (an `httpx.Client` in production,
+per both the design doc's comment at `tunables-fallback.md:143` and `tests/test_tunables.py:85-88`'s fake
+docstring, which models it as exactly that). Setting `.timeout` on that session *before* the `.table()`
+call, and never rebuilding or replacing `client.postgrest` afterward, means the request the `.execute()`
+call issues genuinely goes through the timeout-configured session — not an unrelated or discarded object.
+This was the one claim in this fix that a static read alone cannot fully close (whether `httpx.Client`
+permits post-construction attribute assignment on `.timeout` on the installed version), which is exactly
+what `tests/test_fetch_tunables_real_client_construction.py`'s first test exists to prove against the real
+library, and what qa's suite run (204/204 passed, including that test) corroborates having actually
+executed. The old code's stated intent (`ClientOptions(postgrest_client_timeout=...)`) and the new code's
+effect (setting the timeout on the constructed client's actual request session) are functionally
+equivalent — a bounded timeout on the same request — achieved through a different, viable mechanism.
+
+### Check 2 — Design doc sync
+
+**Accurate.** `docs/design/tunables-fallback.md:126-146` (REV-095's incident note) and its code block at
+`:170-181` were compared line-for-line against `scripts/config.py:60-78`. The code block is byte-identical
+to the shipped function (comment included). The incident-note prose correctly states the root cause (the
+`if options is None:` branch, `ClientOptions` missing the `storage` field), the practical effect
+(every run silently fell to tier 2, `TUNABLES_DEGRADED=True`), and the fix (`postgrest.session.timeout`,
+`ClientOptions` no longer imported) — all independently confirmed against the code in Check 1 above and
+Check 4 below. No contradiction found anywhere in the section.
+
+### Check 3 — Regression test independent read
+
+**Genuine, not a mocked-away seam.** `tests/test_fetch_tunables_real_client_construction.py` imports
+`create_client` directly `from supabase import create_client` (not through `config`'s already-resolved
+symbol) and never monkeypatches it — confirmed by reading the full file; the only `monkeypatch` calls in
+it target `config`'s own module attributes (`SKIP_TUNABLES_FETCH`, `SUPABASE_URL`, etc.), not the
+`supabase` package. This is the real, unmocked `create_client()` → `Client.__init__` → PostgREST-client
+construction path — the exact seam `tests/test_tunables.py`'s pre-existing `mock_tunables_fetch` fixture
+patches around (confirmed at `test_tunables.py:119,134`: it patches `supabase_pkg.create_client` itself),
+which is why the original bug shipped undetected. Test 1 asserts construction + attribute-set doesn't
+raise and the resulting `httpx.Timeout` value is correct; tests 2–3 drive the real, unmocked path against
+an RFC-2606 `.invalid` host and assert the failure is a network-class exception caught by
+`_fetch_tunables()`'s `except Exception`, never an `AttributeError` — the precise crash this fix closes.
+Agrees with qa's independent read (`docs/test-report.md:51-62`).
+
+### Check 4 — No other call site
+
+`grep -rn "ClientOptions" scripts/` (via search tool) returns only comment/docstring references inside
+`scripts/config.py:61-67` explaining why `ClientOptions` is deliberately *not* used — no other file in
+`scripts/` imports or constructs it. `scripts/config.py`'s own import block (`:8-15`) confirms
+`from supabase.lib.client_options import ClientOptions` is gone; only `import httpx` (new) and
+`from supabase import create_client` remain. One call site, one fix, fully closed.
+
+### Check 5 — Change scope
+
+No git-diff tool available this session (see method caveat), so scope was confirmed by cross-referencing
+dev's and qa's own "Files changed" lists (`docs/handoff.md:43-49`, `docs/test-report.md:11-13` — both name
+exactly `scripts/config.py`, `docs/design/tunables-fallback.md`, `tests/test_tunables.py`, and the one new
+test file) against a full read of each: `scripts/config.py`'s only tunables-fetch-related change is
+`_fetch_tunables()` and its imports (the other ~380 lines read line-for-line show no unrelated edits);
+`tests/test_tunables.py`'s changes are confined to the `_FakeSession`/`_FakePostgrest`/
+`_FakeSupabaseClient` fixture shapes and the one AC13 test that asserts against them — the rest of the
+215-test file's content matches what Pass 18-through-20 already reviewed. No drive-by change found in
+anything read.
+
+### Verdict — Pass 21 / hotfix `77e535e` — **CLEAR**
+
+The fix is functionally correct (bounded timeout applied to the actual request session the tunables fetch
+uses, independently re-derived from the call shape, not taken on dev's or qa's word), the design doc is in
+sync with the shipped code, the new regression test genuinely exercises the real unmocked construction
+path that let the original bug ship, there is exactly one call site and it's fixed, and nothing outside
+the fix's legitimate scope was touched. **Zero blockers, zero new findings.** Safe to merge ahead of the
+next scheduled `hourly-watchlist.yml` run.
+
+**What CLEAR does and does not mean here.** It means the four durable, reviewable artifacts (code, design
+doc, new test, fixture update) were independently verified against current file content. It does **not**
+mean a live tier-1 fetch success (real rows returned from a real Supabase project) was observed this pass
+or by qa — that path's shape is unchanged by this fix and was already covered pre-fix by INC-6's mocked
+tests; qa's own report (`docs/test-report.md:81-87`) states this limitation plainly, and it carries the
+same posture as every other live-only gap already open in this project (REV-070, INC-4's AC6) — not new,
+not this fix's responsibility to close.
+
+**Open items unchanged.** This hotfix touched none of the files carrying open findings from Pass 20.
+**Majors: 3 IDs / 2 pieces of work** (REV-064 + REV-039 — release; REV-043 — dev). **Minors: 13 IDs**
+(REV-063 residual + REV-071, REV-065, REV-066 + REV-052, REV-067, REV-068, REV-070, REV-072, REV-048,
+REV-049(b), REV-080, REV-079 — unchanged from Pass 20's list). **Open blocker count: 0.**
+
+**Doc hygiene.** Nothing new to archive this pass — REV-095 is logged directly to a CLEAR verdict with no
+open remainder, so there is no RESOLVED item to move.
