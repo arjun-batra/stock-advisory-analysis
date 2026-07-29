@@ -7,9 +7,9 @@ orientation. Section number below (§16) continues the pre-split numbering; §15
 
 **Status:** covers the 2026-07-26 change request (FR27–FR32, NFR5, NFR6). GATE 3 was passed by the user for
 the whole change request (see `docs/design.md`). **INC-5 sections (§16.1–§16.3, §16.7–§16.8: hosting/auth,
-authorization model, watchlist/holdings CRUD) are IMPLEMENTED** — dev-built, qa-tested, reviewer Pass 16
-verdict NOT CLEAR pending REV-081 fix in progress (`docs/design/increment-plan.md`'s status note,
-`docs/review-log.md`). **INC-6 (§16.4 pointer) and INC-7 (§16.5–§16.6) sections remain genuinely DRAFT** —
+authorization model, watchlist/holdings CRUD) are IMPLEMENTED** — dev-built, qa-tested, reviewer Pass 17
+verdict CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/design/increment-plan.md`'s status
+note, `docs/review-log.md`). **INC-6 (§16.4 pointer) and INC-7 (§16.5–§16.6) sections remain genuinely DRAFT** —
 no dev work has started on them (see `docs/design.md`'s increment plan).
 
 **New trust boundary — read this file in full before changing any of it.** Every other surface in this

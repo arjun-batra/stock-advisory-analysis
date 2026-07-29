@@ -9,8 +9,8 @@ passed by the user for the 2026-07-26 change request's plan — kill-switch (FR2
 tested both, and reviewer cleared both with zero blockers through Pass 14 (`docs/review-log.md`); see
 `operational-controls.md` §13–§14, now **IMPLEMENTED**. **INC-5 (admin portal foundation: auth, hosting,
 watchlist & holdings CRUD, FR27–FR29, NFR5–6) is also IMPLEMENTED** — dev-built, live-deployed, qa-tested
-with a PASS verdict; reviewer Pass 16 verdict is NOT CLEAR pending REV-081 (a minor gap, fix in progress at
-dev) — see `docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-6, INC-7 (admin
+with a PASS verdict; reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers — see
+`docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-6, INC-7 (admin
 portal: tunables editor FR30, track-record view & kill-switch UI FR31–FR32) remain DRAFT** — not yet built,
 no dev work has started on them. Design revised several times
 since: 2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves
@@ -160,8 +160,8 @@ including the REV-033/034/036/040/041/044/045/046 fixes layered on since the ori
 **INC-3 (kill-switch) and INC-4 (AI provider abstraction) have shipped** — dev-implemented, qa-tested, and
 reviewer-cleared with zero blockers through Pass 14 (`docs/review-log.md`). **INC-5 (admin portal
 foundation: auth, hosting, watchlist & holdings CRUD) has also shipped** — dev-implemented, live-deployed,
-qa-tested with a PASS verdict; reviewer Pass 16 verdict is NOT CLEAR pending REV-081, whose fix is in
-progress at dev (`docs/review-log.md`). **INC-6, INC-7 (admin portal: tunables editor, track-record view &
+qa-tested with a PASS verdict; reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero
+blockers (`docs/review-log.md`). **INC-6, INC-7 (admin portal: tunables editor, track-record view &
 kill-switch UI) remain DRAFT and unbuilt** — read the plan before starting either of them, in sequence, per
 the approved build order. **No open design questions remain for any of INC-3–INC-7.**
 
@@ -192,7 +192,7 @@ the approved build order. **No open design questions remain for any of INC-3–I
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR24, FR25, FR26 (kill-switch, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §13. INC-3: dev-built, qa-tested, reviewer-cleared zero blockers through Pass 14. `sql/kill_switch.sql` is not yet applied to the live Supabase project (Arjun's explicit deferral, review-log.md REV-070) — a deployment/scheduling obligation, not a design or code gap; Phase-4 closure must not treat FR24–FR26 as live-verified until that apply happens. |
-| FR27, FR28, FR29 (admin portal foundation, 2026-07-26 CR), NFR5, NFR6 | **IMPLEMENTED** — `admin-portal.md` §16.1–§16.3, §16.7–§16.8. INC-5: dev-built, live-deployed, qa-tested with a PASS verdict. Reviewer Pass 16 verdict NOT CLEAR pending REV-081 (minor, fix in progress at dev, `docs/review-log.md`); Phase-4 closure must not treat FR27–FR29/NFR5–6 as reviewer-clear until that fix lands. |
+| FR27, FR28, FR29 (admin portal foundation, 2026-07-26 CR), NFR5, NFR6 | **IMPLEMENTED** — `admin-portal.md` §16.1–§16.3, §16.7–§16.8. INC-5: dev-built, live-deployed, qa-tested with a PASS verdict. Reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/review-log.md`); FR27–FR29/NFR5–6 are reviewer-clear. |
 | FR30, FR31, FR32 (admin portal, 2026-07-26 CR) | **DRAFT** — `admin-portal.md` §16.4–§16.6. INC-6/INC-7. Not yet built; no dev work has started. |
 | FR33 (AI provider abstraction, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §14. INC-4: dev-built, qa-tested (5 of 6 AC), reviewer-cleared zero blockers through Pass 14. AC6 (live-Gemini smoke test) is deferred, not failed — no `GEMINI_API_KEY` was available in the build environment; needs a follow-up run with real credentials before AC6 is marked PASS (`docs/handoff.md`). |
 
@@ -203,8 +203,8 @@ retired (2026-07-16)** — the requirement IDs remain in `docs/requirements.md` 
 only. **FR24–FR26 and FR33 (current, 2026-07-26 CR) are IMPLEMENTED** — INC-3 and INC-4 shipped, per the
 table above; the module files (`operational-controls.md` §13–§14) are as-built documentation for these,
 not draft design. **FR27–FR29 and NFR5–NFR6 (current, 2026-07-26 CR) are also IMPLEMENTED** — INC-5
-shipped (dev-built, live-deployed, qa-tested PASS; reviewer Pass 16 NOT CLEAR pending REV-081 fix in
-progress at dev), per the table above; `admin-portal.md` §16.1–§16.3, §16.7–§16.8 are as-built
+shipped (dev-built, live-deployed, qa-tested PASS; reviewer Pass 17 CLEAR — REV-081/082/083 all
+RESOLVED), per the table above; `admin-portal.md` §16.1–§16.3, §16.7–§16.8 are as-built
 documentation for these, not draft design. **FR30–FR32 (current, 2026-07-26 CR) remain DRAFT design**,
 covered by the Increment Plan above (INC-6–INC-7) and the `admin-portal*`/`tunables-*` module files; not
 yet implemented, no dev work started. **No open design questions remain for any of INC-3–INC-7.** No dev
