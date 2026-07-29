@@ -82,9 +82,24 @@ class _FakeTunablesTable:
         return _FakeExec(self._data)
 
 
+class _FakeSession:
+    """Stands in for `SyncPostgrestClient.session` (a real `httpx.Client` in
+    production) -- only needs the one settable `.timeout` attribute
+    `_fetch_tunables()` writes post-construction (2026-07-29 fix)."""
+
+    def __init__(self):
+        self.timeout = None
+
+
+class _FakePostgrest:
+    def __init__(self):
+        self.session = _FakeSession()
+
+
 class _FakeSupabaseClient:
     def __init__(self, data):
         self._data = data
+        self.postgrest = _FakePostgrest()
 
     def table(self, _name):
         return _FakeTunablesTable(self._data)
@@ -95,8 +110,12 @@ def mock_tunables_fetch(monkeypatch):
     """Patches supabase.create_client so config.py's tier-1 fetch (when NOT
     skipped) returns a controlled row set instead of hitting the network.
     Returns a setter the test calls BEFORE reload_config(...). `captured` (a
-    dict passed by the caller) records the create_client kwargs, if given --
-    used by the AC13 timeout-plumbing test."""
+    dict passed by the caller) records the create_client call args and the
+    resulting fake client's `.postgrest.session.timeout` (set AFTER
+    fake_create_client returns, so `captured["client"]` is captured by
+    reference and read post-hoc by the caller) -- used by the AC13
+    timeout-plumbing test. `create_client()` is called with NO `options`
+    kwarg since the 2026-07-29 fix (see config.py's `_fetch_tunables`)."""
     import supabase as supabase_pkg
 
     def _set(rows, captured=None, raises=None):
@@ -107,7 +126,10 @@ def mock_tunables_fetch(monkeypatch):
                 captured["options"] = options
             if raises is not None:
                 raise raises
-            return _FakeSupabaseClient(rows)
+            client = _FakeSupabaseClient(rows)
+            if captured is not None:
+                captured["client"] = client
+            return client
 
         monkeypatch.setattr(supabase_pkg, "create_client", fake_create_client)
 
@@ -333,13 +355,18 @@ def test_ac13_timeout_tunable_default_and_override(reload_config):
 
 
 def test_ac13_timeout_is_actually_passed_into_client_options(mock_tunables_fetch, reload_config):
+    """2026-07-29 fix: create_client() is now called with NO `options` kwarg
+    (passing a caller-built ClientOptions crashed on the installed supabase-py
+    -- see test_fetch_tunables_real_client_construction.py) -- the timeout is
+    set on the constructed client's `postgrest.session.timeout` afterward."""
     captured = {}
     mock_tunables_fetch([{"key": k, "value": v} for k, v in _SEED.items()], captured=captured)
 
     reload_config(SKIP_TUNABLES_FETCH="false", TUNABLES_FETCH_TIMEOUT_MS="9000",
                   SUPABASE_URL="https://example.invalid.supabase.co")
 
-    assert captured["options"].postgrest_client_timeout == 9.0   # ms -> seconds
+    assert captured["options"] is None   # no caller-built ClientOptions passed in
+    assert captured["client"].postgrest.session.timeout.connect == 9.0   # ms -> seconds, httpx.Timeout
 
 
 def test_ac13_skip_tunables_fetch_makes_zero_network_calls(reload_config, monkeypatch):
