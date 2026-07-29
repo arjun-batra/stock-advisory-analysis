@@ -2551,3 +2551,39 @@ remained stale in five spots (header, module-map rows, §15 coverage-map row), c
 files REV-089 had just corrected to say INC-6 was IMPLEMENTED/reviewer-Pass-19-pending. Same recurring
 status-propagation pattern this log has now named repeatedly (REV-073, REV-079, REV-084, REV-089). Routed to
 tech-lead, not gating. **RESOLVED at Pass 20** — see Pass 20's carried-items section, `docs/review-log.md`.
+
+---
+
+## Pass 20 — 2026-07-29 (INC-7 admin portal: track-record view & kill-switch UI — diff-scoped audit,
+FR31/FR32) — ARCHIVED 2026-07-29 at Pass 22's close
+
+Diff-scoped audit of INC-7 (`sql/kill_switch_portal_grant.sql`, `track-record/page.tsx`,
+`KillSwitchToggle.tsx`, `AuthGuard.tsx` wiring, 23 new tests). All six passes clean: complete FR31/FR32
+traceability; no `[SCOPE-CREEP]`; no new `[HARDCODED]`; no new `[BLOAT]`; no new `[SECURITY]` (the
+`set_kill_switch` admin-check bypass logic and both new REVOKE statements — `kill_switch_state`'s four-verb
+revoke, `kill_switch_audit`'s TRUNCATE-only revoke — were independently re-derived from Postgres
+three-valued-boolean first principles and from first-principles REVOKE-grammar reasoning, not
+pattern-matched against the design doc); structure matched `admin-portal.md` §16.8. Also independently
+re-verified RESOLVED (moved to archive with this entry): REV-090 (`[DESIGN-GAP]`, `design.md` master-index
+staleness), REV-091 (`[TEST-GAP]` major, `tunables_static.test.ts` two-policy shape), REV-092
+(`[DESIGN-GAP]`, `admin-portal-tunables.md` SQL-block drift) — all three from the Pass-19-addendum hotfix.
+**Verdict: INC-7 CLEAR** — zero blockers, zero majors. Two new non-blocking minors surfaced:
+
+- **REV-093 — `[DESIGN-GAP]` minor.** The same status-staleness pattern this log named five times before
+  (REV-073/079/084/089/090) recurred for INC-7: five spots across `design.md`, `increment-plan.md`, and
+  `admin-portal.md` still said INC-7 was DRAFT after it shipped and was reviewer-cleared. Routed to
+  tech-lead. **RESOLVED — independently re-verified at Pass 22 (2026-07-29):** all five spots in
+  `docs/design.md` (header, module map, §15), `docs/design/increment-plan.md` (title, status note, `###
+  INC-7` heading), and `docs/design/admin-portal.md` (status block) now correctly read INC-7
+  IMPLEMENTED/reviewer-Pass-20-CLEAR, confirmed by direct read of current file content, not the fix's own
+  claim.
+- **REV-094 — `[DESIGN-GAP]` minor.** `docs/design/admin-portal.md` §16.6's SQL block — which dev's own
+  handoff cited as "the exact SQL block to copy verbatim" — didn't show the two REVOKE statements dev
+  correctly added (the same TRUNCATE-grant gap class as REV-081/086, closed one increment later on
+  `kill_switch_state`/`kill_switch_audit`), so a future reader trusting the block as complete would
+  reproduce the gap. Routed to tech-lead. **RESOLVED — independently re-verified at Pass 22 (2026-07-29):**
+  `admin-portal.md:156,163` now show both REVOKE statements inline in §16.6's code block, each with a
+  one-line comment naming the REV-081/REV-086/REV-094 precedent, matching the file that's actually applied.
+
+Full finding text, method notes, and the six-pass detail are in git history at the Pass-20 commit / prior
+revisions of `docs/review-log.md`.
