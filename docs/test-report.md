@@ -219,6 +219,68 @@ claim), and dev (reconcile `sql/kill_switch.sql`'s header once release confirms)
 No functional regression, no cross-increment interaction defect, and no build/lint failure found in this
 pass; BUG-004 is the only item filed. No production code was modified by qa.
 
+### 7. BUG-004 follow-up — re-verified resolved (2026-07-29, later same session)
+
+**Trigger.** pm's Phase 4 closure sign-off flagged BUG-004 as stale: reviewer's Pass 22/23
+(`docs/review-log.md`) reported the four-artifact contradiction fixed. Per this role's standing rule not
+to take a resolution claim at face value (the same rule that kept BUG-004 open through the first
+evidence-block attempt in §5 above), re-read the primary artifacts myself before closing anything.
+
+**Independently re-checked, current file content, this pass:**
+
+- `sql/kill_switch.sql:19-26` (current header) — now reads "APPLIED AND LIVE (INC-3, already live:
+  kill_switch_state, kill_switch_audit, set_kill_switch(boolean, text)) — confirmed directly against
+  production (project `ikghqdtlbwifwnooytmm`) via a live pause/resume test," and explicitly names its own
+  prior "NOT APPLIED" text as BUG-004's stale claim, now corrected. No hedging language, no residual
+  "not yet" phrasing anywhere in the block.
+- `docs/runbook.md:425-434` (RLS-posture section, release-owned/authoritative per `CLAUDE.md`'s ownership
+  table) — now reads "`kill_switch_state` and `kill_switch_audit` **ARE** part of this live-confirmed set
+  (INC-3's SQL was applied to production early in the session)," citing `docs/design/operational-
+  controls.md` §13.2 for the RLS/REVOKE design and `docs/handoff.md`'s dated INC-3 evidence block for the
+  live verification. This is the same document whose prior wording ("not yet applied") was one of
+  BUG-004's four contradicting artifacts — it no longer says that.
+- `docs/handoff.md:137-198` (the dated evidence block itself, unchanged since my prior read in §5's
+  follow-up) — dated 2026-07-29, attributed to the orchestrator via Supabase MCP `execute_sql` against
+  project `ikghqdtlbwifwnooytmm`, with raw query text and raw results for: pause suppressing dispatch
+  before `net.http_post` (AC2, `net._http_response` max-id unchanged across the paused-dispatch attempt),
+  a 2-row audit trail with correct `action`/`actor`/`source`/timestamps ~5s apart (AC4), and RLS
+  enabled on both tables via `pg_class.relrowsecurity` (AC5). The block explicitly does not claim AC3.
+- `docs/review-log.md` Pass 22/23 (`:908-946`, `:1033-1036`) — reviewer independently re-derived the
+  reconciliation the same way, not by taking the "fixed" claim on its word: confirmed the runbook
+  paragraph's exact wording change, confirmed `kill_switch.sql`'s header exact wording change, and
+  concluded "BUG-004's four-document contradiction ... is resolved on the release/dev sides checked
+  here" (`review-log.md:921-922`). Pass 23 explicitly carries "REV-070's AC3 residual" as the only
+  remaining open live-verification item for kill-switch, distinct from AC2/AC4/AC5 (`review-log.md:1033-
+  1036`, `:1148-1150`).
+- `docs/design.md:206` (the fourth artifact in the original contradiction) — now states "`sql/
+  kill_switch.sql` is applied and live in the Supabase project," consistent with the other three. (Its
+  wording still lists "AC1–AC5" as the pending functional test rather than "AC3 only" — a minor staleness
+  in scope/granularity, not a reassertion of the applied/not-applied contradiction BUG-004 was about; not
+  re-flagged here as it is tech-lead's document and outside what BUG-004 covers.)
+
+**Conclusion — contradiction genuinely resolved, not just reported resolved.** All four artifacts that
+disagreed when BUG-004 was filed (`docs/runbook.md`, `sql/kill_switch.sql`'s header, `docs/review-log.md`
+REV-070, `docs/design.md`'s FR24-26 row) now agree: the migration is applied and live in production. The
+evidence block's content was already checked line-by-line for internal soundness in §5 above (mechanism
+matches `sql/scheduler_pgcron.sql`'s actual source); what was missing then — and is now present — is that
+the project's other authoritative artifacts no longer contradict the block's precondition. **BUG-004 is
+CLOSED.**
+
+**Status updates applied as a result:**
+- **INC-3 AC2** (pausing suppresses dispatch before any `pg_net` call) — **independently verified**, per
+  `docs/handoff.md:152-162`'s raw evidence (dispatch returned `null`, `net._http_response` max-id
+  unchanged) corroborated against `sql/scheduler_pgcron.sql:52-58`'s actual source and no longer blocked
+  by a deployment-status contradiction.
+- **INC-3 AC4** (audit trail correctness) — **independently verified**, per `docs/handoff.md:168-176`'s
+  raw 2-row query result (correct `action`, non-null `actor`, correctly attributed `source`, ~5s apart).
+- **INC-3 AC5** (RLS enabled on both tables) — **independently verified**, per `docs/handoff.md:181-187`'s
+  raw `pg_class` query result matching `sql/kill_switch.sql`'s design.
+- **INC-3 AC1** — unaffected, already covered per the original Phase-4 pass (§5 above).
+- **INC-3 AC3** (resume-baseline / no-false-alarm test under synthetic staleness) — **remains open,
+  genuinely deferred**. No evidence block anywhere in the repo addresses AC3; `docs/handoff.md:196-198`
+  itself says so explicitly, and `docs/review-log.md` Pass 23 (`:1033-1036`, `:1148-1150`) independently
+  confirms it as the sole remaining live-verification gap for kill-switch. Not touched by this closure.
+
 ### Verdict — Phase 4 whole-system regression
 
 **PASS**, with two open items flagged (not functional defects): 204/204 Python passed, 63/63 admin-portal
@@ -247,10 +309,19 @@ have written evidence in the repo that cannot be independently corroborated beca
 project's own deployment record (BUG-004) — resolving that conflict is a precondition for any future
 re-attempt, not just supplying another evidence block.
 
+**Superseded by §7, same session.** BUG-004's contradiction was subsequently fixed by dev/release (`sql/
+kill_switch.sql`'s header, `docs/runbook.md`'s RLS-posture section, `docs/design.md`'s FR24-26 row) and
+independently re-verified both by reviewer (Pass 22/23) and by qa (§7 above) against current file
+content. **INC-3's AC2/AC4/AC5 are now independently verified; BUG-004 is CLOSED. AC1 remains covered;
+AC3 remains genuinely open** — see §7 for the full re-verification and exact citations.
+
 ---
 
 ## Open bugs
 
-**BUG-004** — documentation-integrity: contradictory deployment-status claims for `sql/kill_switch.sql`
+None. (BUG-004 — documentation-integrity: contradictory deployment-status claims for `sql/kill_switch.sql`
 across `docs/runbook.md`, `sql/kill_switch.sql`'s header, `docs/review-log.md` (REV-070), and
-`docs/design.md`'s FR24-26 row. See §6 above for full detail. Owner: release + tech-lead + dev.
+`docs/design.md`'s FR24-26 row — **CLOSED 2026-07-29**, re-verified resolved; see §7 above for the
+independent re-check and exact citations. Full original detail archived in
+`docs/archive/test-report-archive.md` alongside the rest of this run once a newer run supersedes this
+file per doc hygiene.)
