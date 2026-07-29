@@ -1,3 +1,61 @@
+# Handoff — REV-096 fix: relocate `BATCH_SYSTEM_PROMPT` out of `ai_judge.py` into `prompts/`
+
+## Build plan (written before coding, per dev's updated workflow)
+
+- **Read first:** `docs/code-map.md` (`ai_judge.py` = provider-neutral judge, no other module reads
+  `BATCH_SYSTEM_PROMPT`), `docs/design/components.md:157-183` and
+  `docs/design/operational-controls.md:328-335` (tech-lead had already pre-updated both to say the
+  prompt "lives in `prompts/batch_system_prompt.txt`, loaded at import time by `ai_judge.py`" — no
+  design ambiguity to flag; pm's decision + tech-lead's design edit were both already on disk before
+  I started).
+- **Scope:** pm-decided, code-hygiene-only relocation (REV-096) — move the literal text verbatim,
+  keep the resulting formatted `BATCH_SYSTEM_PROMPT` value byte-identical. No prompt wording change,
+  no new config tunable (the path itself isn't a runtime-configurable value — same posture as
+  `config._CACHE_PATH`, a structural file location, not a tunable).
+- **Files:** new `prompts/batch_system_prompt.txt` (the relocated text, with the one
+  `{RATIONALE_MAX}` interpolation point kept as a literal `{RATIONALE_MAX}` placeholder);
+  `scripts/ai_judge.py` (delete the inline constant, read the file at import time, resolve the
+  placeholder via `str.replace` — not `str.format`, since the prompt's own JSON-example text
+  contains literal `{`/`}` that `str.format` would otherwise require escaping).
+- **Contracts touched:** none — `BATCH_SYSTEM_PROMPT` stays a module-level `str` in `ai_judge.py`,
+  same two call sites (`judge_batch`, lines ~300/318), same value.
+- **Verification:** built a throwaway script that `exec()`'d the pre-edit inline constant with
+  `RATIONALE_MAX=280` bound to capture the exact ground-truth string, then compared it byte-for-byte
+  against `ai_judge.BATCH_SYSTEM_PROMPT` after the edit (`==` True, same length, 1821 chars) — plus
+  the full test suite and a fresh import smoke test.
+
+## Files touched
+
+- `prompts/batch_system_prompt.txt` — new. The relocated prompt text, `{RATIONALE_MAX}` left as a
+  literal placeholder resolved at import time.
+- `scripts/ai_judge.py` — removed the inline `BATCH_SYSTEM_PROMPT` string constant; added
+  `import pathlib`, `_PROMPT_PATH` (resolved the same way `config._CACHE_PATH` is — repo root via
+  `pathlib.Path(__file__).resolve().parent.parent`, since `scripts/` is a flat, non-package
+  directory), and a `.read_text().replace("{RATIONALE_MAX}", str(RATIONALE_MAX))` load with a
+  fail-loud `SystemExit` if the file is missing/unreadable (matches this codebase's established
+  fail-loud posture for required config, e.g. `config.require_secrets`/`config._tunable`).
+
+## How to run
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` from repo root — 207 passed (no test
+  asserted the prompt's literal content, so none needed changes).
+- Smoke test: `python3 -c "import sys; sys.path.insert(0,'scripts'); import
+  ai_judge; print(len(ai_judge.BATCH_SYSTEM_PROMPT))"` with `SKIP_TUNABLES_FETCH=true` set — imports
+  cleanly, prints `1821` (same length as before the move).
+
+## Known limitations
+
+- None functional — this is a pure relocation. `docs/design/components.md` and
+  `docs/design/operational-controls.md` already describe the post-fix state (tech-lead pre-updated
+  them alongside the pm decision), so no design-doc follow-up is owed by this change.
+- Unrelated in-flight changes were present in the working tree before this session started
+  (`scripts/config.py`, `scripts/ingest.py`, `scripts/publish_prices.py`, `sql/kill_switch.sql`,
+  `tests/test_ingest.py`, `tests/test_tunables.py`, plus a new untracked
+  `sql/schema_truncate_grant_closure.sql`) — not touched or reviewed here; this handoff's diff is
+  scoped strictly to `prompts/batch_system_prompt.txt` and `scripts/ai_judge.py`.
+
+---
+
 # Handoff — Evidence record: INC-3 kill-switch live test (AC2/AC4/AC5) + ClientOptions hotfix live confirmation
 
 ## Context
