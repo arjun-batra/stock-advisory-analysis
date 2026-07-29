@@ -5,126 +5,183 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-5 — Admin portal foundation (FR27, FR28, FR29, NFR5, NFR6) — backfilled QA pass — 2026-07-29
+## INC-6 — Admin portal tunables editor (FR30) — 2026-07-29
 
-**Scope:** `admin-portal/` (Next.js App Router, TypeScript) and `sql/admin_portal_rls.sql`, both already
-merged to main (`f48f5f7`, `6895db0`) and live in production at `https://sentinel-admin.arjunbatra.xyz`.
-INC-5 was dev-built and live-tested by hand (Arjun + orchestrator) but had never gone through a formal qa
-pass — this entry backfills that. Acceptance criteria: `docs/design/increment-plan.md` "### INC-5" (8 ACs,
-referencing `docs/design/admin-portal.md` §16.1–§16.3, §16.7–§16.8). Requirements: FR27–FR29, NFR5–NFR7
-(`docs/requirements.md` §5.11/§6; scoping history in Decisions #22–25, #27–29).
+**Scope:** `sql/admin_portal_tunables.sql`, `tunables_cache.json`, `admin-portal/app/(app)/tunables/page.tsx`
+(+ small edits to `admin-portal/components/AuthGuard.tsx`, `admin-portal/lib/validation.ts`),
+`scripts/config.py`'s two-tier tunables fallback chain, `scripts/run_hourly.py`/`run_discovery.py`/
+`publish_prices.py` (heartbeat + write-back wiring), `.github/workflows/hourly-watchlist.yml`/
+`publish-prices.yml` (concurrency rename, job-scoped permissions, commit step), `tests/conftest.py`.
+Branch: `claude/admin-portal-evaluation-txaehj`, commit `b2934c1`. Design: `docs/design/admin-portal-
+tunables.md`, `docs/design/tunables-fallback.md`, `docs/design/tunables-workflow-writeback.md` (all
+§16.4). Acceptance criteria: `docs/design/increment-plan.md` lines 189-282 (16 ACs). Dev's handoff:
+`docs/handoff.md`.
 
-**Session constraint, stated up front:** this qa session has **no live Supabase network access** — outbound
-HTTPS to `ikghqdtlbwifwnooytmm.supabase.co` was denied by the org egress proxy policy (403 on CONNECT,
-confirmed via the proxy's own status endpoint) and there is no Supabase MCP tool bound to this session's
-toolset. Per the agent-proxy's own instructions, a policy denial is reported, not retried or routed around.
-This means every AC that requires a live query against the real Supabase project (table/policy existence,
-live CRUD, live anon-REST rejection) could **not** be independently reproduced by qa this run. Those items
-are reported as **relying on the prior independent verification already stated in this task's context**
-(Arjun's hand-testing + the orchestrator's direct checks), not as freshly qa-verified — see the per-AC table
-below and GAP-001.
+**Session constraint, same as INC-5:** no live Supabase network access (org egress denies
+`ikghqdtlbwifwnooytmm.supabase.co`) and no Supabase MCP / GitHub Actions dispatch tool bound to this
+session. Every AC requiring a live migration apply, live RLS/CRUD, or a real workflow dispatch could
+**not** be independently reproduced this run — reported as **deferred**, not as verified. See the
+per-AC table below.
 
-### What was added
+### Independent verification of dev's two flagged claims
 
-No test framework existed anywhere in this repo for TypeScript/JS (`admin-portal/package.json` has no
-`jest`/`vitest`/`playwright` devDependency; only `next`, `eslint`). Rather than add a new devDependency to
-`admin-portal/package.json` (a dev-owned config file) for a single increment's worth of tests, used Node
-22's built-in `--experimental-strip-types` + `node:test` + `node:assert` — zero new dependencies, runs
-directly against the real `.ts` source files. New directory: `tests/admin_portal/` (4 files, 30 tests):
+1. **"168 passed, 3 failed, all three intended, not regressions."** Independently re-ran the pre-existing
+   suite before adding anything: reproduced **exactly** the same 168/3 split, same three test IDs
+   (`test_nse_model_pair_inherits_watchlist_pair_by_default`,
+   `test_discovery_min_market_cap_override_propagates`,
+   `test_heartbeat_is_ok_when_every_ticker_processes_cleanly`). Read all three failures against the new
+   design contract, not the claim:
+   - The two `test_config.py` failures set `GEMINI_MODEL`/`DISCOVERY_MIN_MARKET_CAP` via env var and
+     asserted propagation. Both keys are curated tunables as of Decision #27 — `scripts/config.py:194,
+     313` sources them only from `_tunable()` (table → cache), never `os.environ`; confirmed by reading
+     the code, not inferring it. **Genuine, intended contract change — updated, not a regression.**
+   - `test_heartbeat_is_ok_when_every_ticker_processes_cleanly` asserted `status == "ok"` for a clean
+     ticker run. `tests/conftest.py`'s new `SKIP_TUNABLES_FETCH=true` default makes every curated key
+     resolve from tier 2 for the whole suite, so `config.TUNABLES_DEGRADED` is `True` throughout, and
+     `run_hourly.py:161`'s `status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"`
+     correctly reports `"partial"`. **Genuine, intended (AC14/REV-045) — the test conflated two
+     independent conditions (ticker cleanliness vs. tunables degradation) that INC-6 correctly split.**
+   - **Verdict: all 3 are confirmed-intended contract changes, not regressions.** Fixed in `tests/`
+     (below), not in production code. Full suite is now 201 passed, 0 failed: 171 baseline (168 passed +
+     3 failed, all 3 now fixed forward rather than carried as red) + 30 new tests (28 in
+     `test_tunables.py`, 1 in `test_config.py`, 1 in `test_run_orchestration.py`).
+2. **The stale-permissions-premise account.** `git log --oneline -- .github/workflows/hourly-
+   watchlist.yml` shows exactly the sequence dev described: commit `920876f` ("release+pm+dev+qa: fix
+   Pass 11 audit findings", dated 2026-07-28 04:53 UTC) added a **top-level** `permissions: {contents:
+   read}` block, predating INC-6's build commit `b2934c1` (2026-07-29 04:07 UTC) by nearly a day.
+   `docs/design/tunables-fallback.md`'s premise ("hourly-watchlist.yml has no permissions: block at all
+   today") was accurate when drafted (2026-07-27/28) but stale by the time INC-6 built. **Account
+   confirmed accurate via `git log -p`, independently, not taken on trust.** The resulting file was also
+   independently confirmed to satisfy AC16's literal text: exactly one `permissions:` block in the file,
+   indented under `jobs.watchlist` (`grep -n permissions:` → line 45 only, inside the job body, no
+   top-level occurrence) — `tests/test_tunables.py::test_ac16_permissions_block_is_job_scoped_not_top_level`
+   locks this in permanently.
 
-1. **`validation.test.ts`** (9 tests) — `admin-portal/lib/validation.ts` against FR28/FR29's field
-   constraints (`docs/design/admin-portal.md` §16.3, mirrors `sql/schema.sql`'s CHECK constraints).
-   Happy path (valid row, every declared market/type/status/currency combination), edge cases (whitespace-
-   only ticker, `shares`/`cost_basis` exactly at the `>0` boundary), invalid input (all fields wrong at
-   once), and a configurability check (currency list drives validation, not a hardcoded copy).
-2. **`admin_guard.test.ts`** (5 tests) — `admin-portal/lib/admin-guard.ts`'s `checkAuthorization()`, the
-   AC2/AC3 UI-gate logic, against a fake Supabase client. Happy path (allowlisted account → authorized, not
-   signed out), edge case (no session at all), invalid input (non-allowlisted account → unauthorized **and**
-   signed out immediately per AC2's exact wording; an `is_admin()` RPC error fails closed, not open).
-3. **`static_source_checks.test.ts`** (8 tests) — permanent grep-based regression tests over the actual
-   shipped source: zero dynamic `process.env[...]` access anywhere (the exact pattern behind the real
-   production bug fixed in `6895db0`), every `process.env` reference is one of the two documented
-   `NEXT_PUBLIC_SUPABASE_*` literals, no secret-looking string, no password/magic-link/OTP code path
-   anywhere, `admin_allowlist` has RLS enabled with zero `create policy` statements, `is_admin()` is
-   `SECURITY DEFINER`, and both write policies gate on `is_admin()` in **both** `USING` and `WITH CHECK`.
-4. **`build_bundle.test.ts`** (4 tests) — runs a **real** `next build` with disposable marker env values
-   (`qa-test-marker-...`, not real credentials) and inspects the actual `.next/static` output: the build
-   succeeds, the marker values are found inlined in the client bundle (**the actual regression test for
-   the `6895db0` fix** — if the dynamic-`process.env[name]` bug were reintroduced, these markers would
-   never appear, only `undefined`), no client-side source maps are emitted, and no secret-looking string
-   appears anywhere in the built output. Cleans up its own `.next/` artifact afterward (gitignored, but
-   left tidy).
+### What was added / changed in `tests/`
 
-Run: `node --experimental-strip-types --test tests/admin_portal/*.test.ts`
+- **New `tests/test_tunables.py`** (28 tests) — the two-tier fallback chain end to end. Two techniques,
+  both established by the design itself (`tunables-fallback.md` REV-041's "single patchable seam" note):
+  (a) most tests monkeypatch `config._TUNABLES`/`_TUNABLES_CACHE`/`_CACHE_PATH` directly and call
+  `_tunable()`/`write_tunables_cache_if_fetched()` — no reload needed; (b) tests needing a real tier-1
+  fetch to run (AC5/AC10/AC13 propagation) patch `supabase.create_client` before `reload_config()`
+  reloads `config.py`. Covers AC2 (byte-for-byte seed diff, independent of dev's own diff), AC5 (import-time-
+  only pickup, empty-string-is-a-value edge case), AC8 (static: only `run_hourly.py` calls the writer),
+  AC9 (direct-unit + a real subprocess `import config` reproduction in an isolated tmp-copy of `scripts/`
+  — never touches the real repo `tunables_cache.json`), AC10 (both AND-gate directions, mocked table
+  fetch), AC12 (validate-before-write, never-shrinks, tier-1 cast-failure fails loud), AC13 (timeout
+  default/override, timeout actually reaches `ClientOptions`, zero network calls under
+  `SKIP_TUNABLES_FETCH` via a `socket.socket.connect` trap), AC14 (degraded → heartbeat at
+  `run_discovery.py`/`publish_prices.py`, both the degraded and not-degraded halves), and AC11/AC15/AC16
+  as durable structural checks over the current workflow YAML content (not a git-diff-against-a-commit,
+  which would break on the next increment's commits — the one-time diff-vs-baseline for *this* increment
+  was confirmed directly via `git diff`, see above/below, not encoded as a standing test).
+- **New `tests/admin_portal/tunables_static.test.ts`** (13 tests) — closes the gap dev flagged in Known
+  Limitations ("no admin-portal-side test yet exercises the new `/tunables` page"). Static/source-level,
+  same convention as `static_source_checks.test.ts`: `tunables` table RLS-enabled, CHECK registry is
+  exactly the 10 keys, `admin_write_tunables` policy is `select, update` only (not `for all`), zero
+  insert/delete policy, `updated_at`/`updated_by` server-stamped by trigger; portal page's `.update()`
+  call sends exactly `{ value }` (never `id`/`key`/`updated_at`/`updated_by`), no `.insert()`/`.delete()`
+  against `tunables`, reads via `.from("tunables").select("*")`; `AuthGuard` nav includes `/tunables`;
+  `validateTunableValue` happy path / whitespace edge case / empty invalid-input case.
+- **Updated `tests/test_config.py`** — `test_nse_model_pair_inherits_watchlist_pair_by_default` rewritten
+  to test only the inheritance mechanism itself (unaffected by INC-6), since it can no longer prove
+  inheritance by setting `GEMINI_MODEL` via env var; added
+  `test_gemini_model_env_var_no_longer_has_any_effect` to explicitly cover that half of the new contract.
+  `test_discovery_min_market_cap_override_propagates` renamed to
+  `test_discovery_min_market_cap_resolves_from_cache_not_env_var` and rewritten the same way.
+- **Updated `tests/test_run_orchestration.py`** — `test_heartbeat_is_ok_when_every_ticker_processes_cleanly`
+  now neutralizes `config.TUNABLES_DEGRADED = False` so it isolates the ticker-cleanliness half of the
+  "ok" rule it was originally written for; added
+  `test_heartbeat_is_partial_when_tunables_are_degraded` as the sibling assertion for the degraded half
+  (AC14, `run_hourly.py`).
+- No production code touched by qa, per `CLAUDE.md`.
 
 ### Suite results
 
-- **New JS/TS suite:** `tests/admin_portal/*.test.ts` → **26 passed, 0 failed** (9 validation + 5
-  admin-guard + 8 static-source-checks + 4 build-bundle).
-- **Full Python regression:** `python3 -m pytest -q --tb=short` → **171 passed, 0 failed** — identical
-  count to the pre-INC-5 baseline recorded in `docs/handoff.md` (171), confirming zero regressions; INC-5
-  added no Python files.
-- **Lint:** `npx eslint .` (admin-portal) → clean, zero errors/warnings (re-confirms dev's handoff claim).
+- **Python:** `python3 -m pytest -q --tb=short` → **201 passed, 0 failed** (was 168 passed/3 failed on
+  dev's handoff; the 3 failures are fixed here as described above, and 30 new tests added: 28 in
+  `test_tunables.py` + 2 net-new in `test_config.py`/`test_run_orchestration.py`).
+- **Admin-portal JS/TS:** `node --experimental-strip-types --test tests/admin_portal/*.test.ts` →
+  **39 passed, 0 failed** (26 pre-existing + 13 new in `tunables_static.test.ts`).
+- **Lint:** `npx eslint .` (admin-portal) → clean, zero errors/warnings.
 
 ### Shippability check (real entry point)
 
-Ran the actual production entry point locally — `next build` then `next start -p 3311` (not `next dev`,
-which dev's handoff used) — with disposable marker env vars, and hit every route with `curl`:
+`npm run build` (real `next build`, not dev mode) with disposable `qa-test-marker-...` env values:
+succeeded, `/tunables` appears in the route table alongside `/`, `/login`, `/watchlist`, `/holdings`,
+statically prerendered. `next start -p 3312` + `curl`:
+- `GET /tunables` (no session) → 200, renders `AuthGuard`'s "Checking session…" shell — same pattern as
+  INC-5's `/watchlist`/`/holdings` (client-side redirect after hydration; RLS is the real server-side
+  gate regardless of what the shell renders pre-hydration).
 - `GET /` → 200.
-- `GET /login` → 200, renders exactly one auth control ("Sign in with Google" button calling
-  `signInWithOAuth({ provider: "google" })`); page text contains no "password" or "magic link" substring.
-- `GET /watchlist`, `GET /holdings` (no session/cookies) → 200, rendering `AuthGuard`'s "Checking
-  session…" shell (client-side redirect to `/login` fires after hydration — matches design; a curl-level
-  200 here is expected, not a bypass, since the redirect is a client-side effect after the `is_admin()`
-  RPC call, which itself is gated server-side by RLS regardless of what the shell renders).
-- `GET /auth/callback` (no `code` param) → 307 to `/login?error=auth_failed`, matching the route's
-  documented fallback.
-No server errors in the `next start` log across any of the above. Confirms the built artifact from a real
-`next build` — not just dev-mode — serves and routes correctly end-to-end at this increment's scope.
+No server errors in the `next start` log. `.next/` build artifact cleaned up afterward.
 
 ### Acceptance criteria — per-AC verdict
 
-| AC (`increment-plan.md` INC-5) | Verdict | Evidence |
+| AC | Verdict | Evidence |
 |---|---|---|
-| 1. Login-only auth; no email/password/magic-link UI anywhere | **PASS** | `static_source_checks.test.ts` (zero matches for `signInWithPassword`/`signInWithOtp`/`type="password"`/magic-link anywhere in source); live `next build` + `next start` confirms `/login` renders only a Google sign-in button. Supabase Auth dashboard provider config itself (Google-only, others disabled) is an ops setting outside the repo — not independently re-checked by qa this session (no dashboard access); relying on dev's handoff confirmation + Arjun's own setup. |
-| 2. Non-allowlisted account signed out immediately with "not authorized" message; no successful watchlist/holdings query | **PASS (logic layer); relies on prior live verification for the network-traffic claim** | `admin_guard.test.ts` proves `checkAuthorization()` calls `supabase.auth.signOut()` and returns `unauthorized` for any non-`is_admin()` account (and fails closed on an RPC error). The devtools-network-tab claim (no successful query for that session) requires a real OAuth round-trip with a real non-allowlisted Google account — not reproducible in this session (no browser/OAuth, no live Supabase access); this was stated as already hand-verified live in the task context, not independently reproduced by qa. |
-| 3. Allowlisted admin reaches the authenticated app | **PASS (logic layer); relies on prior live verification** | `admin_guard.test.ts`'s authorized-path test. Real end-to-end OAuth round-trip not reproducible this session (same constraint as AC2); relying on the stated prior live confirmation. |
-| 4. CRUD works, DB-confirmed | **PASS, relies on prior live verification — not independently reproduced** | Code-level: `watchlist/page.tsx`/`holdings/page.tsx` call `.insert()/.update()/.delete()` against the real tables with `validateWatchlistRow`/`validateHoldingsRow` gating submission (tested, §"What was added" #1). No live DB query was run by qa this session (network blocked, see constraint note) to confirm rows actually landed — relying on the task context's statement that this was already hand-confirmed live. |
-| 5. Anon REST write (no session) rejected by RLS | **PASS, relies on prior live verification — not independently reproduced** | Statically confirmed both write policies (`admin_write_watchlist`/`admin_write_holdings`) are `for all to authenticated` gated on `is_admin()` — an unauthenticated `anon`-role caller doesn't even match the policy's role clause, so PostgREST correctly returns a permissions error by construction. Could not fire the actual `curl` against the live REST endpoint this session (network blocked); relying on the task context's stated `42501` confirmation. |
-| 6. `admin_allowlist`/`is_admin()` exist, used by both policies; `admin_allowlist` RLS-enabled with zero policies | **PASS — independently confirmed** | `static_source_checks.test.ts` confirms the migration file's shape exactly matches REV-033's fix (RLS enabled, zero `create policy` on `admin_allowlist`; `is_admin()` is `SECURITY DEFINER`; both write policies reference it in `USING` **and** `WITH CHECK`). Live-project existence of these objects is now confirmed by the recorded raw `execute_sql` evidence in `docs/handoff.md` ("AC8 / REV-034 live grant-and-policy audit — raw evidence", 2026-07-29) — `pg_class`/`pg_policies` output shows `admin_allowlist` RLS-enabled with zero policies and both write policies present, matching this file's static claim exactly. |
-| 7. No secret anywhere in the built bundle or network traffic | **PASS, independently re-verified (source + build)** | `static_source_checks.test.ts` + `build_bundle.test.ts`: zero dynamic `process.env[...]` access anywhere in source (the exact class of bug behind `6895db0`); marker env values correctly appear inlined in a real production build (proves the fix holds, not a stale claim); zero secret-looking strings (`service_role`, `SUPABASE_SERVICE`, `GEMINI_API_KEY`, `GITHUB_TOKEN`) in built output; zero client-side source maps emitted. The network-traffic half (HAR audit) was not re-run by qa (no live OAuth session available this run) — relying on the task context's stated prior HAR audit finding no service-role key in traffic. |
-| 8. REV-034 existing-schema grant/policy audit against the live project | **PASS — independently confirmed (evidence now on record)** | `docs/handoff.md`'s "AC8 / REV-034 live grant-and-policy audit — raw evidence" section now records the orchestrator's live `execute_sql` results against project `ikghqdtlbwifwnooytmm`, dated 2026-07-29: `admin_allowlist`/`watchlist`/`holdings` RLS-enabled, `admin_allowlist` has zero policies, both write policies present and `is_admin()`-gated, `is_admin()` is `SECURITY DEFINER`. That same audit surfaced REV-081 (the `admin_allowlist` TRUNCATE grant gap), fixed in `sql/admin_portal_rls.sql` — see GAP-001 resolution note below. GAP-001 (undocumented evidence trail) is resolved by this record; qa did not re-run the live query itself but the raw result is now reviewable in the repo, satisfying this AC's own "verify-against-reality" text. |
+| 1. `tunables` seeded w/ 10 FR30 keys, `ALERTS_ENABLED="true"` | **PASS (static+live-seed-diff); RLS/CRUD live-behavior DEFERRED** | SQL migration shape/CHECK/seed values confirmed by direct read + `tunables_static.test.ts`. Live RLS rejection and live CHECK-constraint violation need the migration applied to the real project (not done — same as INC-5's `sql/admin_portal_rls.sql` pattern; orchestrator applies post-handoff). |
+| 2. `tunables_cache.json` byte-for-byte matches SQL seed | **PASS — independently re-verified** | `test_ac2_cache_seed_matches_sql_seed_byte_for_byte` diffs the two files directly (own transcription, not reused from dev's diff); `ALERTS_ENABLED: "true"` confirmed in both. |
+| 3. Anon/no-session write rejected; admin insert/delete rejected; bad `key` fails CHECK | **PASS (static shape); live curl DEFERRED** | Policy text confirmed `for select, update to authenticated`, not `for all`; zero insert/delete policy exists (RLS-enabled + zero policy = denied by construction). No live Supabase to fire the actual `curl`/insert/delete attempts. |
+| 4. Update stamps `updated_at`/`updated_by` server-side, visible on next read | **PASS (static trigger shape + portal never sends those fields); live round-trip DEFERRED** | Trigger body confirmed (`new.updated_at := now()`, `new.updated_by := coalesce(auth.jwt()->>'email', session_user)`); portal's `.update()` call confirmed to send only `{ value }` (`tunables_static.test.ts`). No live write to round-trip through `select *`. |
+| 5. `_tunable()`-derived values pick up an edit on next process start only | **PASS — independently re-verified** | `test_ac5_table_edit_propagates_on_next_process_start` + `test_ac5_resolved_value_does_not_change_mid_process` (mocked tier-1 fetch, real `importlib.reload`). |
+| 6. Cache write-back, unchanged case: zero commits | **DEFERRED** | Needs a live `hourly-watchlist.yml` dispatch against an unmodified live table. |
+| 7. Cache write-back, changed case: exactly one `github-actions[bot]` commit | **DEFERRED** | Needs a live dispatch + a portal edit against the applied migration. |
+| 8. Read-only workflows never write | **PASS — independently re-verified** | `test_ac8_run_discovery_and_publish_prices_never_call_write_tunables_cache` / `test_ac8_run_hourly_calls_write_tunables_cache_exactly_once` (static source checks, own greps, not reused from dev's). |
+| 9. Double-failure fails loud, non-zero exit | **PASS — independently re-verified** | `test_ac9_direct_double_miss_raises_systemexit_naming_the_key` (unit) + `test_ac9_entry_point_import_exits_nonzero_on_double_miss` (real `import config` subprocess in an isolated tmp copy of `scripts/`, no real cache file touched) + `test_ac9_corrupted_cache_file_is_treated_as_a_miss`. |
+| 10. `ALERTS_ENABLED` AND-gate direction (both halves) | **PASS — independently re-verified, both directions** | `test_ac10_table_false_suppresses_a_scheduled_default_true_run`, `test_ac10_manual_dry_run_input_suppresses_even_when_table_true`, `test_ac10_both_true_is_the_only_combination_that_alerts` (mocked tier-1 fetch — dev had only unit-proved the formula and left this AC's live half deferred; qa closed it using the seam the design built specifically for this). |
+| 11. Workflow diff scope (`daily-discovery.yml` untouched; `publish-prices.yml` one line; `hourly-watchlist.yml` limited to 3 changes) | **PASS — independently re-verified via `git diff` this session, plus durable structural tests** | `git diff 1f48e45 b2934c1 -- .github/workflows/*.yml` confirmed the exact scope by hand; `test_ac11_*` tests lock in the durable structural properties (no `tunables` references in `daily-discovery.yml`/`publish-prices.yml`) so future commits don't silently regress this. |
+| 12. (REV-036) Write-back validates, never shrinks | **PASS — independently re-verified** | `test_ac12_write_back_never_shrinks_and_rejects_bad_casts`, `test_ac12_write_back_is_a_noop_when_this_runs_fetch_entirely_failed`, `test_ac12_tier1_cast_failure_fails_loud_never_reaches_cache_write`. |
+| 13. (REV-041) Timeout tunable + offline seam | **PASS — independently re-verified** | `test_ac13_timeout_tunable_default_and_override`, `test_ac13_timeout_is_actually_passed_into_client_options` (asserts the real `ClientOptions.postgrest_client_timeout` value, not just the env var), `test_ac13_skip_tunables_fetch_makes_zero_network_calls` (a `socket.socket.connect` trap — proves zero calls, not just "no exception seen"). |
+| 14. (REV-045) `TUNABLES_DEGRADED` reaches heartbeat at all 3 entry points | **PASS for `run_hourly.py`/`publish_prices.py`; PARTIAL for `run_discovery.py` — see BUG-003** | `run_hourly.py`: `test_heartbeat_is_partial_when_tunables_are_degraded` (test_run_orchestration.py). `publish_prices.py`: `test_ac14_publish_prices_heartbeat_is_partial_when_degraded_even_with_zero_skips` / `..._is_ok_when_not_degraded...`. `run_discovery.py`: PASS for the normal candidate-processing path (`test_ac14_run_discovery_heartbeat_is_partial_when_degraded_even_with_a_clean_candidate_run`), but the zero-candidates/no-screen-errors early-return branch (`run_discovery.py:55-66`) hardcodes `"ok"` and never consults `config.TUNABLES_DEGRADED` — confirmed by `test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`, which locks in the current (gap) behavior. AC14's text says "all three entry points" with no carve-out for this branch. Filed as **BUG-003** (open, below) — dev already flagged this exact gap in `docs/handoff.md`'s Known Limitations as unresolved; qa's finding confirms it's real, not just a hypothetical. |
+| 15. (REV-040a) Shared concurrency group prevents the race | **PASS (structural); live race/serialization DEFERRED** | `test_ac15_hourly_and_publish_prices_share_the_repo_commit_concurrency_group` confirms both files use `group: repo-commit`, neither still says the old per-file group name. Live two-dispatch race/serialization proof needs GitHub Actions dispatch access. |
+| 16. (REV-040b) Push retry fires; permissions job-scoped | **PASS (structural); live retry-firing DEFERRED** | `test_ac16_permissions_block_is_job_scoped_not_top_level` (confirms zero top-level `permissions:`, job-scoped `contents: write` present — this is the stale-premise-independent-verification test) + `test_ac16_commit_step_has_a_bounded_retry_loop_with_error_annotation` (retry loop, `::error::` message present). Live lost-race/retry-firing proof needs a real workflow run. |
 
-### Gaps (not code defects — flagged per the task's instruction to report gaps rather than silently pass them)
+### Gaps / bugs found this session
 
-**GAP-001 — RESOLVED (2026-07-29).** AC8's live grant/policy audit result is now recorded verbatim in
-`docs/handoff.md` ("AC8 / REV-034 live grant-and-policy audit — raw evidence"), attributed to the
-orchestrator's live `execute_sql` query against project `ikghqdtlbwifwnooytmm`, dated. AC6 and AC8 above
-are updated to independently-confirmed accordingly. That same recorded audit is what surfaced REV-081 (a
-real least-privilege gap: `admin_allowlist`'s default grants included TRUNCATE, which RLS does not
-govern), fixed in `sql/admin_portal_rls.sql` via an explicit `revoke ... truncate ...` statement — the
-file fix is in the repo but still needs to be applied live to production separately (tracked outside qa's
-scope; see `docs/handoff.md`).
+**BUG-003 — AC14 (REV-045): `run_discovery.py`'s zero-candidates early-return branch doesn't consult
+`config.TUNABLES_DEGRADED`.**
+- **Increment:** INC-6. **FR/NFR:** FR30 / REV-045 (design: `docs/design/tunables-fallback.md` lines
+  280-288, increment-plan.md AC14).
+- **Repro:** `tests/test_tunables.py::test_ac14_run_discovery_zero_candidates_early_return_ignores_tunables_degraded`
+  — mock `prefilter.find_candidates` to return zero candidates with zero screen errors, set
+  `config.TUNABLES_DEGRADED = True`, run `run_discovery.main()`.
+- **Expected (per AC14's literal text, "all three entry points"):** `run_heartbeat.status == "partial"`.
+- **Actual:** `run_heartbeat.status == "ok"` — `run_discovery.py:64` (`state.write_heartbeat(sb,
+  heartbeat_key, "ok")`) is a hardcoded literal in the early-return branch, never OR'd with
+  `config.TUNABLES_DEGRADED` the way the later computed `status =` line (`run_discovery.py:115`) is.
+- **Note:** dev already surfaced this exact gap in `docs/handoff.md`'s Known Limitations, reading the
+  brief's "the existing status-computation line" (singular) narrowly to exclude this branch, and
+  explicitly asked tech-lead/qa to confirm scope. This is a genuine open design-scope question, not
+  clearly a coding mistake — routing to dev/tech-lead to decide (fix the branch to include
+  `config.TUNABLES_DEGRADED`, or amend AC14's text to carve out the zero-candidates case) rather than
+  qa deciding unilaterally by editing production code.
+- **Status:** OPEN. Not blocking merge on its own severity (a rare compound condition: zero candidates
+  AND zero screen errors AND a degraded tunables resolution, on the lowest-frequency of the three entry
+  points), but should be resolved before INC-6 closes.
 
-**No functional bugs found.** All code-level checks this session (validation logic, the UI auth-gate
-logic, the RLS-policy/migration shape, the build-time env-inlining fix, secret-leakage in source and
-build output) match their design/requirement text exactly, and no discrepancy was found between the fixed
-`supabase-client.ts` and its documented behavior.
+**No other functional bugs found.** All other code-level checks this session (fallback-chain behavior,
+write-back validation, workflow YAML structure, portal RLS/UI shape) match their design/requirement text
+exactly.
 
 ### Verdict
 
-**PASS.** New suite: 26/26 passed (`tests/admin_portal/`). Full Python regression: 171/171 passed, zero
-regressions. Shippability: real `next build` + `next start` entry point serves and routes all 5 checked
-routes correctly. 8 of 8 ACs now independently re-verified (source/build-level for AC1/AC6/AC7;
-logic-level for AC2/AC3; AC6 and AC8's live-project claims confirmed via the raw evidence recorded in
-`docs/handoff.md` as of 2026-07-29 — see GAP-001 resolution below); AC4/AC5 match the design/RLS-policy
-shape exactly and are consistent with the task context's stated live confirmation but were not
-independently re-run by qa. No production code was modified by qa. Note: that same live-evidence pass
-surfaced REV-081 (an `admin_allowlist` TRUNCATE grant not governed by RLS), since fixed in
-`sql/admin_portal_rls.sql` — the file fix still needs to be applied live to production separately.
+**PASS, with one open bug (BUG-003, non-blocking-severity, routed to dev/tech-lead).** Python: 201/201
+passed (0 regressions from a 168/3 baseline — the 3 were confirmed intended and are now fixed forward in
+`tests/`, not carried as red). Admin-portal JS/TS: 39/39 passed (13 new). Shippability: real `next build`
++ `next start` serves `/tunables` and every other route correctly. 11 of 16 ACs independently
+re-verified this session (AC2, AC5, AC8, AC9, AC10, AC11, AC12, AC13, AC15 structural, AC16 structural,
+AC14 partial); AC1/AC3/AC4/AC6/AC7's live-project halves and AC15/AC16's live-dispatch halves remain
+deferred pending live Supabase/GitHub Actions access (same constraint as INC-5). Both of dev's flagged
+claims (the 3-failure characterization, the stale-permissions-premise account) were independently
+confirmed accurate via direct re-execution and `git log -p`, not taken on trust. No production code
+modified by qa.
 
 ---
 
 ## Open bugs
 
-None currently open. GAP-001 (AC8 evidence-trail gap) is resolved — see above.
+**BUG-003** — `run_discovery.py`'s zero-candidates/zero-screen-errors early-return branch doesn't OR in
+`config.TUNABLES_DEGRADED` before writing the heartbeat status (AC14, FR30/REV-045). See INC-6 section
+above for full repro. OPEN — routed to dev/tech-lead to decide the intended scope, not a unilateral qa
+production-code fix.
