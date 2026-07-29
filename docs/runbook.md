@@ -77,8 +77,9 @@ Create a Supabase project if one doesn't exist. Then:
    - `sql/admin_portal_rls.sql` **(added 2026-07-26, INC-5, FR27-29/NFR5/NFR6)** — creates `admin_allowlist` table, `is_admin()` authorization function, and write policies for `watchlist`/`holdings`. Must come after `schema.sql` (the tables it writes policies for must exist first). Must be applied before any portal writes can succeed; deployed to Vercel as part of INC-5.
    - `sql/admin_portal_tunables.sql` **(added 2026-07-27, INC-6, FR30/NFR5/NFR6)** — creates `tunables` table (source of truth for tunable overrides), the `tunables_stamp_update` trigger, and the write policy for the portal to edit them. Must come after `schema.sql`. Deployed as part of INC-6.
    - `sql/kill_switch_portal_grant.sql` **(added 2026-07-29, INC-7, FR32/NFR6)** — extends `set_kill_switch()` with an `is_admin()` authorization check for authenticated portal callers, adds the `grant execute` for authenticated role, and adds a SELECT policy so the portal can read `kill_switch_state`. Also closes a TRUNCATE-grant gap on `kill_switch_state` and `kill_switch_audit` (same class as REV-081/REV-086 found on `admin_allowlist`/`tunables`). Must come after `kill_switch.sql` (both tables must exist). Deployed as part of INC-7.
+   - `sql/schema_truncate_grant_closure.sql` **(added 2026-07-29, reviewer REV-099)** — closes TRUNCATE-grant gap on the six original schema tables (`watchlist`, `holdings`, `call_log`, `verdict_state`, `run_heartbeat`, `monitor_alerts`). RLS never governs TRUNCATE in Postgres; this REVOKE is the belt-and-suspenders lockdown preventing anon/authenticated TRUNCATE access on these tables. Carefully scoped per table: `watchlist`/`holdings` retain authenticated's INSERT/UPDATE/DELETE base grants (required for INC-5's live write policies), while the other four tables lose all four DML+TRUNCATE verbs. Must come after `schema.sql` and `phase5_monitoring.sql` (both tables must exist). Applied and live on this project as of 2026-07-29.
 
-These nine migrations set up the entire control plane and admin-portal backend (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, `admin_allowlist`/`tunables` created by the two portal-support migrations, plus the `latest_call_per_ticker` view). The cron jobs will start firing immediately on the schedules defined below.
+These ten migrations set up the entire control plane and admin-portal backend (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, `admin_allowlist`/`tunables` created by the two portal-support migrations, plus the `latest_call_per_ticker` view, plus the TRUNCATE-grant closure). The cron jobs will start firing immediately on the schedules defined below.
 
 **Note:** `sql/drop_shadow_tables_migration.sql` is a one-time migration that was already applied to this project; it is not part of the fresh-deploy procedure (a fresh project never had those tables to drop). It remains in the repo as a historical record.
 
@@ -365,6 +366,18 @@ Refer to `docs/idea-brief.md` §"Open risks (accepted, documented)" for the full
    - If the watchlist or discovery has run recently, the monitor should clear any stale alerts. If no run exists, it should send a stale alert to the ntfy topic.
    - Verify the ntfy push appears on your device (or check the ntfy web dashboard).
 
+9. **Admin portal deployment to Vercel (INC-5/6/7):**
+   - Verify the Vercel project is created and set to the `admin-portal/` root.
+   - Verify `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set in Vercel environment variables.
+   - Navigate to the portal's custom domain (or the auto-generated Vercel domain if custom domain not yet configured).
+   - Verify the `/login` page appears and Google OAuth sign-in is available.
+   - Sign in with an email that has been added to `admin_allowlist` (seeded with `INSERT INTO public.admin_allowlist (email) VALUES ('...');` after `sql/admin_portal_rls.sql` is applied).
+   - Verify the `/watchlist` page loads and displays the current tickers (read-only preview if you have not added any).
+   - Verify the `/holdings` page loads (FR29, INC-5).
+   - Verify the `/tunables` page loads (FR30, INC-6).
+   - Verify the `/track-record` page loads with paginated `call_log` entries (FR31, INC-7).
+   - Verify the kill-switch toggle appears in the header, shows the current state (PAUSED/RUNNING), and clicking the toggle button flips it — check `kill_switch_state.paused` in Supabase to confirm the database state changed.
+
 ### Regression Test (Before Production Traffic Resumes)
 
 After backfilling configuration and before resuming scheduled production runs:
@@ -405,33 +418,45 @@ See `docs/requirements.md` §10 (Configuration audit baseline) for the full tabl
 
 ### SQL Migrations and Schema
 
-The migrations in `sql/` (`kill_switch.sql`, `scheduler_pgcron.sql`, `schema.sql`, `phase5_monitoring.sql`,
-`dashboard_latest_call_view.sql`, `enable_monitor_alerts_rls.sql` — §2.3's apply order) define the
-complete control-plane schema and logic. No other DDL is needed; the tables and functions they create
-persist:
+The migrations in `sql/` (ten files per §2.3's apply order) define the complete control-plane schema
+and admin-portal backend. No other DDL is needed; the tables and functions they create persist:
 
+**Core schema and monitoring:**
 - `kill_switch_state` — singleton pause flag read by `dispatch_github_workflow()` and
   `check_pipeline_health()` (`sql/kill_switch.sql`, FR24/FR25).
 - `kill_switch_audit` — append-only history of every pause/resume toggle (`sql/kill_switch.sql`, FR26).
-- `watchlist` — user's tickers and per-market settings (`sql/schema.sql`).
-- `holdings` — user's position data (shares, cost basis) (`sql/schema.sql`).
+- `watchlist` — user's tickers and per-market settings (`sql/schema.sql`, FR28).
+- `holdings` — user's position data (shares, cost basis) (`sql/schema.sql`, FR29).
 - `verdict_state` — the last-seen verdict for each ticker, used to detect changes (`sql/schema.sql`).
-- `call_log` — every check result: verdict, rationale, timestamp, data snapshot (JSON) (`sql/schema.sql`).
+- `call_log` — every check result: verdict, rationale, timestamp, data snapshot (JSON) (`sql/schema.sql`, FR15/FR16 audit trail).
 - `run_heartbeat` — per-workflow metadata for monitoring staleness/degradation (`sql/schema.sql`).
 - `monitor_alerts` — state machine for the health monitor's alert dedup (`sql/phase5_monitoring.sql`).
 - `latest_call_per_ticker` (view) — dashboard read, filtered to only the most recent verdict per ticker
   (`sql/dashboard_latest_call_view.sql`).
 
-**RLS posture (REV-035, confirmed live via `list_tables` 2026-07-28):** `watchlist`, `holdings`,
-`verdict_state`, `call_log`, `run_heartbeat`, and `monitor_alerts` all show `rls_enabled: true`.
-`watchlist` and `call_log` have an anon/authenticated SELECT policy each (the dashboard/detail-page read
-path); `holdings`, `verdict_state`, and `run_heartbeat` have RLS enabled with zero policies — no
-anon/authenticated access at all, read/written only by the secret-key workflows or a `SECURITY DEFINER`
-function. `sql/schema.sql` is this posture captured in version control. `kill_switch_state` and
-`kill_switch_audit` **ARE** part of this live-confirmed set (INC-3's SQL was applied to production
-early in the session) — their RLS/REVOKE posture is documented in `docs/design/operational-controls.md`
-§13.2 and verified in `docs/handoff.md`'s dated INC-3 evidence block (2026-07-29 kill-switch pause/resume
-audit, confirming both tables exist with RLS enabled, and `set_kill_switch()` works correctly).
+**Admin-portal backend:**
+- `admin_allowlist` — list of Google email addresses authorized to access the portal (`sql/admin_portal_rls.sql`, FR27).
+- `is_admin()` — authorization function, checks if current user's email is in `admin_allowlist` (`sql/admin_portal_rls.sql`, FR27).
+- `tunables` — source of truth for tunable overrides (AI model, retry, timeout settings) (`sql/admin_portal_tunables.sql`, FR30).
+
+**Security lockdowns:**
+- TRUNCATE grant revocations on kill-switch, original schema, and admin-portal tables (`sql/kill_switch_portal_grant.sql`, `sql/schema_truncate_grant_closure.sql`, REV-081/REV-086/REV-099).
+
+**RLS posture (REV-035, confirmed live via `list_tables` 2026-07-28, updated for INC-5/INC-7 additions):**
+`watchlist`, `holdings`, `verdict_state`, `call_log`, `run_heartbeat`, and `monitor_alerts` all show
+`rls_enabled: true`. `watchlist` and `call_log` have anon/authenticated SELECT policies (the
+dashboard/detail-page read path); `watchlist` and `holdings` also have authenticated-role write policies
+gated by `is_admin()` (`admin_write_watchlist` and `admin_write_holdings`, added in INC-5 `sql/admin_portal_rls.sql`);
+`verdict_state` and `run_heartbeat` have RLS enabled with zero policies — read/written only by
+secret-key workflows or `SECURITY DEFINER` functions. `monitor_alerts` has RLS enabled with zero policies
+(internal monitor state, not touched by any anon/authenticated role). `sql/schema.sql` and
+`sql/admin_portal_rls.sql` capture this posture in version control. `kill_switch_state` and `kill_switch_audit`
+**ARE** part of this live-confirmed set (INC-3's SQL was applied to production early in the session); their
+RLS/REVOKE posture is documented in `docs/design/operational-controls.md` §13.2 and verified in
+`docs/handoff.md`'s dated INC-3 evidence block (2026-07-29 kill-switch pause/resume audit, confirming both
+tables exist with RLS enabled, and `set_kill_switch()` works correctly). `kill_switch_state` has an
+authenticated-role SELECT policy gated by `is_admin()` (`admin_read_kill_switch`, added in INC-7
+`sql/kill_switch_portal_grant.sql`), permitting the portal to read the current pause state.
 
 All modifications to this schema must be applied as new SQL migrations (or via Supabase's migration UI), never by direct ALTER commands.
 
