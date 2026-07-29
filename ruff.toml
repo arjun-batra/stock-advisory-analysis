@@ -9,7 +9,7 @@ select = ["E", "F", "W"]
 ignore = [
     "E501",  # Line too long (handled by formatter)
 ]
-
-[per-file-ignores]
-"tests/*" = ["F401"]  # Unused imports in tests OK
-"__init__.py" = ["F401"]  # Unused imports in __init__ OK
+per-file-ignores = {
+    "tests/*" = ["F401", "F811"],  # Unused imports and fixture-injection redefinitions in tests OK
+    "__init__.py" = ["F401"],      # Unused imports in __init__ OK
+}
