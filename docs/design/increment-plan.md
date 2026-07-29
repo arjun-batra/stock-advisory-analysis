@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3/INC-4/INC-5 IMPLEMENTED, INC-6–7 DRAFT
+# Increment plan — 2026-07-26 change request — INC-3/INC-4/INC-5 IMPLEMENTED, INC-6 built pending reviewer clearance, INC-7 DRAFT
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -11,8 +11,11 @@ INC-5's Pass 17 verdict is **CLEAR** — REV-081 (a minor, not-currently-exploit
 `admin_allowlist`'s grants), REV-082, and REV-083 are all independently re-verified RESOLVED
 (`docs/review-log.md`), zero blockers, zero majors. Phase-4 closure must not treat FR24–FR26/FR33 as
 live-verified until INC-3's and INC-4's two deferred items resolve; FR27–FR29/NFR5–6 are reviewer-clear as
-of Pass 17. **INC-6, INC-7 (admin portal: tunables
-editor, track-record view & kill-switch UI) remain genuinely DRAFT** — no dev work has started on them.
+of Pass 17. **INC-6 (admin portal: tunables editor) is IMPLEMENTED** — dev-built, qa-tested (PASS —
+`docs/test-report.md`; BUG-003 found and fixed), reviewer Pass 18 verdict **NOT CLEAR pending REV-086 fix
+in progress** (a minor `[SECURITY]` gap on the `tunables` table's TRUNCATE grant, being fixed by dev in
+parallel; `docs/review-log.md`) — not yet reviewer-clear. **INC-7 (admin portal: track-record view &
+kill-switch UI) remains genuinely DRAFT** — no dev work has started on it.
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -155,7 +158,7 @@ Keep the migration's function signature stable once INC-6 is built against it.
    version-controlled starting point, but INC-5 must re-check the live project directly since it's the
    first increment that makes `authenticated` an internet-reachable principal at all.
 
-### INC-6 — Admin portal: tunables editor (FR30) — **DRAFT** (not yet built) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
+### INC-6 — Admin portal: tunables editor (FR30) — **IMPLEMENTED** (dev-built, qa-tested — PASS, BUG-003 found and fixed, `docs/test-report.md`; reviewer Pass 18 verdict NOT CLEAR pending REV-086 fix in progress — see status note above) — REVISED 2026-07-27/28, Decisions #27 (supersedes #24), #28 (refines #27) and #29 (confirms #28's write-ownership proposal, conditioned on REV-040)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4 (schema/RLS/seed/portal UI),
 `docs/design/tunables-fallback.md` §16.4 (`scripts/config.py`'s fetch/cache-fallback chain, timeout), and
 `docs/design/tunables-workflow-writeback.md` §16.4 (which workflow commits the cache, REV-040's

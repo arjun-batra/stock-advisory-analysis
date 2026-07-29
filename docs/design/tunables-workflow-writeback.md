@@ -8,7 +8,9 @@ index/module map/§0/increment plan, `admin-portal-tunables.md` for the `tunable
 of the same section, §16.4: which workflow writes the cache back to git, and REV-040's race/privilege
 mitigations on that write path. Section number unchanged — still §16.4, third file it lives in.
 
-**Status: DRAFT**, same status/history as `admin-portal-tunables.md`/`tunables-fallback.md`. Builds in
+**Status: IMPLEMENTED**, same status/history as `admin-portal-tunables.md`/`tunables-fallback.md` —
+dev-built, qa-tested (PASS — `docs/test-report.md`; BUG-003 found and fixed), reviewer Pass 18 verdict
+**NOT CLEAR pending REV-086 fix in progress** (`docs/review-log.md`) — not yet reviewer-clear. Builds in
 **INC-6**.
 
 ---
