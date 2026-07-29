@@ -7,8 +7,13 @@
 -- set_kill_switch(boolean, text)) and sql/admin_portal_rls.sql (INC-5, already live: is_admin()).
 -- Additive-only over INC-3's objects — does not redefine kill_switch_state/kill_switch_audit.
 --
--- NOT APPLIED. dev has no Supabase MCP/tool access this session; orchestrator applies this against
--- the live project after handoff, same process as sql/admin_portal_rls.sql / sql/admin_portal_tunables.sql.
+-- APPLIED AND LIVE (INC-7, already live: admin_read_kill_switch policy, is_admin()-gated
+-- set_kill_switch(boolean, text)) — confirmed directly against production
+-- (project ikghqdtlbwifwnooytmm): pg_policies shows admin_read_kill_switch on kill_switch_state
+-- (select, authenticated, qual is_admin()), and set_kill_switch's live function definition contains
+-- the is_admin() check. This file's header previously read "NOT APPLIED" (same class of gap as
+-- BUG-004) — stale from early in this change request's build; the SQL below went live and was
+-- simply never updated afterward.
 
 -- --- TRUNCATE-grant closure (same class of gap as REV-081/admin_allowlist, REV-086/tunables) -------
 -- RLS never governs TRUNCATE in Postgres — it's gated purely by the TRUNCATE table privilege, which

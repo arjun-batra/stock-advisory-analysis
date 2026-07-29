@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 from datetime import datetime, time, timedelta
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -291,6 +292,10 @@ YF_BACKOFF_SECONDS = float(os.environ.get("YF_BACKOFF_SECONDS", "10"))
 # window, both previously hardcoded at the call site.
 YF_HISTORY_RETRIES = int(os.environ.get("YF_HISTORY_RETRIES", "2"))
 YF_HISTORY_PERIOD = os.environ.get("YF_HISTORY_PERIOD", "3mo")
+# Narrower history window for ingest.get_price_only() (REV-043, components.md
+# §4.2) — only price + 1d change are needed, so a short window is enough and
+# avoids the full 3mo fetch get_market_data() does for the AI-judgment path.
+YF_PRICE_ONLY_PERIOD = os.environ.get("YF_PRICE_ONLY_PERIOD", "5d")
 # Per-ticker headline cap (ingest._headlines), previously a function default.
 HEADLINES_LIMIT = int(os.environ.get("HEADLINES_LIMIT", "5"))
 

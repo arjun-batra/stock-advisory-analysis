@@ -1526,3 +1526,43 @@ logic touched) with the live suppression proof deferred. All AC2/AC3 live-verifi
 Supabase MCP/live-session access this environment does not provide — same constraint as every prior
 increment this delivery. This is the last increment in the approved build order; qa's remaining work is
 the closure end-to-end pass once `sql/kill_switch_portal_grant.sql` is applied live.
+
+---
+
+## Hotfix — `ClientOptions` incompatibility broke live tunables fetch on every run — 2026-07-29
+(archived at Phase-4 closure — see `docs/test-report.md` for the current run)
+
+**Scope:** `scripts/config.py` (`_fetch_tunables()`, fix only), `docs/design/tunables-fallback.md` (REV-095,
+as-built sync), `tests/test_tunables.py` (updated mock fixture), new
+`tests/test_fetch_tunables_real_client_construction.py`. Branch: `claude/admin-portal-evaluation-txaehj`,
+commit `77e535e`. Dev's handoff: `docs/handoff.md`. Not a numbered increment — an actively-firing production
+bug found and fixed outside the increment loop (confirmed via live `hourly-watchlist.yml` job logs by the
+orchestrator), verified with priority ahead of the next scheduled run.
+
+**Bug:** `_fetch_tunables()` called `create_client(url, key, options=ClientOptions(postgrest_client_timeout=...))`.
+The installed `supabase-py==2.31.0`'s `create_client()`/`Client.__init__` only sets `options.storage` on its
+own internally default-constructed `ClientOptions` (the `if options is None:` branch) — the
+publicly-importable `supabase.lib.client_options.ClientOptions` dataclass has no `storage` field at all, so
+a caller-built instance skipped that branch and crashed with `AttributeError: 'ClientOptions' object has no
+attribute 'storage'` on every call since INC-6 merged, forcing every run onto the tier-2 cache fallback
+(`TUNABLES_DEGRADED=True`) and firing real "degraded" push notifications in production.
+
+### Suite results
+
+- `python3 -m pytest -q --tb=short` → **204 passed, 0 failed** — matches the handoff's reported count
+  exactly (6 `DeprecationWarning`s from the supabase library's own internals, unrelated to this fix, no
+  test failures).
+
+### Bugs filed
+
+**None.** The fix resolves the reported crash exactly as diagnosed; no new defect found.
+
+### Verdict
+
+**PASS.** 204/204 full suite passing (0 regressions). Root cause independently reproduced against the real
+installed `supabase-py==2.31.0` (not taken on dev's account); fix independently reproduced to fail only at
+the network layer, never at client construction; new regression test confirmed to exercise the real,
+unmocked `create_client()` seam that let the original bug ship undetected; all three entry points import
+cleanly pre- and post-fetch-attempt. Safe to merge ahead of the next scheduled `hourly-watchlist.yml` run.
+(Full original write-up with root-cause/fix re-verification detail is in git history at the commit that
+introduced this entry, `f656ecb`, per this project's archive convention of trimming detail on archival.)

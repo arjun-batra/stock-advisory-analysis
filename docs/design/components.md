@@ -174,9 +174,13 @@ Load-bearing content:
   {high,medium,low}, rationale}`. Rationale stored ≤280 chars; push body clipped to `NOTIF_BODY_MAX`
   (150) on a word boundary.
 
-> **The prompt is inline Python** in `ai_judge.py` (`BATCH_SYSTEM_PROMPT`). There is **no** separate
-> prompt file. (The former shadow-variant prompt, `shadow.py`'s `SHADOW_SYSTEM_PROMPT`, was removed with
-> the shadow-track retirement — see `docs/design.md`'s "Retired: shadow-pilot tracks" note.)
+> **The prompt lives in `prompts/batch_system_prompt.txt`**, loaded at import time by `ai_judge.py` into
+> `BATCH_SYSTEM_PROMPT` (REV-096, code-hygiene fix — byte-identical prompt value, no behavior/design
+> change). Prompt construction/content itself is unchanged by FR33's provider-neutral refactor — file-based
+> loading is orthogonal to that boundary, not a reversal of it; see §14.3 for why this stays with
+> `ai_judge.py`'s domain logic rather than `ai_provider.py`'s provider-plumbing layer. (The former
+> shadow-variant prompt, `shadow.py`'s `SHADOW_SYSTEM_PROMPT`, was removed with the shadow-track
+> retirement — see `docs/design.md`'s "Retired: shadow-pilot tracks" note.)
 
 **Timeout & fallback (`docs/design.md` §0, load-bearing #3):** `GEMINI_TIMEOUT_MS` default 180,000 ms. On
 any fallback the **real** exception (timeout / 503 / parse / genuine 429) is captured to

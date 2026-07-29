@@ -1,3 +1,223 @@
+# Handoff — Live-system fix: `ingest.get_price_only()` (REV-043, carried since Pass 15)
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read `docs/review-log.md` REV-043 + `docs/design/components.md` §4.2's design call +
+`docs/design/non-functional-ops.md`'s repo-structure DRAFT note for `ingest.py`/`publish_prices.py`, and
+`docs/code-map.md`. Design fixes the contract: `ingest.get_price_only(ticker) -> dict` — `period='5d'`
+history (enough for `price`/`pct_change_1d`) plus `tk.fast_info` for currency, **no** `tk.info` scrape,
+**no** `tk.news` call; `publish_prices.py` switches its one call site from `get_market_data()` to
+`get_price_only()`; `get_market_data()` stays untouched (still the only path `run_hourly.py`/
+`run_discovery.py` use). Files: `scripts/ingest.py` (new function + `_fetch_history` gains an optional
+`period` param, default unchanged), `scripts/config.py` (new `YF_PRICE_ONLY_PERIOD` tunable, "5d" default
+— same pattern as `YF_HISTORY_PERIOD`, no hardcoded fetch window per CLAUDE.md), `scripts/publish_prices.py`
+(one-line call switch + docstring update), `tests/test_ingest.py` (new coverage),
+`tests/test_tunables.py` (two existing mocks of `publish_prices.ingest.get_market_data` renamed to
+`get_price_only` — they'd otherwise silently stop exercising the real call path). No design deviation;
+scope stays inside REV-043 as written. Verify: full suite green, direct smoke-run of `publish_prices.main()`
+with a mocked `get_price_only`, confirm `pages/prices.json` output values match what the old full fetch
+would have produced for the same close data.
+
+## What changed and why
+
+`publish_prices.py` was pulling a full `get_market_data()` per ticker (3mo history + `tk.fast_info` +
+`tk.info` + `tk.news`, ~4 Yahoo requests) but only ever reads `price`/`pct_change_1d`/`market`/
+`fundamentals.currency`. `get_price_only()` fetches a 5d history window (still enough for `price` and
+`pct_change_1d` — both only ever look at the last 1-2 closes) and `tk.fast_info` for currency, skipping the
+`tk.info` scrape and `tk.news` fetch entirely. This is a pure efficiency fix: same published price values,
+cheaper fetch. `get_market_data()` and its callers (`run_hourly.py`, `run_discovery.py`) are unchanged.
+
+## Files touched
+
+- `scripts/ingest.py` — added `get_price_only(ticker) -> dict`; `_fetch_history` gained an optional
+  `period` param (defaults to `config.YF_HISTORY_PERIOD`, so `get_market_data`'s behavior is unchanged).
+- `scripts/config.py` — added `YF_PRICE_ONLY_PERIOD` (default `"5d"`), same tunable pattern as
+  `YF_HISTORY_PERIOD`/`YF_HISTORY_RETRIES`.
+- `scripts/publish_prices.py` — call site switched `ingest.get_market_data(ticker)` ->
+  `ingest.get_price_only(ticker)`; no other logic changed (same dict field names read: `has_price`,
+  `price`, `pct_change_1d`, `market`, `fundamentals.currency`, `notes`).
+- `tests/test_ingest.py` — three new tests: `get_price_only` returns correct price/1d-change fields and
+  never touches `tk.info`/`tk.news` (raises if it does); its price/pct_change_1d values match
+  `get_market_data`'s for the same underlying closes (no behavior change); empty-history skip-with-log path.
+- `tests/test_tunables.py` — two existing `publish_prices` heartbeat tests updated to mock
+  `ingest.get_price_only` instead of the now-unused-by-`publish_prices` `ingest.get_market_data` (the old
+  mocks would have gone stale silently — `publish_prices.main()` no longer calls `get_market_data` at all).
+
+## How to run
+
+`python3 -m pytest tests/test_ingest.py tests/test_tunables.py -q` for the targeted coverage, or the full
+suite: `python3 -m pytest -q --tb=short` (207 passed, 0 failed — no regressions). Manual smoke test: mock
+`state.client`/`state.get_watchlist`/`ingest.get_price_only`/`state.write_heartbeat` and call
+`publish_prices.main()` in a tmp cwd — confirmed it writes `pages/prices.json` with the expected
+price/chg/market/currency shape and an `ok` heartbeat.
+
+## Known limitations / follow-ups
+
+- `docs/design/non-functional-ops.md` §9's tunables list does not yet mention `YF_PRICE_ONLY_PERIOD` —
+  that file is tech-lead-owned (dev doesn't touch design docs per CLAUDE.md); flagging for tech-lead to add
+  a one-line entry alongside `YF_HISTORY_PERIOD`'s.
+- REV-043's "related, not addressed here" note (`publish_prices.py` has no market-open gate in
+  `sql/scheduler_pgcron.sql`) is explicitly out of scope for this fix and unchanged — still a pm question
+  per the design doc.
+
+---
+
+# Handoff — REV-096 fix: relocate `BATCH_SYSTEM_PROMPT` out of `ai_judge.py` into `prompts/`
+
+## Build plan (written before coding, per dev's updated workflow)
+
+- **Read first:** `docs/code-map.md` (`ai_judge.py` = provider-neutral judge, no other module reads
+  `BATCH_SYSTEM_PROMPT`), `docs/design/components.md:157-183` and
+  `docs/design/operational-controls.md:328-335` (tech-lead had already pre-updated both to say the
+  prompt "lives in `prompts/batch_system_prompt.txt`, loaded at import time by `ai_judge.py`" — no
+  design ambiguity to flag; pm's decision + tech-lead's design edit were both already on disk before
+  I started).
+- **Scope:** pm-decided, code-hygiene-only relocation (REV-096) — move the literal text verbatim,
+  keep the resulting formatted `BATCH_SYSTEM_PROMPT` value byte-identical. No prompt wording change,
+  no new config tunable (the path itself isn't a runtime-configurable value — same posture as
+  `config._CACHE_PATH`, a structural file location, not a tunable).
+- **Files:** new `prompts/batch_system_prompt.txt` (the relocated text, with the one
+  `{RATIONALE_MAX}` interpolation point kept as a literal `{RATIONALE_MAX}` placeholder);
+  `scripts/ai_judge.py` (delete the inline constant, read the file at import time, resolve the
+  placeholder via `str.replace` — not `str.format`, since the prompt's own JSON-example text
+  contains literal `{`/`}` that `str.format` would otherwise require escaping).
+- **Contracts touched:** none — `BATCH_SYSTEM_PROMPT` stays a module-level `str` in `ai_judge.py`,
+  same two call sites (`judge_batch`, lines ~300/318), same value.
+- **Verification:** built a throwaway script that `exec()`'d the pre-edit inline constant with
+  `RATIONALE_MAX=280` bound to capture the exact ground-truth string, then compared it byte-for-byte
+  against `ai_judge.BATCH_SYSTEM_PROMPT` after the edit (`==` True, same length, 1821 chars) — plus
+  the full test suite and a fresh import smoke test.
+
+## Files touched
+
+- `prompts/batch_system_prompt.txt` — new. The relocated prompt text, `{RATIONALE_MAX}` left as a
+  literal placeholder resolved at import time.
+- `scripts/ai_judge.py` — removed the inline `BATCH_SYSTEM_PROMPT` string constant; added
+  `import pathlib`, `_PROMPT_PATH` (resolved the same way `config._CACHE_PATH` is — repo root via
+  `pathlib.Path(__file__).resolve().parent.parent`, since `scripts/` is a flat, non-package
+  directory), and a `.read_text().replace("{RATIONALE_MAX}", str(RATIONALE_MAX))` load with a
+  fail-loud `SystemExit` if the file is missing/unreadable (matches this codebase's established
+  fail-loud posture for required config, e.g. `config.require_secrets`/`config._tunable`).
+
+## How to run
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` from repo root — 207 passed (no test
+  asserted the prompt's literal content, so none needed changes).
+- Smoke test: `python3 -c "import sys; sys.path.insert(0,'scripts'); import
+  ai_judge; print(len(ai_judge.BATCH_SYSTEM_PROMPT))"` with `SKIP_TUNABLES_FETCH=true` set — imports
+  cleanly, prints `1821` (same length as before the move).
+
+## Known limitations
+
+- None functional — this is a pure relocation. `docs/design/components.md` and
+  `docs/design/operational-controls.md` already describe the post-fix state (tech-lead pre-updated
+  them alongside the pm decision), so no design-doc follow-up is owed by this change.
+- Unrelated in-flight changes were present in the working tree before this session started
+  (`scripts/config.py`, `scripts/ingest.py`, `scripts/publish_prices.py`, `sql/kill_switch.sql`,
+  `tests/test_ingest.py`, `tests/test_tunables.py`, plus a new untracked
+  `sql/schema_truncate_grant_closure.sql`) — not touched or reviewed here; this handoff's diff is
+  scoped strictly to `prompts/batch_system_prompt.txt` and `scripts/ai_judge.py`.
+
+---
+
+# Handoff — Evidence record: INC-3 kill-switch live test (AC2/AC4/AC5) + ClientOptions hotfix live confirmation
+
+## Context
+
+`docs/test-report.md`'s Phase-4 whole-system end-to-end entry correctly declined to mark INC-3's
+AC2/AC4/AC5 as independently verified: it checked `docs/review-log.md` (Pass 21's "Open items" still
+lists REV-070 open) and `docs/handoff.md` in full, found no dated evidence block for a live kill-switch
+pause/resume test anywhere in the repo (unlike REV-083's precedent for INC-5's AC8), and correctly left
+REV-070/INC-3's status as still deferred rather than take an unrecorded claim on faith. That was the
+right call — no code or doc change from dev was warranted on the strength of an unwritten claim. This
+entry supplies the missing evidence, in the same dated/attributed/checkable format REV-083 established,
+so qa can independently corroborate it and update `docs/test-report.md` accordingly (qa's file, not
+touched here — see the handoff note in this session's final summary).
+
+### AC2/AC4/AC5 / REV-070 live kill-switch pause/resume audit — raw evidence
+
+**Date:** 2026-07-29. **Run by:** orchestrator, live query via Supabase MCP `execute_sql` against
+project `ikghqdtlbwifwnooytmm` (user explicitly authorized live testing against production for this
+session, being the sole user and accepting the risk).
+
+```
+-- Baseline before test
+select max(id) as max_id_before from net._http_response;
+=> max_id_before = 1362
+
+-- Pause
+select public.set_kill_switch(true, 'e2e-test-orchestrator');
+=> (void, no error)
+
+-- Attempt dispatch while paused (AC2)
+select public.dispatch_github_workflow('hourly-watchlist.yml') as result;
+=> result = null   (function's own source: returns null immediately when
+   kill_switch_state.paused=true, before ever reaching net.http_post --
+   confirmed by reading pg_get_functiondef(oid) for dispatch_github_workflow
+   before running this test)
+
+-- Confirm zero new pg_net requests (AC2)
+select max(id) as max_id_after_paused_dispatch from net._http_response;
+=> max_id_after_paused_dispatch = 1362   (unchanged -- zero new HTTP requests
+   were made while paused)
+
+-- Resume
+select public.set_kill_switch(false, 'e2e-test-orchestrator');
+=> (void, no error)
+
+-- Audit trail (AC4)
+select * from public.kill_switch_audit order by changed_at asc;
+=> [
+     {id: d9f6b308-..., action: pause,  actor: postgres, source: e2e-test-orchestrator, changed_at: 2026-07-29 17:45:58.972166+00},
+     {id: e57f7053-..., action: resume, actor: postgres, source: e2e-test-orchestrator, changed_at: 2026-07-29 17:46:03.68885+00}
+   ]
+   -- exactly 2 rows, correct action values, non-null actor, source correctly
+   -- attributed, ~5 seconds apart (pause then resume)
+
+-- Final state confirmed restored to normal
+select * from public.kill_switch_state;
+=> {id: true, paused: false, updated_at: 2026-07-29 17:46:03.68885+00, updated_by: postgres}
+
+-- RLS check (AC5)
+select relname, relrowsecurity, relforcerowsecurity from pg_class
+where relname in ('kill_switch_state','kill_switch_audit');
+=> [
+     {kill_switch_audit, rls_enabled: true, rls_forced: true},
+     {kill_switch_state, rls_enabled: true, rls_forced: false}
+   ]
+```
+
+This closes `docs/test-report.md`'s open evidence gap for INC-3's **AC2** (pausing suppresses dispatch
+before any `pg_net` call — `dispatch_github_workflow` returned `null` and `net._http_response`'s max id
+was unchanged across the paused-dispatch attempt, confirming zero HTTP requests were made while paused),
+**AC4** (audit trail — exactly 2 rows, correct `action` values, non-null `actor`, `source` correctly
+attributed to the caller, pause/resume ~5 seconds apart), and **AC5** (RLS enabled on both
+`kill_switch_state` and `kill_switch_audit`, matching `sql/kill_switch.sql`'s design). AC1 (objects
+exist) was already covered by INC-3's original build. **AC3 (resume-baseline / no-false-alarm test under
+synthetic staleness) is a separate test this evidence does not cover and remains deferred** — do not
+mark it verified from this record.
+
+### ClientOptions hotfix — live production confirmation (separate, later run)
+
+**Date:** 2026-07-29. **Run by:** orchestrator, live query via Supabase MCP `execute_sql` against
+project `ikghqdtlbwifwnooytmm`, after the hotfix (main commit `79cea50`) was picked up by the next real
+scheduled run.
+
+```
+-- Before fix (run at 17:31:41 UTC, pre-fix commit): status='partial' for both hourly-watchlist and publish-prices
+
+-- After fix merged (main commit 79cea50) and picked up by the 18:00:01 UTC scheduled run:
+select workflow_name, last_run_at, status from public.run_heartbeat order by workflow_name;
+=> hourly-watchlist:  last_run_at=2026-07-29 18:01:49, status=ok
+   publish-prices:    last_run_at=2026-07-29 18:03:32, status=ok
+```
+
+Confirms the `ClientOptions` hotfix (this file's "Production bug fix" section immediately below)
+resolved the live tunables-fetch failure in production, not just in local reproduction — both scheduled
+workflows moved from `status=partial` (pre-fix) to `status=ok` (post-fix) on the very next real run.
+
+---
+
 # Handoff — Production bug fix: `ClientOptions` incompatibility broke live tunables fetch
 
 ## Build plan (written before coding, per dev's updated workflow)

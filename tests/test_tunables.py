@@ -451,7 +451,7 @@ def test_ac14_publish_prices_heartbeat_is_partial_when_degraded_even_with_zero_s
     sb = FakeSupabase()
     sb.watchlist = [_wl_row("AAPL", "US")]
     monkeypatch.setattr(publish_prices.state, "client", lambda: sb)
-    monkeypatch.setattr(publish_prices.ingest, "get_market_data",
+    monkeypatch.setattr(publish_prices.ingest, "get_price_only",
                          lambda ticker: {"has_price": True, "price": 100.0, "pct_change_1d": 1.0,
                                           "market": "US", "fundamentals": {"currency": "USD"}})
     monkeypatch.setattr(config, "TUNABLES_DEGRADED", True)
@@ -466,7 +466,7 @@ def test_ac14_publish_prices_heartbeat_is_ok_when_not_degraded_and_no_skips(monk
     sb = FakeSupabase()
     sb.watchlist = [_wl_row("AAPL", "US")]
     monkeypatch.setattr(publish_prices.state, "client", lambda: sb)
-    monkeypatch.setattr(publish_prices.ingest, "get_market_data",
+    monkeypatch.setattr(publish_prices.ingest, "get_price_only",
                          lambda ticker: {"has_price": True, "price": 100.0, "pct_change_1d": 1.0,
                                           "market": "US", "fundamentals": {"currency": "USD"}})
     monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)

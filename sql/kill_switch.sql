@@ -16,9 +16,14 @@
 -- function` blocks directly in those files, not here, so each function's
 -- full current definition stays in one place.
 --
--- NOT APPLIED. dev/release coordinate actual deployment separately (Arjun
--- has deferred applying any SQL changes to the live Supabase project for
--- this change request until "it makes sense").
+-- APPLIED AND LIVE (INC-3, already live: kill_switch_state, kill_switch_audit,
+-- set_kill_switch(boolean, text)) — confirmed directly against production
+-- (project ikghqdtlbwifwnooytmm) via a live pause/resume test: kill_switch_state
+-- holds its one singleton row, kill_switch_audit holds the pause+resume rows
+-- from that test, and set_kill_switch() pauses/resumes correctly. This file's
+-- header previously read "NOT APPLIED" (BUG-004) — stale from early in this
+-- change request's build; the SQL below went live during INC-3 and was simply
+-- never updated afterward.
 -- =====================================================================
 
 -- --- kill_switch_state: singleton flag, fast-read on every dispatch/monitor tick ---
