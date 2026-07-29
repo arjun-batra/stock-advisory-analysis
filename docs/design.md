@@ -10,9 +10,12 @@ tested both, and reviewer cleared both with zero blockers through Pass 14 (`docs
 `operational-controls.md` §13–§14, now **IMPLEMENTED**. **INC-5 (admin portal foundation: auth, hosting,
 watchlist & holdings CRUD, FR27–FR29, NFR5–6) is also IMPLEMENTED** — dev-built, live-deployed, qa-tested
 with a PASS verdict; reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers — see
-`docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-6, INC-7 (admin
-portal: tunables editor FR30, track-record view & kill-switch UI FR31–FR32) remain DRAFT** — not yet built,
-no dev work has started on them. Design revised several times
+`docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-6 (admin portal: tunables
+editor, FR30) is also IMPLEMENTED** — dev-built, qa-tested (PASS — BUG-003 found and fixed,
+`docs/test-report.md`); reviewer Pass 19 verdict is CLEAR — REV-086/087/088/089 all RESOLVED, zero
+blockers — see `docs/design/increment-plan.md`'s status note and `docs/review-log.md`. **INC-7 (admin
+portal: track-record view & kill-switch UI, FR31–FR32) remains DRAFT** — not yet built, no dev work has
+started on it. Design revised several times
 since: 2026-07-27 (Decision #27, supersedes #24 — FR30's tunables editor moves
 from a GitHub-PAT proxy to a Supabase table); 2026-07-27 (Decision #28, refines #27 — the failed-fetch
 fallback moves from a hardcoded literal to a repo-committed cache file, and *proposes*
@@ -24,9 +27,10 @@ double-failure of both tiers now fails loud via `SystemExit` instead of guessing
 race/privilege trade-off to re-put to Arjun, who confirmed `hourly-watchlist.yml` stays sole writer *on
 condition of* REV-040's two mitigations — a shared `concurrency` group with `publish-prices.yml` and a
 bounded retry around the cache-commit `git push` — both now part of this design, see
-`docs/design/tunables-workflow-writeback.md` §16.4). **No dev work starts on INC-6/INC-7 until each
-is reached in sequence, per the approved build order** (CLAUDE.md: no increment starts before the previous
-one passes QA). **No open design questions remain** as of Decision #29 — see
+`docs/design/tunables-workflow-writeback.md` §16.4). **INC-6 is now reviewer-CLEAR (Pass 19,
+`docs/review-log.md`); no dev work starts on INC-7 until it is reached in sequence, per the approved build
+order** (CLAUDE.md: no increment starts before the previous one passes QA). **No open design questions
+remain** as of Decision #29 — see
 `docs/design/increment-plan.md` and `docs/design/tunables-workflow-writeback.md` §16.4.
 Split into per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index;
 read the module file(s) your increment actually touches, not the whole tree.**
