@@ -9,8 +9,12 @@ orientation. Section number below (§16) continues the pre-split numbering; §15
 the whole change request (see `docs/design.md`). **INC-5 sections (§16.1–§16.3, §16.7–§16.8: hosting/auth,
 authorization model, watchlist/holdings CRUD) are IMPLEMENTED** — dev-built, qa-tested, reviewer Pass 17
 verdict CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/design/increment-plan.md`'s status
-note, `docs/review-log.md`). **INC-6 (§16.4 pointer) and INC-7 (§16.5–§16.6) sections remain genuinely DRAFT** —
-no dev work has started on them (see `docs/design.md`'s increment plan).
+note, `docs/review-log.md`). **INC-6's design content lives in `admin-portal-tunables.md`,
+`tunables-fallback.md`, and `tunables-workflow-writeback.md` (all IMPLEMENTED, reviewer-CLEAR Pass 19)** —
+the `§16.4` pointer below is a cross-reference only, not a status claim about this file. **INC-7
+(§16.5–§16.6) sections are also IMPLEMENTED** — dev-built, qa-tested (PASS — zero bugs,
+`docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (see
+`docs/design.md`'s increment plan and coverage map, `docs/review-log.md`).
 
 **New trust boundary — read this file in full before changing any of it.** Every other surface in this
 system is either read-only-and-public (dashboard, detail page) or has no human-authenticated caller at
@@ -149,6 +153,18 @@ Depends on `operational-controls.md` §13 (INC-3) already existing. Two additive
 increment's objects, made in INC-7:
 
 ```sql
+revoke insert, update, delete, truncate on public.kill_switch_state from public, anon, authenticated;
+-- Same TRUNCATE-grant gap class as REV-081 (admin_allowlist) and REV-086 (tunables): RLS never governs
+-- TRUNCATE in Postgres, so Supabase's default grants otherwise leave it open regardless of RLS.
+-- kill_switch_state gets all four verbs revoked, not just TRUNCATE: there is no legitimate anon/
+-- authenticated write path to this table at all — every write happens through set_kill_switch(),
+-- which runs as the table owner (SECURITY DEFINER) and is therefore unaffected by this REVOKE.
+
+revoke truncate on public.kill_switch_audit from public, anon, authenticated;
+-- kill_switch_audit already had insert/update/delete revoked by sql/kill_switch.sql (INC-3) — only the
+-- missing TRUNCATE verb is added here, closing the same gap class one increment later than REV-081/086
+-- caught it on the other two tables.
+
 -- extend set_kill_switch (INC-3) with admin authorization once callers can be authenticated:
 create or replace function public.set_kill_switch(
   p_paused boolean, p_source text default 'sql-direct'

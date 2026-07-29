@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3/INC-4/INC-5/INC-6 IMPLEMENTED (INC-5 backfill + INC-6 merged to main), INC-7 DRAFT
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED (INC-5 backfill + INC-6 merged to main), INC-7 reviewer-CLEAR Pass 20
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -21,7 +21,11 @@ post-clearance, live-execution-only Postgres syntax bug was then found applying 
 dev split it into two valid policies, and the fix was confirmed by a Pass 19 addendum (independently
 re-verified live, `docs/review-log.md`). INC-6, together with INC-5's backfill (qa/reviewer clearance),
 has since been merged to `main` (merge commit `887936b`). **INC-7 (admin portal: track-record view &
-kill-switch UI) remains genuinely DRAFT** — no dev work has started on it.
+kill-switch UI) is IMPLEMENTED and reviewer-clear** — dev-built, qa-tested (PASS — zero bugs,
+`docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (two non-blocking
+doc-hygiene minors, REV-093/094, both closed by tech-lead's design-doc update; `docs/review-log.md`).
+This was the last increment in the approved build order — all seven increments (INC-3–INC-7) are now
+IMPLEMENTED.
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -289,7 +293,7 @@ REV-040 mitigations, both incorporated above.
     `jobs.watchlist`, not at the workflow's top level (`yq`/`grep` the YAML structure) — no top-level
     `permissions:` block exists in the file.
 
-### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — **DRAFT** (not yet built)
+### INC-7 — Admin portal: track-record view & kill-switch UI (FR31, FR32) — **IMPLEMENTED, reviewer Pass 20 CLEAR** (dev-built, qa-tested — PASS, zero bugs, `docs/test-report.md`; zero blockers, zero majors — see status note above)
 **Design:** `docs/design/admin-portal.md` §16.5–§16.6, `operational-controls.md` §13.3 (forward
 reference). **Files:** `admin-portal/app/track-record/`; kill-switch toggle on the shared authenticated
 layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
