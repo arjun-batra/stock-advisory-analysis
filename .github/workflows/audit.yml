@@ -4,9 +4,6 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -34,7 +31,7 @@ jobs:
         if: steps.detect.outputs.python == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.x'
 
       - name: Ruff lint (if configured)
         if: steps.detect.outputs.python == 'true'
@@ -42,8 +39,19 @@ jobs:
           if [ -f ruff.toml ] || [ -f .ruff.toml ] || (grep -q "\[tool.ruff\]" pyproject.toml 2>/dev/null); then
             pip install ruff
             ruff check .
+            ruff check --select C90 .
           else
             echo "No ruff config found, skipping lint."
+          fi
+
+      - name: Import cycle check (if configured)
+        if: steps.detect.outputs.python == 'true'
+        run: |
+          if [ -f .importlinter ] || (grep -q "\[importlinter\]" setup.cfg 2>/dev/null) || (grep -q "\[tool.importlinter\]" pyproject.toml 2>/dev/null); then
+            pip install import-linter
+            lint-imports
+          else
+            echo "No import-linter config found, skipping cycle check."
           fi
 
       - name: Python tests (if present)

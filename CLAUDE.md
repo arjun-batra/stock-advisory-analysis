@@ -6,13 +6,14 @@ Orchestrator (main thread) routes work to subagents and enforces the pipeline; n
 | Agent | Owns | Never touches |
 |---|---|---|
 | pm | docs/idea-brief.md, docs/requirements.md, README.md | code, design |
-| tech-lead | docs/design.md (incl. increment plan, config schema) | implementation |
+| tech-lead | docs/design.md (incl. increment plan, config schema), docs/code-map.md | implementation |
 | lead (lite mode only, replaces pm+tech-lead) | same artifacts as pm+tech-lead | implementation |
 | designer | docs/ux-spec.md (only if user-facing UI exists) | production code |
 | dev | src/, config file, docs/handoff.md | requirements, design, tests |
 | qa | tests/, docs/test-report.md | production code |
 | reviewer | docs/review-log.md | everything else (read-only) |
 | release | docs/runbook.md, CI/CD config (only if the project deploys) | application code |
+| big-guns | logs [DEEP] findings to docs/review-log.md | everything (read-only; never auto-invoked) |
 
 ## Shared artifacts are the contract
 Agents communicate ONLY through these documents. A decision not written to its owner's artifact did not happen.
@@ -28,12 +29,13 @@ During discovery, pm asks: small tool or real product? Small tool -> lite mode: 
 - Phase 2 — Design: tech-lead (or lead) writes design.md + increment plan (INC-1..N), each with explicit acceptance criteria dev can self-verify before handoff. Questions route to pm; user-level decisions route to the user via pm. Designer writes ux-spec.md in parallel if user-facing UI exists.
   GATE 3: user approves design + plan. If the project deploys, release sets up docs/runbook.md and CI before INC-1.
 - Phase 3 — Increment loop (full pipeline), for each INC-N (vertical slice: shippable, working end-to-end on the previous merge):
-  a. dev runs the full test suite, smoke tests, implements, writes handoff
+  a. dev writes a short build plan (per dev rules), then implements, runs full suite, writes handoff
   b. qa tests INC-N + full regression -> PASS or bugs filed in test-report.md
   c. FAIL -> dev fixes -> back to (b). Max 3 fix cycles, then escalate to tech-lead.
   d. reviewer runs a diff-scoped audit: only files changed since the last reviewer clearance (`git diff --name-only <last-cleared>..HEAD`), plus traceability of the FR/NFR IDs the increment claims. Blockers route to owning agent before next increment.
   In lite mode, skip (d) except at closure.
-- Phase 4 — Closure: qa end-to-end test -> reviewer's FULL 5-pass audit over the whole codebase (zero blockers/majors) -> pm confirms every FR/NFR delivered or deferred -> release executes/dry-runs the deploy per runbook -> present results to the user.
+- Phase 4 — Closure: qa end-to-end test -> reviewer's FULL 6-pass audit over the whole codebase (zero blockers/majors) -> pm confirms every FR/NFR delivered or deferred -> release executes/dry-runs the deploy per runbook -> present results to the user. After presenting results, suggest `/retro`.
+- big-guns is available via `/big-guns` only; the orchestrator never invokes it automatically, but may SUGGEST it (one line, no pressure) when an increment exceeds 3 fix cycles or before closure on money/advice-handling projects.
 
 ## Change requests
 1. Route to pm. pm assesses impact, asks clarifying questions if ambiguous (no-inference rule applies), updates requirements.md with new/changed FR/NFR IDs + changelog entry. User approves.
@@ -45,6 +47,7 @@ Never let dev implement a user request directly without steps 1-2.
 - dev creates branch `inc-N-<slug>` from main at the start of INC-N.
 - dev commits `INC-N: <summary> (FR-IDs covered)` after qa passes.
 - Merge to main + delete branch after reviewer clears with zero blockers. Main is never broken or half-built.
+- If the increment changed structure, tech-lead refreshes docs/code-map.md before the merge commit.
 - Docs commit alongside the code they document.
 - Closure: tag v0.1.0 and push.
 - Never commit to main without qa AND reviewer passing. Solo/low-stakes opt-in: skip branching, keep the same two commit checkpoints.

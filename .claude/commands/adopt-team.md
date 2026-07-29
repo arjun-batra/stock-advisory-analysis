@@ -18,9 +18,9 @@ Template: https://github.com/arjun-batra/delivery-team-template
 This is an existing project: skip Gates 1-3. Do not implement features or refactor. Run:
 
 1. **pm**: read the codebase, then interview the user — "here is what the code appears to do; is that intended? what is the actual purpose and scope?" Write docs/idea-brief.md and docs/requirements.md (FR/NFR IDs) describing the system as it SHOULD be. Flag drift both ways: behavior the user never wanted, and wanted behavior that is missing. If README.md is template boilerplate or missing, rewrite it as a high-level project description per pm rules.
-2. **tech-lead**: write docs/design.md AS-BUILT — actual architecture, module boundaries, and config surface as they exist today, plus an increment plan ONLY for gaps pm flagged (vertical-slice rule applies).
+2. **tech-lead**: write docs/design.md AS-BUILT — actual architecture, module boundaries, dependency rules, and config surface as they exist today, plus an increment plan ONLY for gaps pm flagged (vertical-slice rule applies). Also write docs/code-map.md, the one-page mental model of the codebase as it exists today.
 3. **qa**: establish a baseline regression suite — map existing tests to FR IDs, add smoke/e2e coverage for untested critical paths. No production code changes.
-4. **reviewer**: run the full 5-pass audit against the fresh docs.
+4. **reviewer**: run the full 6-pass audit against the fresh docs.
 
 ## 3. Debt triage (with the user)
 The first audit on an existing codebase will be long. Route it as:
