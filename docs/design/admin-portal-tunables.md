@@ -12,7 +12,7 @@ of §16 (Admin portal architecture), just in its own file now.
 Decision # — see fallback-chain section below: a permanent third fallback tier had been added during
 design elaboration beyond what Decision #28 / FR30 actually specify; Arjun's review caught it and it's
 removed here). Builds in **INC-6**, which depends on INC-5's `admin_allowlist`/`is_admin()` already
-existing. Pending GATE 3.
+existing. GATE 3 was passed for the whole change request; INC-6 itself has not started.
 
 ---
 
