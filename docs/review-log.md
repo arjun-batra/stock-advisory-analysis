@@ -648,3 +648,412 @@ follow-up doc edits in files this round's fixes already touched — routed above
 **Doc hygiene applied this pass:** Pass 16's full write-up and REV-081/082/083's closing dispositions
 moved to `docs/archive/review-log-archive.md`; the live log above keeps only the carried-forward item
 list and this pass's own findings, per `CLAUDE.md`'s doc-hygiene rule.
+
+---
+
+## Pass 18 — 2026-07-29 (INC-6 admin portal tunables editor — diff-scoped audit, FR30)
+
+**Scope.** Diff-scoped per `CLAUDE.md` Phase 3(d): `git diff --name-only 1f48e45..HEAD` (last reviewer
+clearance, Pass 17, INC-5), covering three commits on `claude/admin-portal-evaluation-txaehj` — `b2934c1`
+(INC-6 build), `8cffee8` (qa's INC-6 pass, files BUG-003), `799cd35` (BUG-003 fix) — plus traceability of
+FR30 (and NFR6, which FR30's write path inherits). Files read in full against **current content**, not
+against dev's handoff or qa's test-report claims: `sql/admin_portal_tunables.sql`, `tunables_cache.json`,
+`scripts/config.py` (whole file), `scripts/run_hourly.py`, `scripts/run_discovery.py`,
+`scripts/publish_prices.py`, `.github/workflows/hourly-watchlist.yml`, `.github/workflows/publish-prices.yml`,
+`.github/workflows/daily-discovery.yml`, `admin-portal/app/(app)/tunables/page.tsx`,
+`admin-portal/components/AuthGuard.tsx`, `admin-portal/lib/validation.ts`, `tests/test_tunables.py`,
+`tests/test_config.py`, `tests/test_run_orchestration.py`, `tests/conftest.py`,
+`tests/admin_portal/tunables_static.test.ts`, `docs/handoff.md`, `docs/test-report.md`,
+`docs/design/admin-portal-tunables.md` §16.4, `docs/design/tunables-fallback.md` §16.4,
+`docs/design/tunables-workflow-writeback.md` §16.4, `docs/design/increment-plan.md` lines 189-282 (the
+16 ACs), `docs/requirements.md` (FR30, §10, Decisions #27-#29). Also re-opened, as carried items whose
+underlying files this round's diff touches or whose resolution had not yet been formally logged:
+`sql/admin_portal_rls.sql` (REV-075's sibling context), `docs/design.md`, `docs/design/admin-portal.md`
+(REV-084 re-verification).
+
+**Method caveat (standing, unchanged since Pass 2).** No shell/execute tool bound to this session — Read/
+Grep/Glob only, no `git diff`/`git log -p`/`pytest`. Where the task asked for independent verification via
+`git log -p` (the stale-permissions-premise account, item 5) I could not run that command; I instead (a)
+read `.git/logs/HEAD` (the reflog), which is plain text and confirmed the commit `920876f`
+("release+pm+dev+qa: fix Pass 11 audit findings...") exists and precedes `b2934c1` (INC-6's build commit)
+in the branch's actual commit sequence — corroborating dev/qa's sequencing account structurally, though
+not a full `git show`/diff of that commit's content — and (b) verified the *outcome* directly: the current
+`hourly-watchlist.yml` has exactly one `permissions:` block, job-scoped, matching what both dev's flag and
+qa's independent `git log -p`-based confirmation describe. I did not re-run any of the 201 Python tests or
+39 admin-portal tests myself; I read every test file named in qa's report and confirmed each one exercises
+a real seam against real current source (not a vacuous assertion), and counted qa's claimed new-test
+figures against the files directly (28 in `test_tunables.py`, 1 in `test_config.py`, 1 in
+`test_run_orchestration.py`, 13 in `tunables_static.test.ts` — all four counts independently recounted and
+confirmed exact).
+
+### 1. Pass 1 — Traceability, requirements → code (FR30)
+
+**Complete.** Requirement: `requirements.md` FR30 (`:192-208`), NFR6 (`:248-254`), Decisions #27/#28/#29
+(`:306-308`), §10's FR30 exposure note (`:379-399`). Design: `admin-portal-tunables.md` §16.4 (schema/
+RLS/seed/UI), `tunables-fallback.md` §16.4 (fetch/cache chain, fail-loud), `tunables-workflow-writeback.md`
+§16.4 (write-back, REV-040 mitigations, `ALERTS_ENABLED` AND-gate) — all three read, all three match the
+shipped code exactly (see Pass 3/5 below). Implementation: `sql/admin_portal_tunables.sql`,
+`tunables_cache.json`, `scripts/config.py`'s two-tier chain, `scripts/run_hourly.py`/`run_discovery.py`/
+`publish_prices.py`, `.github/workflows/hourly-watchlist.yml`/`publish-prices.yml`,
+`admin-portal/app/(app)/tunables/page.tsx` + supporting portal files. Tests: `tests/test_tunables.py` (28),
+`tests/test_config.py` (updates + 1 new), `tests/test_run_orchestration.py` (1 new),
+`tests/admin_portal/tunables_static.test.ts` (13) — every AC in `increment-plan.md:189-282` maps to at
+least one test or an explicit, correctly-labeled DEFERRED entry in `test-report.md`; no AC is silently
+unaddressed.
+
+**One gap found — REV-087 (new, below):** two new non-curated tunables this increment introduces
+(`TUNABLES_FETCH_TIMEOUT_MS`, `SKIP_TUNABLES_FETCH`, `config.py:32,37`) are documented in
+`non-functional-ops.md` §9 (`:200-202`, confirmed present) but **absent from `requirements.md` §10** — the
+same class of gap as REV-074/REV-078 (a tunable landing in only one of the two baseline tables), and the
+exact failure REV-079's still-open residual (`increment-plan.md:114-115`, AC5's wording only ever names
+`non-functional-ops.md` §9) predicted would recur. `increment-plan.md`'s own AC13 text (`:251-253`) makes
+the identical single-baseline framing for `TUNABLES_FETCH_TIMEOUT_MS`, so the AC itself doesn't ask for
+the requirements.md sync — but `requirements.md` §10, not the design-doc mirror, is what the project has
+repeatedly (REV-074, REV-078) established as the actual reviewer hardcoding-audit baseline.
+
+### 2. Pass 2 — Traceability, code → requirements (scope creep)
+
+**Clean. No `[SCOPE-CREEP]`.** Every production change traces to a design block or an explicit REV-ID fix
+already recorded in the design docs: the `AuthGuard.tsx` nav-link addition was flagged as an INC-5 known
+limitation for INC-6 to close (`docs/handoff.md` INC-5 history, cited in dev's own handoff); the
+`run_hourly.py`/`run_discovery.py`/`publish_prices.py` heartbeat-status changes are REV-045, already in
+`tunables-fallback.md:280-288`; the workflow YAML changes are REV-040a/040b, already in
+`tunables-workflow-writeback.md` in full, including the exact retry-loop/backoff shape shipped. No new
+public interface, no unrequested table, no extra portal page. `validateTunableValue()`'s single
+blank-value rule matches the design's explicit "don't duplicate server-side validation" instruction
+(`admin-portal-tunables.md`, `docs/handoff.md`'s Files-changed section) — not scope creep, a deliberately
+minimal client-side check.
+
+### 3. Pass 3 — Hardcoding audit
+
+**Core mechanism clean — the point of this increment (moving 10 keys OFF hardcoded/env-var control) is
+genuinely achieved, not faked.** Read `scripts/config.py` in full: the two-tier `_tunable()` chain (table →
+cache, fail-loud `SystemExit` on double-miss) replaces the bare `os.environ.get(...)` reads for exactly the
+10 curated keys (`config.py:194-195, 224, 313, 329, 334-335, 338, 349, 353`); every one of the other ~18
+non-curated tunables in the file is untouched, still a plain `os.environ.get(...)`/literal default, exactly
+as `docs/handoff.md` claims ("confirmed via `git diff`" on dev's side; I independently confirmed by reading
+every remaining assignment in the file end to end and finding no third hardcoded-literal tier anywhere —
+the tech-lead design revision removing the permanent third tier (`tunables-fallback.md:75-91`) was
+genuinely implemented, not left half-done). `TUNABLES_FETCH_TIMEOUT_MS`/`SKIP_TUNABLES_FETCH` are
+themselves environment-driven, not hardcoded (satisfying `CLAUDE.md`'s literal non-negotiable) — REV-087
+above is a documentation-baseline gap, not a hardcoding defect. SQL: the ten seed values in
+`admin_portal_tunables.sql` are seed data, not tunables-in-code (the whole schema exists so these become
+runtime-editable) — not a `[HARDCODED]` finding.
+
+### 4. Pass 4 — Leanness audit
+
+**No `[BLOAT]`.** `config.py`'s new functions (`_fetch_tunables`, `_load_tunables_cache`, `_tunable`,
+`write_tunables_cache_if_fetched`) match the design's code blocks essentially verbatim, each with a
+non-narration docstring explaining a genuinely non-obvious invariant (merge-not-overwrite, validate-before-
+persist, fail-loud-on-cast-failure) — consistent with this file's established comment-density convention,
+not new bloat. No dead code, no unused import (`pathlib`, `json`, `create_client`, `ClientOptions` are all
+live). `tests/test_tunables.py`'s `_FakeSupabaseClient`/`_FakeTunablesTable`/`_FakeExec` trio is a
+justified local fake (the shared `conftest.py` fakes are for the Gemini seam, not Supabase) — not a
+redundant abstraction. `docs/handoff.md`'s Known Limitations section still carries a struck-through,
+resolved BUG-003 note rather than deleting it outright — readable as an audit trail of what was fixed, not
+narration; not logged as bloat.
+
+### 5. Pass 5 — Security audit
+
+No gitleaks/CI output available this session — manual trust-boundary read. **No committed secrets**:
+`tunables_cache.json` holds only non-sensitive config values (model names, discovery thresholds, an alerts
+flag) — no key, no credential. `scripts/config.py` reads `tunables` with the existing server-only
+`SUPABASE_SECRET_KEY` (bypasses RLS by design, same posture as every other Python module) — no new secret
+introduced. The portal's browser-side write path uses the authenticated user's own Supabase session, gated
+by RLS — no service-role key or GitHub PAT anywhere in `admin-portal/` (confirmed: `grep -ri secret
+admin-portal/app admin-portal/lib admin-portal/components` — the only `SUPABASE_SECRET_KEY`-shaped strings
+live in `scripts/`, never in the Next.js app). RLS policy exactness (task item 3), independently confirmed
+against `sql/admin_portal_tunables.sql:46-49` and its mirror in `docs/design/admin-portal-tunables.md:80-83`,
+**character for character**:
+```sql
+create policy "admin_write_tunables" on public.tunables
+  for select, update to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+```
+**exactly `for select, update to authenticated`, not `for all`** — REV-044's whole point, genuinely held.
+CHECK constraint (`:12-17`) lists **exactly** the 10 FR30 keys, no more, no fewer — diffed by hand against
+`requirements.md:205-207`'s list and `docs/handoff.md`'s own transcription; all three match.
+`ALERTS_ENABLED`'s seed value is `'true'` (`:64`), not `'false'` — confirmed in both the SQL insert and
+`tunables_cache.json:4`, matching Decision #27's "no behavior change at cutover" requirement exactly (task
+item 3/4, both independently re-verified, not taken on trust).
+
+**New finding — REV-086 `[SECURITY]` (see below): `sql/admin_portal_tunables.sql` is missing the
+TRUNCATE-privilege REVOKE that its own sibling table (`admin_allowlist`, REV-081, this same feature
+branch) was fixed to require, one increment ago.** This is the one finding in this pass that changes the
+verdict — full detail below.
+
+---
+
+### NEW FINDINGS — Pass 18
+
+**REV-086 — `[SECURITY]` — minor (severity matched to REV-081, its direct precedent) — but treated as
+gating for clearance, per this project's own Pass-16 precedent for the identical finding class — owner:
+dev.**
+Location: `sql/admin_portal_tunables.sql` (new table `public.tunables`, no `revoke` statement anywhere in
+the file) — compare `sql/admin_portal_rls.sql:17` (`admin_allowlist`, REV-081's fix, same feature branch,
+one increment prior) and `sql/kill_switch.sql:56` (`kill_switch_audit`, the original precedent both REV-081
+and this table should follow).
+Description: `tunables` has `alter table public.tunables enable row level security;` and exactly one
+policy, `for select, update to authenticated` gated on `is_admin()`. RLS genuinely denies INSERT/DELETE to
+`authenticated`/`anon` by construction (RLS-enabled + zero policy for those two verbs = denied, correctly
+reasoned in the file's own comment, `:40-45`) — but **RLS does not govern TRUNCATE at all**, the exact gap
+REV-081 found and fixed on `admin_allowlist` in this same session/branch. Supabase's default public-schema
+grants (the same ones the `admin_portal_rls.sql` comment names as the reason `admin_allowlist` needed its
+REVOKE, `:24`) apply to every new table in the schema unless explicitly revoked per-table — there is no
+schema-wide `alter default privileges` statement anywhere in `sql/` (confirmed by grep across every `.sql`
+file) that would cover this automatically. `tunables` was created **after** REV-081 was found and fixed
+on its sibling table, in the same feature branch, and does not carry the fix forward.
+**Not a copy-paste of REV-081's exact fix — a materially different, narrower REVOKE is correct here, and
+getting this wrong would break the increment's own core feature.** `admin_allowlist`'s fix revokes
+`insert, update, delete, truncate` because *no* authenticated-role write path to that table is legitimate
+(writes happen only via the SQL editor as table owner, or through the `is_admin()` SECURITY DEFINER
+function, which runs as owner and is exempt from both RLS and grants). `tunables` is different: the
+portal's UPDATE *is* a legitimate `authenticated`-role write path, filtered by the RLS policy above — and
+in PostgreSQL, an RLS policy only has any effect if the role already holds the underlying table-level
+privilege via GRANT; RLS filters rows, it does not confer privilege. Revoking UPDATE (as `admin_allowlist`'s
+statement does) would remove the privilege the RLS-gated portal write depends on and silently break the
+tunables editor's save button — the exact opposite of secure, since it wouldn't fail loud, it would just
+stop working with a Postgres permission-denied error the portal's error banner would surface as a generic
+failure, not a specific hint. The correct fix touches only the three verbs that have no legitimate
+`authenticated`-role path: **`revoke insert, delete, truncate on public.tunables from public, anon,
+authenticated;`** — SELECT and UPDATE are deliberately left untouched, since the RLS `for select, update`
+policy depends on `authenticated` retaining both base grants. Placed immediately after
+`alter table public.tunables enable row level security;` (`:24`), matching where REV-081's fix landed on
+its sibling file, with a comment stating why this list differs from `admin_allowlist`'s (so the next reader
+doesn't "helpfully" broaden it to match).
+**Not currently exploitable via the portal itself or via PostgREST** (PostgREST exposes no TRUNCATE verb,
+same mitigating fact REV-081 recorded) — but it is a real least-privilege gap on a table the migration is
+about to make live (per dev's handoff, `sql/admin_portal_tunables.sql` is not yet applied to the live
+project; the orchestrator applies it post-clearance, same process as `sql/admin_portal_rls.sql`/REV-081).
+Catching this **before** first live application, rather than after (as REV-081 was), is strictly better.
+**Why this holds the pass NOT CLEAR rather than being routed as non-blocking:** Pass 16 held INC-5 NOT
+CLEAR for the structurally identical finding (REV-081, same severity tag, same "not currently exploitable
+but a real least-privilege gap" framing) until it was fixed and independently re-verified at Pass 17. Same
+class of gap, same codebase, same feature area, one increment later — consistency requires the same
+treatment. This is the only finding in this pass that gates the verdict; every other new finding below is
+routed non-blocking.
+
+**REV-087 — `[REQUIREMENTS-GAP]` — minor — owner: pm. Not a merge blocker.**
+Location: `docs/requirements.md` §10 Core-system table (`:323-350`) vs. `docs/design/non-functional-ops.md`
+§9 (`:200-202`).
+Description: `TUNABLES_FETCH_TIMEOUT_MS` (default `5000`) and `SKIP_TUNABLES_FETCH` (default `false`) are
+new, genuinely tunable (environment-driven) values this increment adds to `scripts/config.py` (`:32, 37`).
+They're documented in `non-functional-ops.md` §9 but have zero mentions in `requirements.md` — the exact
+recurring gap this log has now named three times (REV-074, REV-078, and REV-079's still-open residual,
+which specifically predicted this would happen again since `increment-plan.md`'s own AC5/AC13 wording only
+ever directs an editor to the design-doc mirror, never to §10). Fix: two rows in the Core-system table,
+same shape as the `AI_PROVIDER`/`AI_TEMPERATURE` rows added for REV-074/078.
+
+**REV-088 — doc-hygiene / `[TEST-GAP]`-adjacent — minor — owner: qa. Not a merge blocker.**
+Location: `docs/test-report.md`'s AC14 per-AC table row (`:136`) and the Verdict paragraph (`:170-179`) vs.
+the "Gaps / bugs found this session" write-up (`:142-162`) and the "Open bugs" section (`:183-188`), all in
+the same file.
+Description: after BUG-003 was fixed, dev's own handoff (`docs/handoff.md:27-28`) states the fix "marked
+[BUG-003] FIXED — no other text in that file touched," describing exactly what happened: the detailed
+bug write-up and the "Open bugs" section were updated to say **FIXED**, but the AC14 table row still reads
+"PARTIAL for `run_discovery.py` — see BUG-003" / "Filed as **BUG-003** (open, below)", and the Verdict
+paragraph still says "**PASS, with one open bug (BUG-003, non-blocking-severity...)**" and lists "AC14
+partial" among the independently-re-verified ACs. A reader who reads only the per-AC table or the Verdict
+summary — the two places most likely to be skimmed — gets a stale, wrong answer; a reader who reads the
+detailed sections gets the correct, current one. Same class of within-document inconsistency as REV-085
+(handoff.md's stale Deferred-section bullet), one document later. Not a functional gap — the underlying
+code fix (`run_discovery.py:59`) is independently confirmed correct (see BUG-003 re-verification, item 2 of
+the task brief, below) — purely a doc-consistency leftover. Fix: update AC14's row to "PASS — all 3 entry
+points, BUG-003 fixed" and the Verdict paragraph to drop "with one open bug" / "AC14 partial".
+
+**REV-089 — `[DESIGN-GAP]` — minor — owner: tech-lead. Not a merge blocker. Same recurring propagation
+pattern as REV-073/079/084, one increment later.**
+Location: `docs/design/increment-plan.md:1, 14-15` ("INC-6, INC-7 ... remain genuinely DRAFT — no dev work
+has started on them"), `docs/design/admin-portal-tunables.md:10-15` ("Status: DRAFT ... INC-6 itself has
+not started"), `docs/design/tunables-fallback.md:10` and `docs/design/tunables-workflow-writeback.md:11`
+(same "Status: DRAFT" / "Builds in INC-6" framing).
+Description: all four files' "INC-6 has not started" language predates this pass and is now false — INC-6
+is dev-built, qa-tested (PASS + BUG-003 fixed), and under this pass's review. This is not a defect in any
+prior edit (nobody could write "reviewer Pass 18" before Pass 18 ran) — it is the same "accurate at
+write-time, stale the moment the next dependent event lands, nobody owns the follow-up unless it's logged"
+pattern REV-073 (Pass 14), REV-079 (Pass 15), and REV-084 (Pass 17) each named once already. Fix (one
+tech-lead pass, four files, mirroring how REV-082/084 closed the same class of gap for INC-5): flip all
+four status lines to reflect INC-6's actual state and this pass's verdict once it lands, and fold in
+REV-079's still-open AC5-wording residual (`increment-plan.md:114-115`) in the same edit, since it touches
+the same file this fix already opens. Not a merge blocker — no code or requirement is described
+incorrectly, only the increment-plan's own status pointer is behind.
+
+---
+
+### RE-VERIFICATION OF CARRIED ITEMS — three resolved, independently confirmed against current content
+
+**REV-075 — `[BLOAT]` (comment accuracy) — RESOLVED.** `scripts/config.py:257-258` now reads "The
+effective values are logged at call setup (`ai_judge.judge_batch`)" — the exact one-word fix Pass 15 named
+and Pass 17 had not yet re-checked. Independently confirmed the pointer actually resolves:
+`ai_judge.py:264-266` prints all three values the comment is attached to
+(`config.GEMINI_TIMEOUT_MS`/`GEMINI_MAX_RETRIES`/`GEMINI_RETRY_BASE_MS`) in one `[ai_judge] call config:`
+line — a reader who follows this pointer now lands exactly where the values are actually logged. `config.py`
+was in this pass's diff scope (touched by INC-6), so this carried item was re-checked as part of the normal
+per-pass re-verification duty even though the fix commit itself predates INC-6. Moved to archive.
+
+**REV-084 — `[DESIGN-GAP]` — RESOLVED.** The "NOT CLEAR pending REV-081" qualifier flagged in Pass 17 is
+gone from all three files it was found in: `docs/design.md:12, 163, 195, 206` and
+`docs/design/admin-portal.md:10` now read "reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all
+RESOLVED, zero blockers"; `docs/design/increment-plan.md:3-13` states the same, with INC-3/INC-4/INC-5 all
+correctly marked IMPLEMENTED and the Pass-15/Pass-17 review references intact. A repo-wide grep for "NOT
+CLEAR pending REV-081" now returns zero hits outside this log and its own archive. This fix (and REV-085's,
+below) landed in the two commits immediately preceding this pass's diff boundary (`1f48e45`) — outside this
+pass's literal diff scope, but never formally closed in the review log by any prior pass, so closed here as
+part of the standing "re-check carried items each pass" duty. Moved to archive.
+
+**REV-085 — doc-hygiene — RESOLVED.** `docs/handoff.md` no longer contains the stale "needs a live
+Supabase MCP/SQL-editor session ... explicitly pending, not attempted or faked" bullet Pass 17 flagged — the
+file was rewritten in full for INC-6's own handoff (a fresh `docs/handoff.md` per increment, per this
+project's established convention), which naturally supersedes the INC-5-era stale bullet along with the
+rest of that file's INC-5 content (INC-5's handoff history is preserved in git history, per `docs/
+handoff.md:32-35`'s own note). Confirmed via direct grep — zero matches for either stale phrase. Moved to
+archive.
+
+---
+
+### RE-VERIFICATION OF THE TASK'S FIVE FLAGGED ITEMS
+
+**1. QA's 171→168/3-failed→201/0-failed claim, and whether all three original failures were genuine
+consequences of the design vs. tests loosened to hide a bug.** Read the actual current content of
+`tests/test_config.py` and `tests/test_run_orchestration.py` (not the diff, since no `git diff` tool is
+available) and judged each rewritten/added test against the design contract directly:
+- `test_gemini_model_env_var_no_longer_has_any_effect` (`test_config.py:93-102`) — asserts an env-var
+  override is now **ignored**, resolving instead to the tunables-chain baseline. This is a *stricter*
+  assertion than the pre-INC-6 test it replaces (which only proved propagation existed at all), not a
+  loosened one — it would fail if `GEMINI_MODEL` accidentally regained env-var sensitivity.
+- `test_discovery_min_market_cap_resolves_from_cache_not_env_var` (`:122-134`) — same shape, same
+  strictness increase, explicitly asserts the env var's value is **not** what's returned.
+- `test_heartbeat_is_ok_when_every_ticker_processes_cleanly` (`test_run_orchestration.py:170-197`) — now
+  explicitly neutralizes `config.TUNABLES_DEGRADED = False` and its docstring states precisely why (isolate
+  the ticker-cleanliness half of the "ok" rule from the tunables-degraded half) — paired with a new sibling
+  test, `test_heartbeat_is_partial_when_tunables_are_degraded` (`:199-216`), that asserts the *other* half
+  independently. This is the textbook correct fix for a test that conflated two conditions — both halves
+  are now separately, explicitly provable — not a weakening.
+None of the three rewritten/added tests removes an assertion or widens a tolerance; each either tightens
+an existing assertion or splits a conflated one into two independently-checkable ones. **Verdict: genuine,
+intended contract changes, exactly as qa and dev both characterized them — not regressions papered over.**
+Also independently recounted the new-test tallies qa claims (30 total: 28 + 1 + 1) directly against the
+files — exact match, see the Method caveat above.
+
+**2. The BUG-003 fix's placement relative to AC14's "all three entry points."** `run_discovery.py:59`
+(`if screens_errored or config.TUNABLES_DEGRADED:`) is the early-return branch guarding the zero-candidates
+path; it now mirrors the later computed branch at `:115` (`status = "partial" if (degraded or
+config.TUNABLES_DEGRADED) else "ok"`). Confirmed all three entry points now consult
+`config.TUNABLES_DEGRADED` before writing a heartbeat status: `run_hourly.py:161`, `run_discovery.py:59`
+**and** `:115` (two separate status-writing sites in this one file, both now correct), `publish_prices.py:69`.
+No off-by-one, no wrong branch — the fix is placed at exactly the site qa's repro and BUG-003's own
+description name, and the sibling branches it doesn't touch (`test_zero_candidates_with_screen_errors_...`,
+`..._all_screens_errored_...`) didn't need changing since they were already `partial` via `screens_errored`
+regardless of the tunables state.
+
+**3. `sql/admin_portal_tunables.sql`'s RLS policy, CHECK constraint, and `ALERTS_ENABLED` seed.** All three
+independently re-verified exact — see Pass 5 above. RLS policy is character-for-character `for select,
+update to authenticated`, not `for all`. CHECK constraint lists exactly the 10 FR30 keys. `ALERTS_ENABLED`
+seeds `'true'`. The one thing this exact-match review surfaced that the task didn't ask about directly is
+REV-086 above — the file is otherwise exactly right, but incomplete relative to its own sibling table's
+established security posture.
+
+**4. `tunables_cache.json` byte-for-byte match against the SQL seed.** All 10 keys, all 10 values,
+character-for-character identical between `tunables_cache.json` and `admin_portal_tunables.sql`'s `insert`
+block, including `"ALERTS_ENABLED": "true"` in both. No transcription drift found.
+
+**5. The `.github/workflows/` diffs and the stale-permissions-premise account.** `hourly-watchlist.yml`:
+concurrency renamed to `repo-commit` (`:39-41`); permissions declared under `jobs.watchlist` only, `contents:
+write`, with an explanatory comment (`:22-29, 44-48`) stating the job-scoped block supersedes a prior
+top-level `contents: read` REV-050 had added; new "Commit tunables cache if changed" step (`:113-136`)
+matching `tunables-workflow-writeback.md`'s exact retry-loop shape. `publish-prices.yml`: confirmed the diff
+is limited to the one-line `concurrency.group` rename — its pre-existing top-level `permissions: contents:
+write` (`:17-18`) is unchanged from before INC-6 (the design doc itself, `tunables-fallback.md:35`,
+describes this block as already existing prior to this increment, corroborating dev/qa's "nothing else
+changed" claim). `daily-discovery.yml`: zero tunables references anywhere in the file (confirmed via
+targeted grep), `permissions: contents: read` and `concurrency: group: daily-discovery` both unchanged from
+their pre-INC-6 shape as described in the design docs. **The stale-premise account** (a same-day commit,
+`920876f`, added a top-level `contents: read` block to `hourly-watchlist.yml` before INC-6's own commit,
+contradicting `tunables-fallback.md`'s "no permissions block exists" premise): confirmed structurally via
+`.git/logs/HEAD` (the reflog), which lists `920876f` ("release+pm+dev+qa: fix Pass 11 audit findings...")
+strictly before `b2934c1` (INC-6's build commit) in the branch's actual commit sequence — I could not run
+`git log -p`/`git show` (no shell tool this session, see Method caveat above), so I did not view that
+commit's diff content directly, but the commit's existence, message, and ordering are independently
+confirmed, not taken solely on dev's or qa's word, and the **outcome** (the resulting file satisfying AC16 —
+job-scoped, not top-level) is fully, independently verified against current file content. **AC16 is
+satisfied**: exactly one `permissions:` block, indented under `jobs.watchlist`, `contents: write`, no
+top-level occurrence.
+
+---
+
+### Open items after Pass 18
+
+**Blockers: 0** (per this project's strict severity taxonomy). **However, one finding — REV-086
+`[SECURITY]` — gates this pass's clearance per the Pass-16/REV-081 precedent for the identical finding
+class; see the verdict below.**
+
+**Majors: 3 IDs / 2 pieces of work** — unchanged since Pass 13, neither file touched this round: REV-064 +
+REV-039 (**release**), REV-043 (**dev**).
+
+**Minors: 14 IDs** — carried, unchanged (none of these files were in this round's scope): REV-063 residual
++ REV-071 (dev), REV-065 (tech-lead), REV-066 + REV-052 (tech-lead + pm), REV-067 (tech-lead), REV-068
+(pm), REV-070 (qa + release), REV-072 (tech-lead), REV-048 (qa), REV-049(b) (release), REV-080 (qa),
+REV-079 (tech-lead, AC5-wording residual only) — 11 IDs. New this pass: REV-086 (dev, **gates
+clearance**), REV-087 (pm), REV-088 (qa), REV-089 (tech-lead) — 4 IDs.
+
+**Resolved this pass: 3** — REV-075, REV-084, REV-085, each independently re-verified against current file
+content, not against any fix commit's own claim. All three, plus their closing dispositions, moved to
+`docs/archive/review-log-archive.md`.
+
+**Routing (batched by owner):**
+- **dev** — **REV-086 (blocking — fix required before this increment merges/clears): one line in
+  `sql/admin_portal_tunables.sql`**, `revoke insert, delete, truncate on public.tunables from public, anon,
+  authenticated;` placed after the `enable row level security` line — **not** the wider `admin_allowlist`
+  revoke list; UPDATE and SELECT must stay granted or the portal's save path breaks. Also carried:
+  REV-063 residual + REV-071 (two SQL headers), REV-043 (`get_price_only`).
+- **tech-lead** — REV-089 (four status-line files + REV-079's folded-in residual), plus carried REV-065,
+  REV-067, REV-072, and the `non-functional-ops.md` §9 half of REV-066/REV-052.
+- **pm** — REV-087 (two rows in `requirements.md` §10), plus carried REV-066 + REV-052 (`requirements.md`
+  §10 half) and REV-068.
+- **qa** — REV-088 (`test-report.md`'s AC14 row + Verdict paragraph), plus carried REV-080 and REV-048.
+- **release** — carried REV-064 + REV-039 (§7 now owes two keys) and REV-049(b), and REV-070/AC6 at
+  closure.
+
+### Pass 18 summary
+
+**New findings by tag — 4:** `[SECURITY]` 1 (REV-086, **gates clearance**), `[REQUIREMENTS-GAP]` 1
+(REV-087, non-blocking), doc-hygiene/`[TEST-GAP]`-adjacent 1 (REV-088, non-blocking), `[DESIGN-GAP]` 1
+(REV-089, non-blocking). Pass 2 clean — no `[SCOPE-CREEP]`. Pass 3 clean — the increment's core purpose
+(moving 10 keys off hardcoded/env-var control) is genuinely implemented, no new `[HARDCODED]`, and
+REV-087 is a doc-baseline gap, not a code hardcoding defect. Pass 4 clean — no new `[BLOAT]`.
+
+**Resolved this pass: 3** (REV-075, REV-084, REV-085) — all independently re-verified, all moved to
+archive.
+
+**Open blocker count: 0** (strict taxonomy) / **1 gating minor (REV-086)**.
+
+### Verdict — Pass 18 / INC-6
+
+**NOT CLEAR — one new `[SECURITY]` finding (REV-086) gates clearance, per this project's own established
+precedent (Pass 16 held INC-5 NOT CLEAR for the structurally identical finding, REV-081, until fixed and
+independently re-verified at Pass 17). Zero blockers or majors in the strict severity sense; zero
+`[SCOPE-CREEP]`; zero new `[HARDCODED]`; zero new `[BLOAT]`.**
+
+**What this verdict does and does not mean.** INC-6's core engineering is sound and was independently
+re-verified, not taken on trust: the two-tier fallback chain, the fail-loud `SystemExit` behavior, the
+`ALERTS_ENABLED` AND-gate (both directions), the cache write-back's validate-and-never-shrink guarantees,
+the workflow YAML scope (concurrency rename, job-scoped permissions, bounded push retry), and BUG-003's fix
+placement are all correct and match their design blocks exactly. The RLS policy, CHECK constraint, and
+`ALERTS_ENABLED` seed value the task specifically asked to be re-verified are all exactly right. Test
+coverage is real (201/201 Python, 39/39 admin-portal, both independently spot-checked against actual
+source, not vacuous). **What is missing is one SQL statement**: `sql/admin_portal_tunables.sql` needs a
+narrower analogue of `admin_allowlist`'s REV-081 fix — `revoke insert, delete, truncate` (deliberately
+**not** `update`) — before the migration is applied to the live project. This is a one-line, low-risk fix;
+once it lands, dev should hand this straight back for re-verification rather than a full re-audit (the
+diff will be a single added line plus a comment, in a file already read in full this pass).
+
+**Deferred-vs-verified split, independently checked against the task's carve-out.** `test-report.md`'s
+per-AC table correctly splits the live-Supabase-dependent halves of AC1/AC3/AC4/AC6/AC7 and the
+live-GitHub-Actions-dispatch halves of AC15/AC16 as DEFERRED, with everything else marked PASS and
+independently re-verifiable this session — matches the expected carve-out exactly, same pattern as INC-5's.
+Not held against this increment, per the task's explicit instruction.
+
+**Doc hygiene applied this pass:** REV-075/084/085's closing dispositions moved to
+`docs/archive/review-log-archive.md`. The live log above keeps the carried-forward item list and this
+pass's own findings only.

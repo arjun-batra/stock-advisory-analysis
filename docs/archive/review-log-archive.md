@@ -2389,3 +2389,38 @@ content, not against the fix commits' own claims:**
     Carried into Pass 17 re-scoped to the secondary item only. Owner: tech-lead.
 - **Verdict:** INC-5 CLEAR at Pass 17 — zero blockers, zero majors. Full disposition and new-finding text
   in `docs/review-log.md` Pass 17.
+
+---
+
+## Pass 18 — 2026-07-29 (INC-6 admin portal tunables editor, FR30 — diff-scoped audit) — findings text
+lives in `docs/review-log.md` (live, not archived — Pass 18 issued **NOT CLEAR** on one new gating
+`[SECURITY]` minor, REV-086, so its own write-up stays in the live log per the archiving-on-clear
+convention). This entry records only the three carried items Pass 18 independently re-verified and closed.
+
+**Closing disposition (Pass 18, 2026-07-29) — each independently re-verified against current file
+content, not against any fix commit's own claim:**
+
+- **REV-075** `[BLOAT]` (comment accuracy) minor — RESOLVED. Carried open since Pass 15 (re-scoped there),
+  still open per Pass 17's bookkeeping (Pass 17's own scope was narrower — a targeted re-verification of
+  REV-081/082/083 only — so it never re-checked this item). `scripts/config.py:257-258` now reads "The
+  effective values are logged at call setup (`ai_judge.judge_batch`)"; independently confirmed
+  `ai_judge.py:264-266` genuinely prints all three named values (`GEMINI_TIMEOUT_MS`, `GEMINI_MAX_RETRIES`,
+  `GEMINI_RETRY_BASE_MS`) in one `[ai_judge] call config:` line. The fix commit itself predates INC-6 (it
+  landed between Pass 15 and Pass 16 per the branch reflog), but `scripts/config.py` was touched again by
+  INC-6 and so was read in full this pass, surfacing the still-unclosed bookkeeping.
+- **REV-084** `[DESIGN-GAP]` minor — RESOLVED. The "NOT CLEAR pending REV-081" qualifier is gone from all
+  four cited spots (`docs/design.md:12,163,195,206`, `docs/design/increment-plan.md:3-13`,
+  `docs/design/admin-portal.md:10`) — all now correctly state "reviewer Pass 17 verdict is CLEAR —
+  REV-081/082/083 all RESOLVED, zero blockers." Repo-wide grep for the stale phrase returns zero hits
+  outside this archive and the live log's own historical narration. Fix commit landed immediately before
+  Pass 18's diff boundary (`1f48e45`); never formally closed by a reviewer pass until now.
+- **REV-085** `[BLOAT]`/staleness minor — RESOLVED. `docs/handoff.md` no longer contains the stale
+  "explicitly pending, not attempted or faked" AC8 bullet — the file was rewritten in full for INC-6's own
+  handoff (a fresh `docs/handoff.md` per increment, this project's established convention), which
+  supersedes the INC-5-era stale bullet along with the rest of that file's INC-5-specific content
+  (preserved in git history per the new file's own note). Confirmed via direct grep, zero matches.
+- **Verdict:** INC-6 **NOT CLEAR** at Pass 18 — one new gating `[SECURITY]` minor (REV-086: `sql/
+  admin_portal_tunables.sql` missing a narrow `revoke insert, delete, truncate` statement, the sibling of
+  REV-081's fix on `admin_allowlist`), plus three new non-blocking minors (REV-087 requirements-baseline
+  gap, REV-088 test-report internal inconsistency, REV-089 stale DRAFT status headers). Full finding text
+  and routing in `docs/review-log.md` Pass 18 (not archived pending the fix and its re-verification).
