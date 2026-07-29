@@ -1,5 +1,72 @@
 # Handoff — INC-5: Admin portal foundation (FR27, FR28, FR29, NFR5, NFR6)
 
+## Post-handoff bug fix (2026-07-29): production build never inlined the Supabase env vars
+
+**Symptom:** every production build on Vercel threw `Missing required environment variable
+NEXT_PUBLIC_SUPABASE_URL` at runtime in the browser, even with both `NEXT_PUBLIC_*` vars correctly
+set in Vercel project settings. Extensive Vercel-side debugging (var names, environment scoping, root
+directory, redeploys, custom domain caching) found nothing wrong, because the bug was never on that
+side.
+
+**Root cause:** `lib/supabase-client.ts`'s `requiredEnv(name)` read the var via `process.env[name]` —
+a *dynamic/computed* property access (bracket notation with a variable). Next.js/webpack's
+`NEXT_PUBLIC_*` build-time inlining only recognizes a *literal, static* `process.env.EXACT_NAME`
+expression written in source; it cannot statically resolve that `name` would be
+`"NEXT_PUBLIC_SUPABASE_URL"` at runtime, so the reference was never replaced, and the dynamic lookup
+returned `undefined` in the browser on every production build, regardless of what was set in the
+deploy environment.
+
+Searched the rest of `admin-portal/` for the same anti-pattern (`grep -rn "process\.env\[" admin-portal`
+excluding `node_modules`/`.next`) — the only match was this one call site. `app/auth/callback/route.ts`
+already reads the same two vars via literal `process.env.NEXT_PUBLIC_SUPABASE_URL!` /
+`process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!` (static, correct) — that file was not affected.
+
+**Why the original `next dev` smoke test (recorded above) didn't catch it:** `next dev` resolves
+`process.env` more permissively than an optimized production build and doesn't rely on the same
+static-replacement/dead-code-elimination pass — this bug is production-build-specific. Smoke-testing
+only via `next dev` is not sufficient evidence for any code path that touches `NEXT_PUBLIC_*` inlining.
+
+**Fix — `admin-portal/lib/supabase-client.ts`:** `requiredEnv` now takes the already-resolved value as
+a second parameter instead of doing the lookup itself; each call site passes it via a literal
+`process.env.NEXT_PUBLIC_SUPABASE_URL` / `process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY` expression, so
+webpack/Turbopack can find and statically replace each one at build time:
+
+```ts
+function requiredEnv(name: string, value: string | undefined): string { ... }
+
+export function createClient() {
+  return createBrowserClient(
+    requiredEnv("NEXT_PUBLIC_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL),
+    requiredEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  );
+}
+```
+
+**Verification (corrected method — production build + built-output inspection, not `next dev`):**
+1. `NEXT_PUBLIC_SUPABASE_URL=<real url> NEXT_PUBLIC_SUPABASE_ANON_KEY=<real anon key> npm run build`
+   (Next.js 16.2.12, Turbopack) — compiles and generates all 6 routes with zero errors.
+2. Inspected the built client chunk directly rather than inferring from absence of an error:
+   `grep -o '.\{40\}ikghqdtlbwifwnooytmm[^"]*"' .next/static/chunks/*.js` found
+   `s_("NEXT_PUBLIC_SUPABASE_URL","https://ikghqdtlbwifwnooytmm.supabase.co"` and the equivalent for
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` — the real values are baked into the minified JS as literals, proving
+   the static replacement happened at build time.
+3. Negative control: rebuilt with **no** env vars set. The same chunk instead contained the unresolved
+   expression `w.default.env.NEXT_PUBLIC_SUPABASE_URL` (no literal value baked in) — confirms the check
+   is real (reflects actual build-time env) and not a false-positive pass.
+4. `npm run start` (production server, not `next dev`) with the real vars set — `/login` returns 200
+   and renders correctly, no thrown error, clean server log.
+5. `python3 -m pytest -q --tb=short` — 171 passed, 0 failures (no-op as expected; change is scoped to
+   `admin-portal/` TypeScript only). Note bare `pytest` on PATH resolves to an isolated `uv tool`
+   install missing `supabase`/`yfinance` — use `python3 -m pytest`, per the note already in this file.
+
+**Lesson for future increments touching `NEXT_PUBLIC_*` vars:** a `next dev` smoke test is not
+sufficient evidence that env-var inlining works. Verify with an actual `npm run build` + inspection of
+the built `.next/static/chunks/*.js` output for the literal value (not just absence of a runtime
+error), before handoff.
+
+**Files touched:** `admin-portal/lib/supabase-client.ts` only.
+
+
 Branch: `claude/admin-portal-evaluation-txaehj` (same batching note as INC-3/INC-4 — no new `inc-N`
 branch cut).
 
