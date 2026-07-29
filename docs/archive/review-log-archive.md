@@ -2467,3 +2467,87 @@ current file content, not against the fix commits' claims, per Pass 19's explici
 - **Verdict:** INC-6 **CLEAR** at Pass 19 — all four findings that held it NOT CLEAR independently
   re-verified RESOLVED. Zero blockers, zero majors. Full disposition, REV-090, and REV-079's residual
   status in `docs/review-log.md` Pass 19.
+
+---
+
+## Pass 19 addendum — 2026-07-29 (post-clearance live-apply failure and hotfix,
+`sql/admin_portal_tunables.sql`) — ARCHIVED 2026-07-29 at Pass 20's close
+
+Not a numbered pass — a post-clearance addendum covering a live-execution-only defect no static review
+could have caught: the orchestrator's live `apply_migration` of the exact `sql/admin_portal_tunables.sql`
+Pass 19 cleared failed with a Postgres syntax error (`CREATE POLICY ... FOR select, update` — a `FOR`
+clause accepts exactly one command, never a comma list). Dev fixed it (commit `e46abf8`): the one invalid
+policy became two valid ones, `admin_read_tunables` (`for select`) and `admin_write_tunables` (`for
+update`). The fix was independently re-verified in full against current file content (valid Postgres
+syntax; semantically equivalent effective authorization to the single-policy draft; REV-086's REVOKE
+untouched and still correct; the file's own REV-044/REV-086 comments updated to match). Live application
+was corroborated by the orchestrator's report (`relrowsecurity=true`, `pg_policies` showing exactly the two
+new policies, no INSERT/DELETE/TRUNCATE for anon/authenticated, all 10 seed rows present), not
+independently re-run (no live-DB tool bound to any reviewer session this project). Verdict: the fix holds,
+INC-6 remains CLEAR.
+
+Two adjacent defects were found independently during this re-verification, neither disclosed by the fix
+commit: REV-091 (major, gating INC-7's start per `CLAUDE.md`'s "no increment starts before the previous
+one passes QA") — two permanent regression tests in `tests/admin_portal/tunables_static.test.ts` still
+hard-coded the invalid pre-fix single-policy shape and would fail against current source; REV-092 (minor)
+— the design doc's mirrored SQL block (`docs/design/admin-portal-tunables.md` §16.4) and dev's own
+`handoff.md` still described the old single-policy shape and omitted REV-086's REVOKE.
+
+**Closing disposition (Pass 20, 2026-07-29) — REV-090/091/092, each independently re-verified against
+current file content, as part of INC-7's diff-scoped audit (files re-read as part of INC-7's own
+traceability/sanity checks, not a targeted fix-round brief):**
+
+- **REV-090** `[DESIGN-GAP]` minor — RESOLVED. `docs/design.md`'s master index now correctly states, in
+  all five originally-cited spots, that INC-6 is IMPLEMENTED and reviewer-CLEAR (Pass 19): the header
+  paragraph (`:8-16`), the "no dev work starts on INC-7" sentence (`:30-32`, INC-6 correctly dropped from
+  it since it's no longer pending), the `increment-plan.md` module-map row (`:56`, "INC-3/INC-4/INC-5/
+  INC-6 IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; INC-7 DRAFT"), the three admin-portal-tunables/
+  tunables-fallback/tunables-workflow-writeback module-map rows (`:63-65`, each "(IMPLEMENTED, INC-6
+  reviewer-CLEAR Pass 19)"), and §15's FR30 coverage-map row. FR31/FR32's row is still (correctly, at the
+  time) DRAFT — that pairing is INC-7's, not INC-6's, and is what Pass 20 finds stale in turn (see
+  REV-093, `docs/review-log.md` Pass 20).
+- **REV-091** `[TEST-GAP]` major — RESOLVED. `tests/admin_portal/tunables_static.test.ts:46-73` now
+  contains the two-policy-shape assertions (`admin_read_tunables` for select, `admin_write_tunables` for
+  update, exactly two policy lines, neither matching `for (all|insert|delete)`), matching current
+  `sql/admin_portal_tunables.sql:57-64` exactly. INC-7's own qa run (`docs/test-report.md`) reports this
+  file passing as part of the 40-test pre-existing baseline, corroborating the fix was in place before
+  INC-7 started, honouring the gate this finding named.
+- **REV-092** `[DESIGN-GAP]`/doc-hygiene minor — RESOLVED (design-doc half fixed properly; handoff.md half
+  rendered moot by the file's normal per-increment rotation, not a defect). `docs/design/
+  admin-portal-tunables.md:42-64` now shows the two-policy `admin_read_tunables`/`admin_write_tunables`
+  block plus the REVOKE statement and an updated REV-044/REV-086 comment explaining the split — matches
+  current `sql/admin_portal_tunables.sql` exactly. `docs/handoff.md` is dev's per-increment artifact (no
+  archive rule of its own per `CLAUDE.md`) and has since been fully rewritten for INC-7; it no longer
+  describes INC-6's tunables policy shape at all, so the stale description REV-092 flagged there no longer
+  exists to be wrong — the permanent record of the `e46abf8` fix lives in this review log instead (Pass 19
+  addendum, above), which is sufficient.
+
+**Verdict:** all three carried items independently re-verified RESOLVED at Pass 20, none held INC-7's
+audit. Full Pass 20 findings (including REV-093, the same status-staleness pattern recurring for INC-7)
+in `docs/review-log.md` Pass 20.
+
+---
+
+## Pass 19 — 2026-07-29 (Pass-18 fix-round verification: REV-086/087/088/089, INC-6 final clearance) —
+ARCHIVED 2026-07-29 at Pass 20's close
+
+Archived in full at Pass 20's close, per `CLAUDE.md`'s doc-hygiene rule (full finding text is in git history
+at the Pass-19 commit / prior revisions of `docs/review-log.md`). Pass 19 was a targeted re-verification
+(not a new diff-scoped audit) of the four findings that held INC-6 NOT CLEAR at Pass 18: REV-086
+(`[SECURITY]` minor, `tunables` table TRUNCATE grant), REV-087 (`[REQUIREMENTS-GAP]` minor, `requirements.md`
+§10 baseline gap), REV-088 (`[TEST-GAP]`-adjacent doc-hygiene minor, `test-report.md` internal
+inconsistency), REV-089 (`[DESIGN-GAP]` minor, stale DRAFT status headers across four design docs). All four
+were independently re-verified RESOLVED against current file content, not taken on the fix commits' word —
+REV-086 was additionally checked character-for-character against the exact REVOKE statement specified and
+its deliberate, reasoned divergence from `admin_allowlist`'s broader REV-081 REVOKE (narrower here because
+`tunables`' UPDATE/SELECT are legitimate `authenticated`-role paths, unlike `admin_allowlist`'s). REV-079's
+secondary residual (AC5 wording in `increment-plan.md`, naming only one config-audit baseline) was
+re-confirmed still open but judged non-gating for INC-6 (an INC-3/INC-4-era item, not an INC-6 defect).
+**Verdict: INC-6 CLEAR** — zero blockers, zero majors, all four gating findings resolved.
+
+**New finding surfaced independently this pass (not disclosed by REV-089's fix): REV-090** —
+`[DESIGN-GAP]` minor. `docs/design.md`, the master index, was outside REV-089's four-file fix scope and
+remained stale in five spots (header, module-map rows, §15 coverage-map row), contradicting the four module
+files REV-089 had just corrected to say INC-6 was IMPLEMENTED/reviewer-Pass-19-pending. Same recurring
+status-propagation pattern this log has now named repeatedly (REV-073, REV-079, REV-084, REV-089). Routed to
+tech-lead, not gating. **RESOLVED at Pass 20** — see Pass 20's carried-items section, `docs/review-log.md`.
