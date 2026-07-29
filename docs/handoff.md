@@ -221,6 +221,8 @@ file, no `.github/workflows/*` file.
   via `git diff --stat -- scripts/` being empty). Note: `pytest` on PATH resolves to an isolated `uv
   tool` install without `supabase`/`google-genai` installed — use `python3 -m pytest` (repo-root
   `dist-packages` has the real deps), not bare `pytest`.
+- **AC8** — PASS. See "AC8 / REV-034 live grant-and-policy audit — raw evidence" above (the
+  post-handoff fixes section, REV-083) for the raw live query results and how they resolve REV-034.
 
 **Deferred — need live deployment/live Supabase, per your instruction not to fake these (I don't have
 Vercel or write access to the live Supabase project in this session):**
@@ -229,11 +231,6 @@ Vercel or write access to the live Supabase project in this session):**
   (Arjun's already done the OAuth/dashboard side per your note).
 - **AC4–AC5** (CRUD writes confirmed via direct Supabase query; anon-key-no-session REST write rejected
   by RLS) — need the migration applied to the live project.
-- **AC8 (REV-034 existing-schema grant/policy audit)** — needs a live Supabase MCP/SQL-editor session
-  against the real project (`select * from pg_policies where schemaname='public'` +
-  `information_schema.role_table_grants`, then confirm an authenticated-but-non-allowlisted session
-  gains nothing beyond what `anon` already had). I don't have Supabase MCP tool access in this session
-  (not bound to my toolset), so this is explicitly pending, not attempted or faked.
 
 ## How to run locally
 
