@@ -1,3 +1,76 @@
+# Handoff — Production bug fix: `ClientOptions` incompatibility broke live tunables fetch
+
+## Build plan (written before coding, per dev's updated workflow)
+
+- **What broke:** `scripts/config.py`'s `_fetch_tunables()` called
+  `create_client(SUPABASE_URL, SUPABASE_SECRET_KEY, options=ClientOptions(postgrest_client_timeout=...))`.
+  The installed `supabase-py==2.31.0`'s `create_client()`/`Client.__init__` only sets
+  `options.storage` on its OWN internally default-constructed `ClientOptions` (the
+  `if options is None:` branch) — the importable `supabase.lib.client_options.ClientOptions`
+  dataclass has no `storage` field at all (confirmed via `inspect.getsource`/`dataclasses.fields`
+  against the exact installed version). Passing a caller-built instance skipped that branch and
+  crashed with `AttributeError: 'ClientOptions' object has no attribute 'storage'` on every call
+  since INC-6 merged, degrading `hourly-watchlist`/`publish-prices` to `partial` (real push
+  notifications) on every scheduled run — the tunables editor never functionally reached
+  production; every run silently used the tier-2 cache.
+- **Fix:** don't construct `ClientOptions` at all — `create_client(SUPABASE_URL,
+  SUPABASE_SECRET_KEY)` (no `options=`), then `client.postgrest.session.timeout =
+  httpx.Timeout(TUNABLES_FETCH_TIMEOUT_MS / 1000)` on the already-built client. Removed the
+  now-unused `from supabase.lib.client_options import ClientOptions` import; added `import
+  httpx` (already a pinned transitive dependency via `requirements.txt`, no new dependency).
+- **Files:** `scripts/config.py` (the fix); `docs/design/tunables-fallback.md` (REV-095 — synced
+  the as-built code block + added an incident/resolution note, since this is the same file's
+  contract the code implements, same precedent as REV-092); `tests/test_tunables.py` (updated
+  `_FakeSupabaseClient`/`mock_tunables_fetch` to model `.postgrest.session.timeout` instead of a
+  `create_client(options=...)` kwarg, and rewrote `test_ac13_timeout_is_actually_passed_into_client_options`
+  to match); new `tests/test_fetch_tunables_real_client_construction.py` — regression tests that
+  go through the REAL (unmocked) `supabase.create_client()` construction path, which is exactly
+  the seam the old mock-the-whole-function test pattern never exercised and let this ship
+  undetected.
+- **Contracts touched:** none outside `scripts/config.py`'s internal `_fetch_tunables()` — the
+  function's return contract (`dict[str, str]` on success, `{}` on any failure) is unchanged;
+  every caller (`_TUNABLES = _fetch_tunables()` at import time) is untouched.
+- **Verification:** full existing suite (204 tests, all pass) + 3 new regression tests; manual
+  reproduction of both the old crash (`AttributeError: 'ClientOptions' object has no attribute
+  'storage'`, confirmed against the real installed `supabase-py==2.31.0`) and the fixed path
+  (fails with a real network/proxy error caught by `except Exception`, not the AttributeError) via
+  local `python3` against `https://example.invalid.supabase.co` (RFC 2606 never-resolves host,
+  no live credentials needed); all three entry points (`run_hourly.py`, `run_discovery.py`,
+  `publish_prices.py`) import cleanly end to end with `SKIP_TUNABLES_FETCH=true` and separately
+  with `SKIP_TUNABLES_FETCH=false` against the fake host (falls back to tier-2 cache exactly as
+  designed, `TUNABLES_DEGRADED=True`, no crash).
+
+## Files touched
+
+- `scripts/config.py` — the fix (`_fetch_tunables()`, imports).
+- `docs/design/tunables-fallback.md` — REV-095: as-built code block sync + incident note.
+- `tests/test_tunables.py` — fixture/test update to match the new client-construction shape.
+- `tests/test_fetch_tunables_real_client_construction.py` — new, real (unmocked) construction-path
+  regression coverage.
+
+## How to run
+
+- `python3 -m pytest -q --tb=short` from repo root (204 passed).
+- Manual repro/verify (no live credentials needed):
+  `SKIP_TUNABLES_FETCH=false SUPABASE_URL=https://example.invalid.supabase.co
+  SUPABASE_SECRET_KEY=fake GEMINI_API_KEY=fake python3 -c "import sys;
+  sys.path.insert(0,'scripts'); import config"` — should log a `403`/network-class failure and
+  `TUNABLES_DEGRADED=True`, never an `AttributeError`.
+
+## Known limitations
+
+- No live Supabase project available this session — the fix's construction-path correctness is
+  verified against the real installed library (no `AttributeError`), but a genuine tier-1 fetch
+  success (real rows returned) was not re-verified live; that path's shape (`.table().select()
+  .execute().data`) is unchanged from before this fix and was already covered by INC-6's
+  mocked-fetch tests.
+- Design-doc sync (`docs/design/tunables-fallback.md`) done by dev per this project's REV-092
+  precedent for a fix this tightly coupled to one code block; if tech-lead wants a second pass
+  over the wording, flag it — no structural/contract change was made, only the code block and an
+  incident note.
+
+---
+
 # Handoff — INC-7: Admin portal track-record view & kill-switch UI (FR31, FR32)
 
 ## Build plan (written before coding, per dev's updated workflow)

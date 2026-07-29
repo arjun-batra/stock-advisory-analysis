@@ -123,6 +123,28 @@ against that fake host. `_fetch_tunables()` is the **single patchable seam** for
 function, the same pattern `ai_judge._client` already establishes as this codebase's convention for an
 external-call boundary.
 
+**REV-095 fix, 2026-07-29 — live production incident: the REV-041 timeout mechanism itself crashed on
+every call.** REV-041's own code comment flagged its `options=ClientOptions(postgrest_client_timeout=...)`
+kwarg/unit as "to confirm against the installed supabase-py version at INC-6 build time" — that risk
+materialized in production the day INC-6 merged (`887936b`): `hourly-watchlist` and `publish-prices` went
+"degraded" on every scheduled run (real `monitor_alerts`/push notifications, per REV-045's design working
+exactly as intended). Root cause, confirmed via local reproduction against the exact installed
+`supabase-py==2.31.0`: that version's `create_client()`/`Client.__init__` only sets `options.storage`
+(`SyncMemoryStorage()`) on **its own internally default-constructed** `ClientOptions` (the
+`if options is None:` branch) — the publicly-importable `supabase.lib.client_options.ClientOptions`
+dataclass has **no `storage` field at all**. Passing a caller-built `ClientOptions(...)` instance (as
+REV-041 did, purely to set a timeout) skipped that branch entirely, and client setup crashed with
+`AttributeError: 'ClientOptions' object has no attribute 'storage'` on every single call — 100%
+reproducible, not a Supabase-side or config problem. Practical effect: the tunables editor never
+functionally reached production; every run silently resolved all 10 curated keys from tier 2
+(`tunables_cache.json`), which is why the cache fallback itself was never observed to misbehave — the
+fallback logic worked exactly as designed, this was purely a fetch-mechanism bug one layer up. Fix: don't
+construct `ClientOptions` at all for this call — let `create_client()` build its own correct default, then
+set the timeout on the already-constructed client's `postgrest.session.timeout` (an `httpx.Client`
+instance) directly, post-construction. `ClientOptions` is no longer imported by `scripts/config.py` at all.
+Regression-tested against the REAL (unmocked) `create_client()` construction path, not just a mocked
+`_fetch_tunables()` — see `tests/test_fetch_tunables_real_client_construction.py`.
+
 ```python
 TUNABLES_FETCH_TIMEOUT_MS = int(os.environ.get("TUNABLES_FETCH_TIMEOUT_MS", "5000"))   # non-curated;
     # bootstraps the fetch below, so it cannot itself be sourced from the `tunables` table
@@ -145,11 +167,13 @@ def _fetch_tunables() -> dict[str, str]:
               "(no live Supabase call made) — deterministic for tests/local runs")
         return {}
     try:
-        client = create_client(
-            SUPABASE_URL, SUPABASE_SECRET_KEY,
-            options=ClientOptions(postgrest_client_timeout=TUNABLES_FETCH_TIMEOUT_MS / 1000),
-            # exact kwarg/unit to confirm against the installed supabase-py version at INC-6 build time
-        )
+        # REV-095, 2026-07-29 — see the incident note below the code block: do
+        # NOT pass a caller-built `options=ClientOptions(...)` into
+        # create_client() on this supabase-py version. Let it build its own
+        # default, then set the timeout on the constructed postgrest
+        # sub-client directly.
+        client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+        client.postgrest.session.timeout = httpx.Timeout(TUNABLES_FETCH_TIMEOUT_MS / 1000)
         rows = client.table("tunables").select("key,value").execute().data
         return {r["key"]: r["value"] for r in rows}
     except Exception as e:

@@ -11,8 +11,8 @@ import pathlib
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 from supabase import create_client
-from supabase.lib.client_options import ClientOptions
 
 # --- Secrets / config (set as GitHub Actions secrets; see workflow) -----------
 GEMINI_API_KEY      = os.environ.get("GEMINI_API_KEY", "")
@@ -58,10 +58,19 @@ def _fetch_tunables() -> dict[str, str]:
               "(no live Supabase call made) — deterministic for tests/local runs")
         return {}
     try:
-        client = create_client(
-            SUPABASE_URL, SUPABASE_SECRET_KEY,
-            options=ClientOptions(postgrest_client_timeout=TUNABLES_FETCH_TIMEOUT_MS / 1000),
-        )
+        # Deliberately NOT `create_client(..., options=ClientOptions(...))`: the
+        # installed supabase-py's create_client()/Client.__init__ only sets
+        # `options.storage` on ITS OWN internal default-constructed ClientOptions
+        # (the `if options is None:` branch) -- the publicly-importable
+        # `supabase.lib.client_options.ClientOptions` dataclass has no `storage`
+        # field at all, so passing a caller-built instance here crashed with
+        # `AttributeError: 'ClientOptions' object has no attribute 'storage'` on
+        # every single call (2026-07-29 incident; confirmed against the exact
+        # installed version, not the sketch this REV-041 code block used to
+        # show). Fix: let create_client() build its own correct default, then set
+        # the timeout on the already-constructed postgrest sub-client directly.
+        client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+        client.postgrest.session.timeout = httpx.Timeout(TUNABLES_FETCH_TIMEOUT_MS / 1000)
         rows = client.table("tunables").select("key,value").execute().data
         return {r["key"]: r["value"] for r in rows}
     except Exception as e:
