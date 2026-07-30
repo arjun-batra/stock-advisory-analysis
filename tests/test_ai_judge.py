@@ -246,3 +246,106 @@ def test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_ma
         "BUG: ABC.NS resolved parse_status='ok' by borrowing ABC.TO's verdict/"
         "rationale via _normalize_ticker's .TO/.NS-stripping collision -- see "
         "docs/test-report.md open bugs")
+
+
+# --- BUG-005 fix-cycle-1: unambiguity-guard edge probes -----------------------
+# The guard (`normalized_counts[t_norm] == 1`) is per-batch, so its behavior
+# depends on batch composition. These probe the guard's own new edges rather
+# than re-testing BUG-005's original repro (covered above).
+
+def test_parse_batch_wellformed_response_with_ambiguous_pair_present_is_unaffected(capsys):
+    """A batch containing the ABC.TO/ABC.NS collision pair, but where the model
+    replies with a fully-labeled, well-formed response (every ticker has its
+    own direct-label object) never needs the fallback at all. The guard must
+    not reject or otherwise disturb a case that never needed rescuing -- both
+    tickers resolve via their own direct label, and no fallback log line
+    fires for either."""
+    raw = json.dumps([
+        {"ticker": "ABC.TO", "verdict": "Buy", "confidence": "high", "rationale": "to-reason"},
+        {"ticker": "ABC.NS", "verdict": "Sell", "confidence": "low", "rationale": "ns-reason"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.NS"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    assert out["ABC.TO"]["rationale"] == "to-reason"
+    assert out["ABC.NS"]["parse_status"] == "ok"
+    assert out["ABC.NS"]["rationale"] == "ns-reason"
+    log = capsys.readouterr().out
+    assert "positional fallback used for" not in log
+
+
+def test_parse_batch_single_ticker_batch_bare_normalized_match_still_resolves(capsys):
+    """A single-ticker batch requesting ABC.TO, answered with a bare 'ABC'
+    ticker field, is the unambiguous case §4.4a exists to serve (normalized
+    form has exactly one candidate in the batch) -- must still resolve, not
+    be caught by the ambiguity guard meant for cross-ticker collisions."""
+    raw = json.dumps([{"ticker": "ABC", "verdict": "Buy", "confidence": "high",
+                       "rationale": "bare-abc-answer"}])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    assert out["ABC.TO"]["rationale"] == "bare-abc-answer"
+    assert "positional fallback used for ABC.TO" in capsys.readouterr().out
+
+
+def test_parse_batch_three_way_base_symbol_collision_normalized_candidate_fails_safe():
+    """Three requested tickers share the same base symbol (ABC.TO, ABC.NS,
+    ABC). ABC.TO and ABC (bare) both resolve via their own exact direct
+    label. ABC.NS has no object of its own and falls to the positional
+    fallback, whose candidate at that index carries an explicit `ticker`
+    field ('ABC.TO', already consumed by ABC.TO's own direct match) that
+    only normalizes -- not exactly matches -- the ticker being resolved.
+    With 3 requested tickers sharing the normalized form 'ABC'
+    (normalized_counts['ABC'] == 3), this must fail safe, not guess which of
+    the 3 the candidate belongs to."""
+    raw = json.dumps([
+        {"verdict": "Buy", "confidence": "high", "rationale": "abcto-unlabeled"},
+        {"ticker": "ABC.TO", "verdict": "Sell", "confidence": "low", "rationale": "abcns-borrowed-abcto-label"},
+        {"ticker": "ABC", "verdict": "Hold", "confidence": "medium", "rationale": "bare-abc-direct"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.NS", "ABC"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    assert out["ABC.TO"]["rationale"] == "abcns-borrowed-abcto-label"
+    assert out["ABC"]["parse_status"] == "ok"
+    assert out["ABC"]["rationale"] == "bare-abc-direct"
+    assert out["ABC.NS"]["parse_status"] == "failed", (
+        "3-way base-symbol collision: ABC.NS must fail safe, not borrow "
+        "ABC.TO's verdict/rationale via the normalized-field candidate.")
+
+
+def test_parse_batch_duplicate_ticker_in_requested_batch_drops_legitimate_second_match():
+    """BUG-006 repro (new, found probing the BUG-005 guard's own edge, not a
+    variation of BUG-005 itself): when the SAME ticker string appears twice
+    in the requested `tickers` list (a duplicate request, not two different
+    tickers), `normalized_counts` counts it twice purely because of the
+    duplicate -- there is no genuine cross-ticker collision. The second
+    occurrence's legitimate bare-ticker normalized match is then wrongly
+    rejected as 'ambiguous' by the guard, and because `out` is keyed by
+    ticker string, that rejection OVERWRITES the first occurrence's already
+    -- correctly -- resolved entry. Expected: both occurrences should be
+    unaffected by a same-ticker duplicate (the guard's ambiguity concept
+    only makes sense across DISTINCT normalized forms); actual: the final
+    `out['ABC.TO']` is a fail-safe Hold, discarding a legitimately available
+    answer."""
+    raw = json.dumps([
+        {"ticker": "AAPL", "verdict": "Buy", "confidence": "high", "rationale": "aapl-reason"},
+        {"verdict": "Sell", "confidence": "low", "rationale": "first-ABC.TO-unlabeled"},
+        {"ticker": "ABC", "verdict": "Hold", "confidence": "medium", "rationale": "second-ABC.TO-bare-answer"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["AAPL", "ABC.TO", "ABC.TO"], "test-model")
+
+    assert out["AAPL"]["parse_status"] == "ok"
+    # BUG-006: this currently fails -- the surviving out["ABC.TO"] entry is a
+    # fail-safe Hold (the second occurrence's legitimate bare-'ABC' match was
+    # rejected as "ambiguous" purely because the ticker was requested twice),
+    # clobbering the first occurrence's own correctly-resolved entry.
+    assert out["ABC.TO"]["parse_status"] == "ok", (
+        "BUG-006: duplicate-ticker-in-batch causes the guard to reject a "
+        "legitimate normalized match as 'ambiguous' (Counter counts the "
+        "same requested ticker's own duplicate, not a distinct colliding "
+        "ticker) -- see docs/test-report.md open bugs")
