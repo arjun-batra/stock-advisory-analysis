@@ -6,10 +6,12 @@ Hold if it still can't parse. A malformed response can only ever MISS a
 signal, never fabricate one — and that claim holds specifically because
 `_parse_batch`'s positional fallback (the one path that resolves a ticker
 from an object the model didn't label) accepts that object only when its own
-`ticker` field is absent or normalizes to the ticker being resolved;
-anything else falls through to a fail-safe Hold instead of borrowing a
+`ticker` field is absent, or normalizes to the ticker being resolved AND that
+normalized form is unambiguous among the tickers actually requested this
+batch; anything else falls through to a fail-safe Hold instead of borrowing a
 different company's verdict/rationale under `parse_status: "ok"` (§4.4a,
-DEEP-003 fix).
+DEEP-003 fix; the unambiguity guard closes BUG-005, a residual cross-market
+collision the original §4.4a suffix-stripping match didn't account for).
 
 Provider-neutral (FR33, `docs/design/operational-controls.md` §14): this
 module never imports an SDK directly or classifies a provider's raw
@@ -22,6 +24,7 @@ import json
 import pathlib
 import random
 import time
+from collections import Counter
 from datetime import datetime, timezone
 
 import config
@@ -210,6 +213,17 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     the one path that could fabricate rather than merely miss a signal. Any
     candidate that fails this check falls through to the same fail-safe Hold
     as every other parse failure.
+
+    BUG-005 refinement: a normalized (suffix-stripped) match is only trusted
+    when it's unambiguous — i.e. exactly one of THIS batch's requested
+    tickers normalizes to that string. `_normalize_ticker` collapses distinct,
+    real tickers that share a base symbol across markets (e.g. `ABC.TO` and
+    `ABC.NS` both -> `ABC`); if two or more requested tickers collide that
+    way, a normalized-only match can't tell which one the object actually
+    belongs to, so it must fail safe rather than guess (same "never
+    fabricate, only miss" posture as the misaligned-array case above). The
+    no-ticker-field case is unaffected by this guard: it never depends on
+    normalization to identify a match in the first place.
     """
     try:
         obj = json.loads(raw)
@@ -236,6 +250,12 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
             print(f"  [ai_judge] duplicate ticker '{key}' in model response; keeping the last occurrence")
         by_ticker[key] = o
 
+    # How many of THIS batch's requested tickers share each normalized form --
+    # used below to reject a normalized-only fallback match when it's
+    # ambiguous which requested ticker the candidate actually belongs to
+    # (BUG-005: e.g. ABC.TO and ABC.NS both normalize to "ABC").
+    normalized_counts = Counter(_normalize_ticker(x) for x in tickers)
+
     out = {}
     for i, t in enumerate(tickers):
         o = by_ticker.get(t.upper())
@@ -243,7 +263,12 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
         if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
             cand = arr[i]                        # positional fallback (same order requested)
             cand_ticker = cand.get("ticker")
-            if not cand_ticker or _normalize_ticker(str(cand_ticker)) == _normalize_ticker(t):
+            t_norm = _normalize_ticker(t)
+            unambiguous_normalized_match = (
+                cand_ticker and _normalize_ticker(str(cand_ticker)) == t_norm
+                and normalized_counts[t_norm] == 1
+            )
+            if not cand_ticker or unambiguous_normalized_match:
                 o, used_fallback = cand, True
         if used_fallback:
             print(f"  [ai_judge] positional fallback used for {t} (array index {i} had no "
