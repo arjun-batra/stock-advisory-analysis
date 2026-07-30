@@ -215,15 +215,27 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     as every other parse failure.
 
     BUG-005 refinement: a normalized (suffix-stripped) match is only trusted
-    when it's unambiguous — i.e. exactly one of THIS batch's requested
-    tickers normalizes to that string. `_normalize_ticker` collapses distinct,
-    real tickers that share a base symbol across markets (e.g. `ABC.TO` and
-    `ABC.NS` both -> `ABC`); if two or more requested tickers collide that
-    way, a normalized-only match can't tell which one the object actually
-    belongs to, so it must fail safe rather than guess (same "never
-    fabricate, only miss" posture as the misaligned-array case above). The
-    no-ticker-field case is unaffected by this guard: it never depends on
+    when it's unambiguous — i.e. exactly one of THIS batch's DISTINCT
+    requested tickers normalizes to that string. `_normalize_ticker` collapses
+    distinct, real tickers that share a base symbol across markets (e.g.
+    `ABC.TO` and `ABC.NS` both -> `ABC`); if two or more distinct requested
+    tickers collide that way, a normalized-only match can't tell which one the
+    object actually belongs to, so it must fail safe rather than guess (same
+    "never fabricate, only miss" posture as the misaligned-array case above).
+    The no-ticker-field case is unaffected by this guard: it never depends on
     normalization to identify a match in the first place.
+
+    BUG-006 fix: ambiguity is counted over the DISTINCT requested tickers,
+    not raw occurrences — the SAME ticker requested twice in one batch is not
+    a cross-ticker collision, just a duplicate request, and must not count
+    against itself. Additionally, a fail-safe result for a given ticker never
+    overwrites an already-resolved ("ok") result for that same ticker — with
+    a duplicate request, the two occurrences can independently reach
+    different outcomes, and a later fail-safe silently clobbering an earlier
+    good verdict (via `out`'s ticker-string keying) would throw away a
+    legitimately available answer for no reason. An earlier "ok" is never
+    replaced by a later "failed"; last-write-wins is otherwise unchanged
+    (pre-existing behavior, not itself being redesigned here).
     """
     try:
         obj = json.loads(raw)
@@ -250,11 +262,15 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
             print(f"  [ai_judge] duplicate ticker '{key}' in model response; keeping the last occurrence")
         by_ticker[key] = o
 
-    # How many of THIS batch's requested tickers share each normalized form --
-    # used below to reject a normalized-only fallback match when it's
-    # ambiguous which requested ticker the candidate actually belongs to
-    # (BUG-005: e.g. ABC.TO and ABC.NS both normalize to "ABC").
-    normalized_counts = Counter(_normalize_ticker(x) for x in tickers)
+    # How many DISTINCT requested tickers share each normalized form -- used
+    # below to reject a normalized-only fallback match when it's ambiguous
+    # which requested ticker the candidate actually belongs to (BUG-005: e.g.
+    # ABC.TO and ABC.NS both normalize to "ABC"). Deduped by exact requested
+    # string (case-folded) before counting, so the SAME ticker requested
+    # twice in one batch counts once, not twice (BUG-006) -- that's a
+    # duplicate request, not a second, distinct ticker colliding.
+    distinct_requested = {x.upper() for x in tickers}
+    normalized_counts = Counter(_normalize_ticker(x) for x in distinct_requested)
 
     out = {}
     for i, t in enumerate(tickers):
@@ -275,13 +291,24 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
                   f"matching 'ticker' label)")
         if isinstance(o, dict) and o.get("verdict") in VALID_VERDICTS and o.get("rationale"):
             conf = str(o.get("confidence", "")).lower()
-            out[t] = {"verdict": o["verdict"],
+            result = {"verdict": o["verdict"],
                       "confidence": conf if conf in VALID_CONFIDENCE else None,
                       "rationale": clip(o["rationale"], RATIONALE_MAX),
                       "raw_model_response": raw, "parse_status": "ok", "model_used": model}
         else:
-            out[t] = {**_FAIL_SAFE_PARSE, "raw_model_response": raw,
+            result = {**_FAIL_SAFE_PARSE, "raw_model_response": raw,
                       "parse_status": "failed", "model_used": model}
+        # BUG-006: `out` is keyed by ticker string, so a ticker requested more
+        # than once resolves independently at each occurrence and the later
+        # one overwrites the earlier. A later fail-safe must never clobber an
+        # already-resolved "ok" for the same ticker -- that would silently
+        # discard a legitimately available answer. Last-write-wins is
+        # otherwise unchanged (pre-existing behavior, not redesigned here).
+        if result["parse_status"] == "failed" and out.get(t, {}).get("parse_status") == "ok":
+            print(f"  [ai_judge] duplicate requested ticker '{t}' (index {i}): keeping the "
+                  f"earlier resolved verdict, discarding a later fail-safe for the same ticker")
+            continue
+        out[t] = result
     return out
 
 
