@@ -84,10 +84,9 @@ four were re-read this pass and their citations re-derived. The rest are in file
   at `:194` and `:279` — the count is the thing the table exists to track); rows 1–4 still cite
   `scheduler_pgcron.sql:279` in a 184-line file and put `dispatch_watchlist_if_open()` in the wrong file
   (it is `phase5_monitoring.sql:318-338`).
-- **REV-068 — `[REQUIREMENTS-GAP]` — minor — owner: pm. Re-checked at Pass 15 against the edited file.**
-  `docs/requirements.md` still has zero `two-tier`/`fail-loud`/`SystemExit` hits for the INC-6 tunables
-  chain, and `:388` still names the stale `config/tunables_cache.json` path (the cache is repo-root,
-  REV-046 — `non-functional-ops.md:106-108` has it right).
+- **REV-068 — RESOLVED 2026-07-29 (pm), independently re-verified 2026-07-30 (Pass 25).** Full original
+  text and closing disposition moved to `docs/archive/review-log-archive.md` per doc hygiene — see
+  `docs/review-log.md` Pass 25 for the verification detail.
 - **REV-070 — minor — owner: qa + release.** INC-3's AC1–AC5 remain unexecuted against a live Supabase
   project per Arjun's explicit deferral. Not a defect; a scheduling obligation owed at apply time. Phase-4
   closure must not treat FR24/FR25/FR26 as verified until it happens.
@@ -1461,6 +1460,379 @@ is otherwise identical to Pass 23's.
 
 ---
 
+## Pass 25 — 2026-07-30 (INC-9 diff-scoped audit — parse-attribution contract + closed-market structural
+check; FR17; closes DEEP-003+DEEP-004) — CLEAR
+
+**Scope.** Diff-scoped per the orchestrator's brief: `git diff --name-only f66d693..HEAD` (Pass 24 cleared
+INC-8 at `f66d693`), covering INC-9's original fix commit (`cc1026a`), two bug-fix cycles (`14faba9`/
+`7a9befb` for BUG-005; `11f2b96`/`3693948` for BUG-006), qa's three re-test commits (`6eadcf0`, `e7c55ec`,
+`b232b08`), and tech-lead's two §4.4a design syncs (`8a2c96e`, `f6a5a97`). Files read in full or by targeted
+grep: `scripts/ai_judge.py` (in full — module docstring, `_normalize_ticker`, `_parse_batch`,
+`judge_batch`'s retry loop), `scripts/ingest.py` (`_session_state`, `_market_for`, `get_market_data` in
+full, `get_price_only` for contrast), `scripts/run_hourly.py` / `scripts/run_discovery.py` (call sites,
+duplicate-reachability check), `scripts/prefilter.py` (`find_candidates`'s dedup logic, `:146-253`),
+`sql/schema.sql:47-82` (`watchlist.ticker` PK confirmation), `docs/design/components.md` §4.2 (DEEP-004
+write-up) and §4.4/§4.4a (DEEP-003 + BUG-005 + BUG-006 write-ups, in full, incl. the tech-lead reachability
+recommendation), `docs/design/non-functional-ops.md` §7.5 and §8's module-map bullets, `docs/requirements.md`
+FR17 (§5.6), Decision #33 (§8; Decision #34 read for context but unrelated to INC-9 — it's DEEP-005/FR30),
+the §10 Configuration table, and the Decisions Log/changelog for REV-068's fix, `docs/handoff.md`'s INC-9
+section (original build plan + both fix-cycle entries, in full), `docs/test-report.md` (BUG-006 fix-cycle-2
+re-test + Open Bugs/BUG-007, in full), `tests/test_ai_judge.py` (all ten `_parse_batch`-scoped tests, in
+full), `tests/test_ingest.py` (all four DEEP-004 tests, in full), `tests/test_prefilter.py` (grepped for a
+duplicate/dedup regression test — none found), `docs/design.md` (module index + §0 load-bearing #8 + §15
+coverage-map lines for FR17/DEEP-003), `docs/design/increment-plan.md` (title + INC-9 heading),
+`docs/code-map.md` (spot-check, `ai_judge.py`/`ingest.py` entries).
+
+**Method caveat (standing, unchanged since Pass 2).** No shell/execute tool bound to this session — `git
+diff`/`pytest` were not independently re-run. qa's "244 passed, 0 failed" and dev's "229 passed, 0 failed"
+baseline figures are corroborated (every file each handoff/report claims was touched was opened directly
+and its content matches the claimed change; the ten `_parse_batch` tests and four `get_market_data` tests
+were read line-by-line and their assertions traced against the actual current code, not just their names),
+not re-executed.
+
+### Check 1 — Is DEEP-003 actually closed across all three rounds? Reasoning about `_parse_batch`'s final
+state on its own terms, not fix-against-bug-report
+
+**Yes — traced the final shipped function directly (`scripts/ai_judge.py:198-312`), not each fix against
+the bug it named.** The corroboration test that gates every positional-fallback acceptance, in its final
+form:
+
+```python
+if not cand_ticker or (
+    cand_ticker and _normalize_ticker(str(cand_ticker)) == t_norm
+    and normalized_counts[t_norm] == 1
+):
+    o, used_fallback = cand, True
+```
+
+Two acceptance paths exist, and I checked both independently for a live misattribution route:
+- **Labeled-candidate path.** A candidate carrying its own `ticker` field is accepted only when that field
+  normalizes to the ticker being resolved AND the normalized form is unambiguous among the batch's
+  *distinct* requested tickers (`normalized_counts[t_norm] == 1`, counted over `{x.upper() for x in
+  tickers}` — deduped, so a ticker requested twice can't inflate its own ambiguity count, BUG-006's fix). A
+  labeled candidate belonging to a genuinely different company is *always* rejected here, regardless of
+  array position — this is what closes DEEP-003's original evidence shape (`[A,B,C]` requested, `[A,X,B]`
+  returned: `C`'s positional slot holds `B`'s own labeled object, `_normalize_ticker("B") !=
+  _normalize_ticker("C")`, rejected, fails safe) and BUG-005's cross-market shape (`ABC.TO`/`ABC.NS`, a
+  labeled `ABC.TO` object cannot be borrowed for `ABC.NS` once ambiguity is genuinely present). I traced
+  this against ten tests in `tests/test_ai_judge.py`, not just the two shipped-with-the-fix ones, including
+  the wellformed-response negative case
+  (`test_parse_batch_wellformed_response_with_ambiguous_pair_present_is_unaffected`) and the three-way
+  collision (`test_parse_batch_three_way_base_symbol_collision_normalized_candidate_fails_safe`) — every
+  one passes and every assertion is a real value check (rationale text, `parse_status`, log-line
+  presence/absence), not a placeholder.
+- **Unlabeled-candidate path.** A candidate with no `ticker` field at all is accepted purely positionally —
+  this is the one branch with no corroborating signal by construction, and it is where a genuine,
+  unresolvable ambiguity could theoretically still exist: if a model's response omits `ticker` labels on
+  *multiple* objects in a misaligned order (a doubly-anomalous response — both misaligned *and*
+  schema-non-compliant, since `ai_provider._response_schema` declares `required=["ticker","verdict",
+  "confidence","rationale"]`, `ai_provider.py:121`, which `judge_batch`'s retry attempt also uses,
+  `ai_judge.py:391`), `_parse_batch` has no way to detect it and could positionally attribute the wrong
+  unlabeled object. This is not a new gap DEEP-003/BUG-005/BUG-006 left open — it is the design's own
+  explicitly accepted "legitimate case" (§4.4a's own words: "the model just forgot the label, in request
+  order"), it requires a schema violation the structured-decoding contract is supposed to prevent on every
+  call including the retry, and every fallback use (labeled or not) is logged (`positional fallback used
+  for {t}`) so an operator can audit it after the fact. **Calibration note, not a finding:** worth naming
+  explicitly since the brief asked me to reason about the function on its own terms rather than fix-by-fix
+  — this residual is real but is the same risk category the design already documents and accepts, not a
+  fourth undocumented hole.
+
+**The overwrite/duplicate-ticket path was checked as its own route to misattribution, separately from the
+corroboration test.** `out` is keyed by ticker string; the final write guard (`if
+result["parse_status"]=="failed" and out.get(t,{}).get("parse_status")=="ok": continue`) only ever
+*withholds* a write (never substitutes a different ticker's content) — so this path can cause information
+loss (BUG-007, below) but cannot cause misattribution: every value that ever reaches `out[t]` was
+independently computed for that same `t` in that same loop iteration, from either `t`'s own direct label or
+a fallback candidate that passed the corroboration test above. No path exists — none of the three fix-cycle
+commits, individually or combined — that lets `out[t]`'s content originate from a different requested
+ticker `t'` under `parse_status: "ok"`. **DEEP-003: genuinely closed.**
+
+### Check 2 — Is DEEP-004 closed, and did the two `ai_judge.py`-only fix cycles disturb it?
+
+**Closed, and untouched by fix cycles 1–2 (independently confirmed, not accepted on dev's/qa's "zero
+drift" claim).** `scripts/ingest.py:220-310` (`get_market_data`) was read in full. The stale-bar check
+(`:252-268`) sits immediately after the empty-history guard (`:248-250`, `if h is None or h.empty: ...
+return out`) and strictly before `close = h["Close"].dropna()` (`:270`) — the first line of any
+price/volume math, including `pct_change_1d/5d/20d` and `volume_vs_avg`'s pro-rating. `live, frac =
+_session_state(market)` is computed once at `:260` and reused at `:297` for the pro-rating block — the
+"later, now-redundant call removed" claim in dev's original handoff is correct; there is exactly one
+`_session_state()` call in the function. Both BUG-005 and BUG-006's "Files changed" sections
+(`docs/handoff.md`, read in full) name `scripts/ai_judge.py` only, and I independently confirmed
+`scripts/ingest.py`'s stale-bar block is byte-identical in shape to what `components.md` §4.2's DEEP-004
+pseudocode specifies (compared line-for-line, both use the same variable names and control flow). qa's own
+spot-check (`-k "stale_bar or DEEP004 or deep_004 or session_state"` → 8 passed) is corroborated by a
+direct read of all four tests in `tests/test_ingest.py:319-410`, including the two
+NSE/`Asia/Kolkata` timezone-aware tests that go beyond what the original handoff described and specifically
+probe the "index is already exchange-local, no explicit tz conversion" assumption dev flagged as a known
+limitation — a genuinely independent addition by qa, not a restatement. **DEEP-004: genuinely closed, and
+confirmed undisturbed by fix cycles 1–2.**
+
+### Check 3 — BUG-007's reachability argument, judged independently
+
+**I accept it — independently re-derived, not taken on tech-lead's word.** Two claims underlie the
+deferral:
+- **`watchlist.ticker` cannot produce a duplicate.** `sql/schema.sql:48`: `ticker text primary key`. A DB
+  primary key is a structural guarantee; `run_hourly.py`'s batch is built from a single
+  `state.get_watchlist_tickers(sb)` call, so it is duplicate-free by construction. Confirmed.
+- **Discovery's candidate batches are duplicate-free today, incidentally.** `scripts/prefilter.py:223-233`:
+  `find_candidates()` builds one `seen: dict[str, dict]` keyed on the uppercased symbol, populated from
+  **every** screener query issued in that one call (`day_gainers`/`day_losers`/`most_actives`/`ca_*` for
+  `region="na"`, or `in_gainers`/`in_losers`/`in_actives` for `region="in"`) before quality gates or ranking
+  ever run — so the list `find_candidates()` returns cannot itself contain a duplicate ticker.
+  `scripts/run_discovery.py:44` calls `find_candidates()` exactly once per script invocation (one region
+  per scheduled workflow run — confirmed by reading `main()` in full: `region` is resolved once from an env
+  var, `find_candidates()` is called once, and `items`/`judge_batch()` are built straight from that one
+  call's output, with no merging of multiple `find_candidates()` calls into one batch anywhere in the
+  file). Confirmed independently, not merely corroborated.
+
+**Verdict on the deferral: reasonable, currently accurate, and appropriately caveated.** Both live call
+paths are genuinely duplicate-free today, for reasons that are structural (the DB PK) or a real invariant
+of the current code (the `seen` dict spans every screen in one call). tech-lead's own write-up in
+`components.md` (lines ~407-424) already flags that the discovery guarantee is *incidental*, not
+*enforced* — nothing tests it, so a future prefilter change (a new query added outside the loop that builds
+`raw`, or two `find_candidates()` calls merged into one batch) could silently reintroduce the precondition
+without any test catching the regression. **I checked whether that test exists yet: it does not**
+(`tests/test_prefilter.py` grepped for `duplicate`/`dedup` — zero hits). This is a real,
+currently-unaddressed gap in what would catch a *future* regression of the very precondition BUG-007's
+deferral rests on — logged fresh below as REV-109, not a blocker for INC-9 (BUG-007 itself is correctly
+minor and correctly deferred as of today's code), but real and worth tracking now rather than after a
+future prefilter change quietly reopens the reachability question.
+
+**An open minor at increment-close is acceptable per `CLAUDE.md`'s gate text** ("Blockers halt the
+pipeline" — BUG-007 is neither a blocker nor a major; it is a determinism/observability gap for a
+currently-unreachable precondition, filed for the record per the task's own instruction, not a defect
+requiring a fix cycle). It does not hold up INC-9's merge.
+
+### Check 4 — Design-code fidelity: does §4.4a, as it now stands, match `_parse_batch` as shipped?
+
+**Yes — compared line-for-line, not accepted on the doc's own "refreshed at each fix cycle's close"
+claim.** `components.md:288-310`'s pseudocode block:
+```
+distinct_requested = {x.upper() for x in tickers}
+normalized_counts = Counter(_normalize_ticker(x) for x in distinct_requested)
+...
+if not cand_ticker or unambiguous_normalized_match:
+    o, used_fallback = cand, True
+```
+matches `scripts/ai_judge.py:272-288` construct-for-construct, including the post-BUG-006 dedup
+(`distinct_requested` built from a set comprehension over `tickers`, not the raw list) that qa's own
+re-test (`docs/test-report.md:35-41`) flagged as still-stale mid-cycle. The `f6a5a97` sync (per the brief,
+labeled WIP but complete) did land the fix: the doc no longer shows the pre-BUG-006 raw-occurrence
+`Counter(_normalize_ticker(x) for x in tickers)` qa flagged. The overwrite-guard prose
+(`components.md:364-393`) and its inline snippet (`if result["parse_status"]=="failed" and
+out.get(t,{}).get("parse_status")=="ok": continue`) match `ai_judge.py:307` exactly. **§4.4a is current. A
+future implementer rebuilding from this section alone would reproduce the shipped function correctly**,
+including the ambiguity guard, the dedup, and the overwrite guard's asymmetry.
+
+### Check 5 — The overwrite guard's asymmetry, judged on its own reasoning
+
+**Holds.** `components.md:388-393`'s stated rationale: guarding `failed`-over-`ok` prevents a strictly
+worse outcome (a real, informative verdict silently replaced by a placeholder `Hold`/`confidence: null`/
+generic rationale — the guarded direction is the one that could otherwise convert a genuine answer into a
+fail-safe non-answer for no reason); leaving `ok`-over-`ok` unguarded is defended on the grounds that both
+candidates are equally legitimate AI outputs with "no principled way to prefer one over the other" short of
+a return-contract redesign. I tested this reasoning against the one case that would break it — a scenario
+where the *asymmetry itself* (not just the missing guard) could cause a worse-than-baseline outcome — and
+did not find one: since `ok`-over-`ok` only fires when a ticker is requested twice (currently unreachable
+on both live paths, Check 3) and both occurrences are legitimate resolutions, the discarded verdict is
+neither fabricated nor a fail-safe miss, just an equally-valid answer that loses a coin-flip; there is no
+direction in which guarding it would be safer than not guarding it, only more deterministic. The reasoning
+is sound, and it is honestly scoped in the doc as a "not itself being re-litigated" pre-existing behavior
+rather than smuggled in as new. `tests/test_ai_judge.py:416-434`'s `divergent_ok_verdicts` test locks in
+the current behavior as observed, which is the right instrument for an accepted-not-fixed gap.
+
+### Traceability audit (Passes 1/2) — FR17, DEEP-003 (no requirements face, per `requirements.md`'s own
+changelog entry), Decision #33
+
+| Link | Location | Status |
+|---|---|---|
+| Requirement | `requirements.md:139-151` FR17 (sharpened text matches the shipped stale-bar check verbatim — "compare the latest available bar's session date to today's date... skip-with-log path exactly as any other detected non-trading day"), Decision #33 (`:384`) | present |
+| Design | `components.md` §4.2 (DEEP-004, pseudocode matches code exactly — Check 2/4) + §4.4/§4.4a (DEEP-003/BUG-005/BUG-006, pseudocode matches code exactly — Check 1/4); `non-functional-ops.md` §7.5 (matches, Check-read) | present |
+| Implementation | `scripts/ai_judge.py` (`_normalize_ticker`, `_parse_batch`), `scripts/ingest.py` (`get_market_data`) | present, independently re-derived (Checks 1/2) |
+| Tests | `tests/test_ai_judge.py` — 10 `_parse_batch`-scoped tests; `tests/test_ingest.py` — 4 stale-bar tests (incl. 2 NSE tz-aware, beyond the original design) | present, read line-by-line, real assertions |
+
+DEEP-003 itself has "no requirements-level face" per `requirements.md:502`'s own changelog entry (routed
+to tech-lead as a design/code contract issue) — correctly not requiring an FR/NFR ID; its fix is fully
+traceable through `docs/design.md` §0 load-bearing #8's text instead (`design.md:131-138`, confirmed
+accurate against the shipped corroboration check).
+
+**No `[SCOPE-CREEP]` found (Pass 2).** Every line changed across all three fix-cycle diffs maps to an
+explicit design instruction or bug-report fix shape: the `Counter`/`collections` import,
+`_normalize_ticker`, the corroboration test, the ambiguity guard, the dedup, the overwrite guard, and both
+docstring updates are each named in `components.md`'s fix-round write-ups and matched to their shipped form
+above. `scripts/ingest.py`'s only change is the stale-bar block, matching `components.md` §4.2 exactly. No
+public signature changed (`_parse_batch(raw, tickers, model)`, `get_market_data(ticker)` — both unchanged).
+
+**Hardcoding/leanness/security (Passes 3–5) — clean, diff-scoped.** No CI/lint output available this
+session (no shell tool) — manual audit only. No new tunable-shaped literal: `.TO`/`.NS` suffix handling
+reuses `_market_for`'s existing convention (not a new one); no new timeout/model-param/prompt-string
+literal introduced. No dead code, no unused import (`Counter` is used), no commented-out code; the
+docstrings are long but match this codebase's established rationale-comment house style (calibrated
+identically to Pass 15/24's findings on the same convention, not flagged). No new trust boundary:
+`_parse_batch` still receives already-`json.loads`-parsed model output inside the same `try/except`; no
+shell/SQL/file-path/HTML construction anywhere in the diff; no secret touched.
+
+**Structure (Pass 6) — clean, diff-scoped.** No dependency-direction violation, no import bypassing a
+public interface, no circular import. `code-map.md`'s `ai_judge.py`/`ingest.py` entries remain accurate at
+their level of detail (module-role descriptions, unaffected by internal-function changes). `_parse_batch`
+grew but is still one cohesive function with a single responsibility (parse-and-attribute); no duplicated
+logic introduced (the corroboration test and the overwrite guard are each single, non-duplicated blocks).
+
+---
+
+### NEW FINDINGS — Pass 25
+
+**REV-109 — `[TEST-GAP]` — minor — owner: qa.** No regression test locks `prefilter.find_candidates()`'s
+duplicate-free guarantee, which is the entire empirical basis for deferring BUG-007 (Check 3 above).
+Location: `scripts/prefilter.py:223-233` (the `seen`-dict dedup `components.md`'s own tech-lead
+recommendation, lines ~418-421, names as "currently-incidental" and recommends testing);
+`tests/test_prefilter.py` (zero hits for `duplicate`/`dedup`, confirmed by grep). Description: both live
+call paths are duplicate-free today (Check 3), but the discovery half of that guarantee is enforced only by
+`find_candidates()`'s current implementation shape, not by any test or explicit contract at the
+`find_candidates()`/`judge_batch()` boundary — a future change (a new screener query added outside the
+`raw`-building loop, or two `find_candidates()` calls merged into one batch) could silently reopen the
+exact precondition BUG-006/BUG-007 exist to guard against, with nothing to catch the regression. tech-lead
+already recommended this test in `components.md`; it has not been written. Fix: one test asserting
+`find_candidates()`'s returned candidate list contains no duplicate `ticker` value, even when the
+underlying screener queries return overlapping symbols. Not a merge blocker for INC-9 — the precondition
+holds today, independently re-verified (Check 3).
+
+**REV-110 — `[DESIGN-GAP]` — minor — owner: tech-lead.** INC-9's status markers are now stale the moment
+this pass's verdict lands, the same propagation pattern this log has flagged repeatedly before a merge
+event (REV-073, REV-079, REV-084, REV-090, REV-093/094, REV-108). Location: `docs/design.md:45` ("INC-9 ...
+approved ... not yet built"), `:49` ("INC-9, INC-10, and INC-11 are approved ... and not yet built"), `:77`
+(`increment-plan.md` index row, "INC-9–INC-11 approved 2026-07-30, not yet built"), `:79` (`components.md`
+index row, "§4.2/§4.4 STALE fix-round additions, INC-9 ... not yet built"), `:81`
+(`non-functional-ops.md` index row, "STALE fix-round additions in §7.3/§7.5/§8, INC-9/INC-10, pending
+dev"), `:218` (FR17 coverage-map row, "STALE pending merge"); `docs/design/increment-plan.md:1` (title,
+"INC-9–INC-11 approved-and-not-yet-built"), `:38`, `:341` (section header, same phrasing), `:382`
+(`### INC-9` heading, "**APPROVED, not yet built**"). Description: these were accurate when tech-lead wrote
+them (before dev built INC-9, before qa's PASS, before this pass ran) and are not a defect in that sense,
+but INC-9 has now passed both qa (`docs/test-report.md`, PASS, 244/0) and this reviewer pass with zero
+blockers/majors, so every one of the locations above needs one follow-up edit. Note this is the *second*
+increment in a row (after REV-108/INC-8) to hit this exact pattern in the same file at the same moment in
+the pipeline — worth tech-lead folding INC-9's update into the *same* batched edit as REV-108's still-open
+INC-8 markers, since both live in `docs/design.md`'s module index and coverage map and would otherwise be
+two near-identical edits to the same lines in two different passes. Not a merge blocker — the design docs'
+substance (§4.4a, §7.5) is fully current (Check 4); only the status-marker pointer is one pass behind.
+
+---
+
+### RESOLVED, independently re-verified this pass (file touched by this diff's scope)
+
+**REV-068 — `[REQUIREMENTS-GAP]` — RESOLVED 2026-07-29 (pm), independently re-verified 2026-07-30 (this
+pass).** `docs/requirements.md` was in this pass's read scope (FR17/Decision #33), so per this log's
+standing convention (re-check any open finding whose host file is touched this round), I re-read the exact
+location Pass 15 first flagged. `requirements.md:469-477` now correctly reads "repo-committed cache file,
+`tunables_cache.json` at the **repo root**" (not `config/tunables_cache.json`, the stale path Pass 15
+flagged) and states "the chain is **two tiers only**" and "`scripts/config.py` fails loud via
+`SystemExit` at startup." pm's own changelog entry (`:501`, dated 2026-07-29) independently records the
+same fix and explicitly cites REV-068 by ID. Grepped the whole file for
+`tunables_cache.json`/`two-tier`/`fail-loud`/`SystemExit` — the only hit for the stale `config/` path is
+now gone; `SystemExit`/fail-loud language is present. **Genuinely resolved, not merely claimed** — this had
+not been independently re-verified by reviewer since it was logged at Pass 15 (Pass 17 through Pass 24
+never had `requirements.md` in scope for the specific files they audited). Moved to archive with this
+disposition.
+
+---
+
+### Open items after Pass 25
+
+**Blockers: 0. Majors: 0** (none carried into this diff's scope — the pre-existing majors list, unchanged
+since Pass 23, is 0).
+
+**DEEP-003 and DEEP-004 — RESOLVED as of this pass (2026-07-30), independently verified against current
+code, design, and test content across all three fix-cycle rounds, not accepted on dev's/qa's account** —
+see Checks 1–2, 4–5 above for the full evidence trail. Both moved to `docs/archive/review-log-archive.md`
+with this pass's closing disposition, matching the DEEP-001/DEEP-002 precedent Pass 24 set (stub left in
+place below, full text + disposition archived).
+
+**New minors this pass — 2 IDs:** REV-109 (qa — one `find_candidates()` dedup regression test), REV-110
+(tech-lead — INC-9 status markers across `design.md`/`increment-plan.md`, foldable into the same edit as
+REV-108's still-open INC-8 markers).
+
+**Resolved this pass: 1** (REV-068, pm — independently re-verified against current file content, moved to
+archive).
+
+**Carried, unchanged from Pass 24 (none of these files intersect INC-9's diff, or the specific location
+carrying the finding was not touched) — 15 IDs:** REV-063 residual + REV-071 (dev), REV-065 (tech-lead —
+confirmed its location, `non-functional-ops.md` around the current line ~251, was not touched by INC-9's
+§7.5/§8 edits), REV-066 + REV-052 (tech-lead + pm — confirmed still absent from `requirements.md` §10,
+which INC-9 did not edit), REV-067 (tech-lead — confirmed its location, `components.md` §4.1's REV-048
+citation table, lines 48-57, was not touched by INC-9's §4.2/§4.4/§4.4a edits and remains exactly as stale
+as Pass 15 found it), REV-072 (tech-lead), REV-048 (qa), REV-049(b) (release), REV-080 (qa), REV-079
+(tech-lead), REV-097 (dev or pm), REV-100 (dev), REV-101 (tech-lead/dev), REV-102 (tech-lead),
+REV-103/104/105 (release, one `docs/runbook.md` edit), REV-106 (dev, one SQL-header line), REV-107 (qa, AC3
+browser check, carried to Phase-4 closure), REV-108 (tech-lead, INC-8 status markers — fold with REV-110),
+plus REV-070's AC3 residual (qa+release) and INC-4's AC6 (release then qa) — both unchanged
+live-verification deferrals per Decision #36.
+
+**BUG-007 (qa's own bug-ID sequence, `docs/test-report.md`'s "Open bugs" section) — independently
+reviewed, deferral accepted (Check 3 above).** Minor, currently unreachable on both live call paths,
+correctly not treated as a merge blocker; its reachability argument is sound as of today's code and will
+need re-checking if `prefilter.py`'s sourcing logic ever changes (REV-109 exists specifically so a future
+change can't silently invalidate the argument without a test noticing).
+
+**Routing (new items only):**
+- **qa** — REV-109 (`find_candidates()` dedup regression test).
+- **tech-lead** — REV-110 (INC-9 status markers, fold with REV-108).
+
+None of the above halts the pipeline. **INC-10 may proceed** per `CLAUDE.md`'s "no increment starts before
+the previous one passes QA" — INC-9 has now passed both qa and reviewer with zero blockers/majors.
+
+---
+
+### Pass 25 summary
+
+**New findings by tag — 2, both minor:** `[TEST-GAP]` 1 (REV-109), `[DESIGN-GAP]` 1 (REV-110). No new
+blockers, no new majors. Pass 2 clean — no `[SCOPE-CREEP]`. Pass 3 clean — no `[HARDCODED]`. Pass 4 clean —
+no `[BLOAT]`. Pass 5 clean — no `[SECURITY]`. Pass 6 clean — no `[STRUCTURE]` violation, `code-map.md`
+still accurate at its level of detail.
+
+**Resolved this pass: 3** — DEEP-003, DEEP-004 (both independently re-verified across all three fix-cycle
+rounds, per Checks 1/2/4/5 above), and REV-068 (independently re-verified, carried since Pass 15).
+
+**Open blocker count: 0. Open major count: 0.**
+
+### Verdict — Pass 25 / INC-9
+
+**CLEAR.** DEEP-003 is genuinely closed: reasoning about the final shipped `_parse_batch` on its own terms
+(not fix-against-bug-report) found no remaining path by which one requested ticker's verdict/rationale can
+be attributed to a different ticker under `parse_status: "ok"` — the labeled-candidate path is fully
+corroboration-gated (exact-or-unambiguous-normalized match against the ticker being resolved), and the
+unlabeled-candidate path's residual risk is the design's own explicitly accepted "legitimate case," gated
+behind a schema violation the structured-decoding contract is supposed to prevent, and fully logged when
+used. DEEP-004 is genuinely closed and confirmed undisturbed by both `ai_judge.py`-only fix cycles: the
+stale-bar check still runs before any pro-rating math, independently re-traced through the actual function
+body rather than accepted on "zero drift" claims. BUG-007's deferral is independently judged sound — both
+live call paths (`watchlist.ticker`'s DB primary key; `prefilter.find_candidates()`'s single-call
+`seen`-dict dedup across every screener query) are genuinely duplicate-free today, re-derived from the
+actual SQL and Python, not merely corroborated from tech-lead's write-up — with one real, non-blocking gap
+identified independently (REV-109: nothing tests that guarantee, so a future prefilter change could
+silently break it). §4.4a's pseudocode now matches `_parse_batch` as shipped exactly, confirmed
+line-for-line, including the BUG-006 dedup qa's own re-test had flagged as still-stale mid-cycle. The
+overwrite guard's stated asymmetry rationale holds under independent stress-testing of the one case that
+would break it. Two non-blocking minors surfaced (REV-109, REV-110), neither holds up INC-10; one carried
+finding (REV-068) was independently re-verified resolved and archived.
+
+**What CLEAR does and does not mean here.** It means the two-file production diff and its three fix-cycle
+rounds were independently read and traced against current file content — not accepted on dev's
+self-verification, qa's PASS verdict, or tech-lead's reachability write-up — for exactly the five things
+this task named: DEEP-003's final-state closure, DEEP-004's fix-cycle survival, BUG-007's reachability
+argument, §4.4a/code fidelity, and the overwrite guard's asymmetry. It does **not** mean
+`docs/design.md`'s status markers have been flipped (REV-110, tech-lead's routine follow-up, foldable with
+REV-108) or that a test exists yet locking in `find_candidates()`'s duplicate-free invariant (REV-109, qa).
+Neither is a blocker under `CLAUDE.md`'s gate text.
+
+**Doc hygiene applied this pass.** DEEP-003/DEEP-004's full original text and this pass's closing
+disposition moved to `docs/archive/review-log-archive.md`, matching the DEEP-001/DEEP-002 precedent Pass 24
+set — stubs left in place below pointing to the archive. REV-068's full carried text and this pass's
+independent re-verification moved to archive as RESOLVED. The unchanged carried-minors list is otherwise
+identical to Pass 24's, with REV-065/REV-067/REV-066+052 each re-confirmed as genuinely untouched by this
+round's specific diff rather than merely assumed unchanged.
+
+---
+
 ## Deep review — 2026-07-29 (`/big-guns`, on-demand, whole-system scope, judgment layer only)
 
 **Nature of this section.** Logged by `big-guns`, not `reviewer`. This is **not** a re-run of the 6-pass
@@ -1498,80 +1870,28 @@ not accepted on account) moved to `docs/archive/review-log-archive.md` per doc h
 
 ---
 
-### DEEP-003 — `[DESIGN-GAP]` — **major** — owner: dev, tech-lead (§4.4 parse contract)
+### DEEP-003 — `[DESIGN-GAP]` — **major** — RESOLVED 2026-07-30 (Pass 25, INC-9)
 
-**`_parse_batch`'s positional fallback can attribute one company's verdict and rationale to a different
-ticker and stamp it `parse_status: "ok"`.**
-
-Location: `scripts/ai_judge.py:201-218` (specifically `:206-208`).
-
-```python
-o = by_ticker.get(t.upper())
-if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
-    o = arr[i]                           # positional fallback (same order requested)
-```
-
-Evidence: the fallback fires precisely when a requested ticker is **absent** from the model's array, which
-by construction means `arr[i]` belongs to some *other* symbol (if it were the same symbol under the same
-spelling, `by_ticker` would already have matched). Concretely, request `[A, B, C]`; the model returns three
-objects `[A, X, B]` (drops `C`, hallucinates `X` — a realistic LLM failure at 12–15 tickers per batch).
-`C` then resolves to `arr[2]`, i.e. **`B`'s verdict, `B`'s confidence and `B`'s rationale**, with
-`parse_status: "ok"`, `confidence` preserved, and no log line recording that a fallback occurred. If that
-verdict differs from `C`'s stored `current_verdict`, `state.process_ticker` fires a real push
-("`C` — Changed to Sell") whose reasoning is about a different company. The one guard that exists for
-fabricated changes (`state.py:235`, the `failed`/`api_error` check) does not apply, because the row is
-marked `ok`.
-
-This directly contradicts `design.md` §0 load-bearing #8 and `ai_judge.py`'s own module docstring ("a
-malformed response can only ever MISS a signal, never fabricate one") — the fallback is the one path that
-can fabricate one. Nothing in `docs/design/components.md` §4.4 documents the positional fallback at all,
-so it has never been assessed against that invariant. No test covers it (`grep positional tests/` → 0).
-
-Suggested fix: accept the positional object only when its own `ticker` normalises to the requested one
-(case-fold, strip the `.TO`/`.NS` suffix — which is the *legitimate* case this fallback exists to serve),
-otherwise emit `_FAIL_SAFE_PARSE`; and print a per-ticker line whenever the fallback is used so it is
-visible in the run log. Also consider that `by_ticker`'s dict comprehension (`:201`) silently keeps the
-**last** of any duplicated ticker in the response.
+Original finding: `_parse_batch`'s positional fallback could attribute one company's verdict and rationale
+to a different ticker and stamp it `parse_status: "ok"` — a fabrication, not a miss, on a misaligned model
+response (`[A,B,C]` requested, `[A,X,B]` returned, `C` resolving to `B`'s content). **Full original finding
+text and closing disposition (independently re-verified across all three fix-cycle rounds — the original
+DEEP-003 fix plus BUG-005 and BUG-006 — against current code, design, and test content, not accepted on
+dev's/qa's account) moved to `docs/archive/review-log-archive.md` per doc hygiene — see
+`docs/review-log.md` Pass 25 above for the verification detail.** One residual, non-blocking, logged fresh
+from that verification: REV-109 (`prefilter.find_candidates()`'s duplicate-free guarantee — the empirical
+basis for BUG-007's deferral — has no regression test locking it in; owner qa).
 
 ---
 
-### DEEP-004 — `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` — **major** — owner: tech-lead (design), pm (FR17 / risk #5 text), dev (fix)
+### DEEP-004 — `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` — **major** — RESOLVED 2026-07-30 (Pass 25, INC-9)
 
-**The documented "market holiday ⇒ no usable data ⇒ skip-with-log, clean no-op" behaviour does not exist.
-On a holiday the system runs a full AI judgment on a stale prior close that the prompt labels as a live
-session, manufactures a volume-spike signal, and can push a real alert.**
-
-Location: `scripts/ingest.py:175-201` (`_session_state`) and `:242-291` (`get_market_data`);
-`scripts/ai_judge.py:104-118` (prompt labels); `sql/phase5_monitoring.sql:332-337` and
-`scripts/config.py:412-418` (weekday+clock-only gates); claims at `requirements.md` FR17 / Decision #8,
-`docs/idea-brief.md` risk #5, `docs/design/non-functional-ops.md` §7.5, `scripts/config.py:391-394`.
-
-Evidence:
-1. Neither gate layer consults a holiday calendar (accepted, documented). So on e.g. Thanksgiving or a
-   Diwali NSE closure, `hourly-watchlist.yml` is dispatched and executes normally.
-2. `yfinance` `history(period='3mo')` on a closed day returns the **previous sessions'** bars, so
-   `h` is non-empty ⇒ `out["has_price"] = True` (`ingest.py:248-254`). The skip-with-log path is never
-   reached. The premise "a closed market surfaces as no usable data" is false.
-3. `_session_state` decides `session_live` from weekday + wall-clock alone (`ingest.py:194`) — it never
-   compares the last bar's date to today. On a holiday it returns `True`. The prompt therefore renders the
-   *previous close* as `"live price (session in progress)"` and the *previous day's* move as
-   `"today so far"` (`ai_judge.py:108-118`).
-4. Worse, `volume_vs_avg` is then divided by the elapsed session fraction (`ingest.py:279-284`). A
-   perfectly normal prior-day ratio of ~1.0 becomes ~1.9x at mid-afternoon and is handed to the model as a
-   pro-rated **volume spike** — a fabricated signal on a day when zero shares traded.
-5. A verdict change computed from that input alerts normally (no guard distinguishes it), and the run
-   writes heartbeat `ok`.
-
-This is the highest-value "quietly wrong answer that looks right" path I found, because it is *scheduled*:
-it recurs on roughly 9 US/TSX and ~15 NSE closures a year, and the alert it produces is
-indistinguishable from a real one.
-
-Suggested fix (cheap and self-contained): in `get_market_data`, compare `h.index[-1].date()` to the
-market's current session date; if the last bar is not today while `_session_state` says live, force
-`session_live=False`, suppress the pro-rating, and append a note ("market appears closed today — judging
-the last settled close"). Optionally skip-with-log to make FR17's text literally true. Either way FR17,
-Decision #8, idea-brief risk #5 and `non-functional-ops.md` §7.5 need their wording corrected — all four
-currently assert a behaviour the code does not have.
+Original finding: the documented "market holiday ⇒ no usable data ⇒ skip-with-log, clean no-op" behaviour
+did not exist in code — on a closed-market day the system judged a stale prior close as a live session and
+pro-rated a fabricated volume-spike signal from it, capable of firing a real, wrong alert. **Full original
+finding text and closing disposition (independently re-verified against current code, design, and test
+content, not accepted on dev's/qa's "zero drift" claim) moved to `docs/archive/review-log-archive.md` per
+doc hygiene — see `docs/review-log.md` Pass 25 above for the verification detail.**
 
 ---
 

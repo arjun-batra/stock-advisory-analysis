@@ -2751,3 +2751,137 @@ behavior (a notifier that would succeed is never called on a fail-safe row), not
 shape. Repeated/persistent push failure was traced by hand: no unbounded growth, no alert flood (the
 existing `monitor_alerts` dedup still applies), no dedup-defeating interaction with Decision #32's 7-day
 cooldown. Full evidence trail: Pass 24, Checks 1–4, `docs/review-log.md`.
+
+### DEEP-003 — `[DESIGN-GAP]` — major — owner: dev, tech-lead (§4.4 parse contract) — original finding text
+
+**`_parse_batch`'s positional fallback can attribute one company's verdict and rationale to a different
+ticker and stamp it `parse_status: "ok"`.**
+
+Location (as originally filed, pre-fix line numbers): `scripts/ai_judge.py:201-218` (specifically
+`:206-208`).
+
+```python
+o = by_ticker.get(t.upper())
+if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
+    o = arr[i]                           # positional fallback (same order requested)
+```
+
+Evidence: the fallback fires precisely when a requested ticker is **absent** from the model's array, which
+by construction means `arr[i]` belongs to some *other* symbol (if it were the same symbol under the same
+spelling, `by_ticker` would already have matched). Concretely, request `[A, B, C]`; the model returns three
+objects `[A, X, B]` (drops `C`, hallucinates `X` — a realistic LLM failure at 12–15 tickers per batch).
+`C` then resolves to `arr[2]`, i.e. **`B`'s verdict, `B`'s confidence and `B`'s rationale**, with
+`parse_status: "ok"`, `confidence` preserved, and no log line recording that a fallback occurred. If that
+verdict differs from `C`'s stored `current_verdict`, `state.process_ticker` fires a real push
+("`C` — Changed to Sell") whose reasoning is about a different company. The one guard that exists for
+fabricated changes (`state.py:235`, the `failed`/`api_error` check) does not apply, because the row is
+marked `ok`.
+
+This directly contradicts `design.md` §0 load-bearing #8 and `ai_judge.py`'s own module docstring ("a
+malformed response can only ever MISS a signal, never fabricate one") — the fallback is the one path that
+can fabricate one. Nothing in `docs/design/components.md` §4.4 documents the positional fallback at all,
+so it has never been assessed against that invariant. No test covers it (`grep positional tests/` → 0).
+
+Suggested fix: accept the positional object only when its own `ticker` normalises to the requested one
+(case-fold, strip the `.TO`/`.NS` suffix — which is the *legitimate* case this fallback exists to serve),
+otherwise emit `_FAIL_SAFE_PARSE`; and print a per-ticker line whenever the fallback is used so it is
+visible in the run log. Also consider that `by_ticker`'s dict comprehension (`:201`) silently keeps the
+**last** of any duplicated ticker in the response.
+
+**Closing disposition (Pass 25, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+across all three fix-cycle rounds (the original DEEP-003 fix, BUG-005, BUG-006) against current code,
+design, and test content, not accepted on dev's/qa's account.** `scripts/ai_judge.py:198-312`'s shipped
+`_parse_batch` gates every positional-fallback acceptance behind a corroboration test: a labeled candidate
+is accepted only when its own `ticker` field exactly-or-unambiguous-normalized matches the ticker being
+resolved (`normalized_counts[t_norm] == 1`, counted over the batch's *distinct* requested tickers so a
+duplicate request can't inflate its own ambiguity count — BUG-006's fix); any labeled candidate belonging
+to a genuinely different company is rejected regardless of array position, closing both the original
+misaligned-array evidence shape and BUG-005's cross-market (`ABC.TO`/`ABC.NS`) collision shape. The
+unlabeled-candidate branch (no corroborating signal by construction) is the design's own explicitly
+accepted "legitimate case," gated behind a schema violation Gemini's `required=["ticker",...]` structured
+decoding is supposed to prevent on every call including the retry, and every fallback use is logged. The
+overwrite/duplicate-ticket path (`out`'s ticker-keyed write, guarded so a fail-safe never clobbers an
+already-resolved `ok`) can only withhold a write, never substitute a different ticker's content, so it
+cannot itself cause misattribution — traced independently, not accepted on the bug reports' own framing.
+Ten tests in `tests/test_ai_judge.py` were read line-by-line and their assertions independently confirmed
+against the shipped code, including the wellformed-response negative case and the three-way base-symbol
+collision. `components.md` §4.4a's pseudocode was compared construct-for-construct against the shipped
+function and found current, including the post-BUG-006 dedup qa's own re-test had flagged as still-stale
+mid-cycle. One residual, non-blocking, logged fresh from this verification: REV-109
+(`prefilter.find_candidates()`'s duplicate-free guarantee — the empirical basis for BUG-007's deferral —
+has no regression test locking it in; owner qa). Full evidence trail: Pass 25, Checks 1/4,
+`docs/review-log.md`.
+
+### DEEP-004 — `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` — major — owner: tech-lead (design), pm (FR17 / risk
+#5 text), dev (fix) — original finding text
+
+**The documented "market holiday ⇒ no usable data ⇒ skip-with-log, clean no-op" behaviour does not exist.
+On a holiday the system runs a full AI judgment on a stale prior close that the prompt labels as a live
+session, manufactures a volume-spike signal, and can push a real alert.**
+
+Location: `scripts/ingest.py:175-201` (`_session_state`) and `:242-291` (`get_market_data`);
+`scripts/ai_judge.py:104-118` (prompt labels); `sql/phase5_monitoring.sql:332-337` and
+`scripts/config.py:412-418` (weekday+clock-only gates); claims at `requirements.md` FR17 / Decision #8,
+`docs/idea-brief.md` risk #5, `docs/design/non-functional-ops.md` §7.5, `scripts/config.py:391-394`.
+
+Evidence:
+1. Neither gate layer consults a holiday calendar (accepted, documented). So on e.g. Thanksgiving or a
+   Diwali NSE closure, `hourly-watchlist.yml` is dispatched and executes normally.
+2. `yfinance` `history(period='3mo')` on a closed day returns the **previous sessions'** bars, so
+   `h` is non-empty ⇒ `out["has_price"] = True` (`ingest.py:248-254`). The skip-with-log path is never
+   reached. The premise "a closed market surfaces as no usable data" is false.
+3. `_session_state` decides `session_live` from weekday + wall-clock alone (`ingest.py:194`) — it never
+   compares the last bar's date to today. On a holiday it returns `True`. The prompt therefore renders the
+   *previous close* as `"live price (session in progress)"` and the *previous day's* move as
+   `"today so far"` (`ai_judge.py:108-118`).
+4. Worse, `volume_vs_avg` is then divided by the elapsed session fraction (`ingest.py:279-284`). A
+   perfectly normal prior-day ratio of ~1.0 becomes ~1.9x at mid-afternoon and is handed to the model as a
+   pro-rated **volume spike** — a fabricated signal on a day when zero shares traded.
+5. A verdict change computed from that input alerts normally (no guard distinguishes it), and the run
+   writes heartbeat `ok`.
+
+This is the highest-value "quietly wrong answer that looks right" path I found, because it is *scheduled*:
+it recurs on roughly 9 US/TSX and ~15 NSE closures a year, and the alert it produces is
+indistinguishable from a real one.
+
+Suggested fix (cheap and self-contained): in `get_market_data`, compare `h.index[-1].date()` to the
+market's current session date; if the last bar is not today while `_session_state` says live, force
+`session_live=False`, suppress the pro-rating, and append a note ("market appears closed today — judging
+the last settled close"). Optionally skip-with-log to make FR17's text literally true. Either way FR17,
+Decision #8, idea-brief risk #5 and `non-functional-ops.md` §7.5 need their wording corrected — all four
+currently assert a behaviour the code does not have.
+
+**Closing disposition (Pass 25, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+against current code, design, and test content, not accepted on dev's/qa's "zero drift" claim.**
+`scripts/ingest.py:220-310`'s shipped `get_market_data` inserts the stale-bar/closed-market structural
+check (`:252-268`) immediately after the empty-history guard and strictly before any price/volume math
+(`close = h["Close"].dropna()` at `:270` is the first line of that math) — comparing `h.index[-1].date()`
+to today's market-local date via `config.MARKET_TZ`/`config.NSE_MARKET_TZ`, and taking the same
+skip-with-log path (`has_price` stays `False`) as any other no-data day when the session reads live but the
+last bar predates today. `live, frac = _session_state(market)` is computed once and reused for the later
+pro-rating block — confirmed exactly one `_session_state()` call in the function, matching the "redundant
+call removed" claim. Both of INC-9's two fix cycles (BUG-005, BUG-006) touched `scripts/ai_judge.py` only —
+independently confirmed `scripts/ingest.py`'s stale-bar block is unchanged and undisturbed by either.
+`components.md` §4.2's DEEP-004 pseudocode was compared line-for-line against the shipped code and found to
+match exactly. `tests/test_ingest.py:319-410`'s four tests (including two NSE/`Asia/Kolkata`
+timezone-aware tests that independently probe the "index is already exchange-local" assumption, beyond
+what the original design/handoff described) were read line-by-line and their assertions confirmed against
+the shipped code. `requirements.md` FR17 (§5.6) now states the structural-check requirement in text that
+matches the shipped check verbatim; Decision #33 records the sharpening. Full evidence trail: Pass 25,
+Checks 2/4, `docs/review-log.md`.
+
+### REV-068 — `[REQUIREMENTS-GAP]` — minor — owner: pm — original finding text (first logged Pass 15,
+carried through Pass 23)
+
+`docs/requirements.md` had zero `two-tier`/`fail-loud`/`SystemExit` hits for the INC-6 tunables chain, and
+still named the stale `config/tunables_cache.json` path (the cache is repo-root, REV-046 —
+`non-functional-ops.md:106-108` had it right).
+
+**Closing disposition (fixed by pm 2026-07-29; independently re-verified Pass 25, 2026-07-30,
+`docs/review-log.md`) — RESOLVED.** `requirements.md:469-477` now correctly reads "repo-committed cache
+file, `tunables_cache.json` at the **repo root**," states "the chain is **two tiers only**," and states
+"`scripts/config.py` fails loud via `SystemExit` at startup." pm's changelog entry (`:501`, dated
+2026-07-29) records the same fix and cites REV-068 by ID. This had not been independently re-verified by
+reviewer since Pass 15 (no pass between Pass 17 and Pass 24 had `requirements.md` in its diff scope);
+independently confirmed against current file content at Pass 25, not accepted on pm's changelog claim
+alone. Full evidence trail: Pass 25, `docs/review-log.md`.
