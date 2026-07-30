@@ -1433,3 +1433,221 @@ about). No config-schema change. Verify: full Python+TS suites green, every lite
 plan self-checked (grep call-site counts, `BaseException` subclass, manual trace of what each checkpoint
 does/doesn't call), double-apply the new SQL file locally.
 
+
+## What changed and why
+
+DEEP-007's gap: §13.1's dispatch-layer kill switch only stopped *future* pg_cron dispatches — a run
+already executing when the flag flipped ran to full completion (real Yahoo fetches, a real AI call, a
+real push, a real `contents: write` commit), while the portal badge already read PAUSED. Decision #37
+added four Python-layer boundary checkpoints, each immediately before an irreversible action, so an
+in-flight run stops itself. Decision #38/FR35 then closes the follow-on gap: a run that aborts at
+checkpoint 2/3 has already produced real logged per-ticker work, a shape distinct from both "never
+started" (FR25) and "completed degraded" (NFR2) that needs its own non-alerting classification, causally
+tied to the checkpoint's own flag read so a genuine crash can never be misreported as a deliberate pause.
+
+**Checkpoint 1** (`run_hourly.main()` / `run_discovery.main()`, right after `sb`/`notifier` are
+constructed): bare early return, no `run_heartbeat` row, no `kill_switch_abort_log` row.
+**Checkpoint 2** (`run_hourly._process_group()` after Phase-1 ingest / `run_discovery.main()` after its
+own Phase-1 ingest, both immediately before `judge_batch(...)`): raises `state.KillSwitchAbort("ai_call")`
+— it sits below `main()`, so it can't just `return`.
+**Checkpoint 3** (`state.process_ticker` / `state.process_candidate`, only in the branch that's about to
+push, before `log_id`/`write_call_log`/`verdict_state` are touched): raises
+`state.KillSwitchAbort("push")` — nothing has been written yet for that ticker, so the crossing is left
+exactly as pending as if this cycle had never reached it; the next cycle's `process_ticker`/
+`process_candidate` retries automatically against the still-unadvanced `verdict_state` (FR34's existing
+mechanism — no new resume logic, per FR35's own text).
+**Checkpoint 4** (`publish_prices.main()`, right before the `pages/prices.json` write): bare early return
+— Yahoo fetches in that script aren't gated (not irreversible), only the commit-triggering write is.
+
+`KillSwitchAbort` subclasses `BaseException`, not `Exception` — both entry points already wrap per-ticker/
+per-group work in `except Exception` so one bad ticker can't take the run down; a plain `Exception`
+subclass raised from inside those loops would be silently caught and miscounted as `outcomes["error"]`,
+exactly the misclassification FR35 forbids. It's caught exactly once, by a `try/except
+state.KillSwitchAbort` wrapping each `main()`'s group-processing work (the `for s in run_sessions` loop
+in `run_hourly.py`; the checkpoint-2-check + `judge_batch(...)` + Phase-3 push loop in `run_discovery.py`).
+The `except` branch computes `real_rows_this_cycle` from the `outcomes` counter accumulated so far, calls
+`state.write_kill_switch_abort(...)`, prints a `[kill-switch] paused -- aborted at checkpoint=...` line,
+and returns — **no** `run_heartbeat` write, mirroring checkpoint 1's existing treatment.
+
+`kill_switch_abort_log` (new table, `sql/kill_switch_abort_log.sql`) is written **only** from
+`state.write_kill_switch_abort()`, called **only** inside the `except KillSwitchAbort` branches above —
+that exclusivity is what makes a row's existence proof of a deliberate pause rather than an inference from
+a symptom (a short outcome count, a missing heartbeat) that a genuine crash could also produce.
+`check_pipeline_health()` needed **zero** SQL changes: while `kill_switch_state.paused = true` it already
+returns before any alert evaluation (§13.4), and the missing `run_heartbeat` row after an abort is exactly
+the shape §13.4's existing `resume_baseline` guard already tolerates on resume — both built for
+checkpoint 1's case, now covering checkpoints 2–4 for free by following the same "write nothing to
+`run_heartbeat`" convention.
+
+## Files touched
+
+- `sql/kill_switch_abort_log.sql` — new. `kill_switch_abort_log` table (`workflow`, `checkpoint` CHECK'd
+  to `'ai_call'`/`'push'`, `aborted_at`, `real_rows_this_cycle`), RLS enabled+forced, `insert/update/delete`
+  revoked from `public, anon, authenticated` — same two-layer deny-all posture as `kill_switch_audit`.
+  `create table if not exists` for genuine re-runnability (no trigger in this file, so BUG-008's PG14+
+  `create or replace trigger` concern doesn't arise here at all — see "SQL idempotency" below).
+- `scripts/state.py` — new `is_paused(sb)`, new `KillSwitchAbort(BaseException)`, new
+  `write_kill_switch_abort(sb, *, workflow, checkpoint, real_rows_this_cycle)`; one checkpoint-3 call site
+  each in `process_ticker` (the "change -> immediate alert" branch) and `process_candidate` (the `do_push`
+  branch), both immediately before `log_id = str(uuid.uuid4())`/`notifier.push(...)`.
+- `scripts/run_hourly.py` — checkpoint 1 in `main()` (after `sb`/`notifier` construction, before
+  `state.get_watchlist(sb)`); checkpoint 2 in `_process_group` (after Phase-1 ingest, before
+  `judge_batch(...)`); `main()`'s `for s in run_sessions: _process_group(...)` loop wrapped in
+  `try/except state.KillSwitchAbort`.
+- `scripts/run_discovery.py` — checkpoint 1 in `main()` (after `sb`/`notifier` construction, before
+  `prefilter.find_candidates(...)`); checkpoint 2 + `judge_batch(...)` + the Phase-3 push loop wrapped in
+  `try/except state.KillSwitchAbort` (checkpoint 2 raises immediately inside the `try`, right after Phase-1
+  ingest completes).
+- `scripts/publish_prices.py` — checkpoint 4 right before `out = {...}` / the `pages/prices.json` write.
+- `docs/handoff.md` — this entry.
+
+No config-schema change (no new tunable — matches the design's "no config-schema change" note).
+
+## How to run it
+
+`SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` (Python suite);
+`node --experimental-strip-types --test tests/admin_portal/*.test.ts` (TypeScript suite, unaffected by
+this increment — no `admin-portal/` files touched). To exercise the kill switch itself locally: seed a
+`kill_switch_state` row (or point at a live Supabase project with `sql/kill_switch.sql` applied), flip
+`paused` via `select set_kill_switch(true);`, then run any of `run_hourly.main()` / `run_discovery.main()`
+/ `publish_prices.main()` and watch for the `[kill-switch]` log lines at the checkpoint reached.
+`sql/kill_switch_abort_log.sql` is **not applied to the live Supabase project** (explicit instruction for
+this session) — apply it after `sql/kill_switch.sql` (already live) whenever release/INC-11-style live
+verification runs.
+
+## Full regression + smoke test
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` -> **253 passed, 0 failed** — identical to
+  the stated 253/0 baseline (no existing test exercises the new checkpoints yet; qa owns adding that
+  coverage per the increment's ACs).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` -> **82 passed, 0 failed** —
+  identical to baseline (nothing in `admin-portal/` touched).
+- `git diff --name-only` / `git status --porcelain` -> exactly `sql/kill_switch_abort_log.sql` (new),
+  `scripts/state.py`, `scripts/run_hourly.py`, `scripts/run_discovery.py`, `scripts/publish_prices.py`,
+  `docs/handoff.md` — nothing outside the increment's file list.
+- Import smoke test: `python3 -c "import run_hourly, run_discovery, publish_prices"` -> all three entry
+  points import cleanly; confirmed `issubclass(state.KillSwitchAbort, BaseException) is True` and
+  `issubclass(state.KillSwitchAbort, Exception) is False` directly in the interpreter.
+- **Scripted end-to-end harness** (in-memory Supabase/notifier doubles, same shape as `tests/test_state.py`'s
+  `FakeSupabase`/`FakeNotifier`, run against the real `run_hourly.py`/`run_discovery.py`/`publish_prices.py`/
+  `state.py` code — not just reasoning about the diff): built a scratch script exercising every checkpoint
+  end to end; scratch script and full transcript are not part of the repo (dev-only verification, per the
+  "no test files" scope for this increment — qa owns `tests/`). Results, matching every literal AC below.
+
+## Acceptance-criteria self-verification (`increment-plan.md`'s `### INC-12`)
+
+1. **PASS.** `grep -n "def is_paused" scripts/state.py` -> one match (`state.py:22`). Scripted harness:
+   mocked `kill_switch_state` select to return `paused=True` then `paused=False` in turn -> `is_paused(sb)`
+   returned `True` then `False`, matching each case.
+2. **PASS — call-site counts confirmed by grep, literally:**
+   - `scripts/run_hourly.py`: `grep -n "is_paused(sb)"` -> exactly 2 (`state.is_paused(sb)` at checkpoint 1
+     in `main()`, line 160; checkpoint 2 in `_process_group`, line 87).
+   - `scripts/run_discovery.py`: `grep -n "is_paused(sb)"` -> exactly 2 (checkpoint 1 in `main()`, line 36;
+     checkpoint 2, line 108).
+   - `scripts/state.py`: `grep -n "^\s*if is_paused(sb)"` -> exactly 2 (checkpoint 3 in `process_candidate`,
+     line 200; checkpoint 3 in `process_ticker`, line 368), each immediately before its own
+     `notifier.push(...)` call.
+   - `scripts/publish_prices.py`: `grep -n "is_paused(sb)"` -> exactly 1 (checkpoint 4, line 70).
+   - `grep -n "class KillSwitchAbort" scripts/state.py` -> `class KillSwitchAbort(BaseException):` —
+     confirmed `BaseException`, not `Exception`, both by the grep and by
+     `issubclass(state.KillSwitchAbort, Exception) is False` in the interpreter.
+3. **PASS.** Scripted harness: patched `ingest.get_market_data`/`prefilter.find_candidates`/
+   `ai_judge.judge_batch`/`notifier.push`/`state.write_heartbeat`/`state.write_kill_switch_abort` to raise
+   `AssertionError` if called at all; mocked `is_paused()` to return `True` before any ticker-level work;
+   ran `run_hourly.main()`, `run_discovery.main()`, and `publish_prices.main()` — none of the six boomed
+   functions fired for any of the three entry points. Confirms checkpoint 1/4's abort is a bare,
+   side-effect-free early return.
+4. **PASS.** Scripted harness: real `ingest.get_market_data` ingested one ticker to completion (`items`
+   non-empty), `is_paused()` scripted `False` at checkpoint 1 then `True` at checkpoint 2 —
+   `ai_judge.judge_batch` (patched to raise if called) never fired, `state.write_heartbeat` (patched to a
+   tracking stub) was never called, `state.write_kill_switch_abort` was called exactly once with
+   `checkpoint="ai_call"`, `workflow="hourly-watchlist"`, `real_rows_this_cycle=0` (zero prior rows this
+   cycle — the checkpoint-2-with-zero-prior-rows sub-case §13.6.3 explicitly documents).
+5. **PASS.** Scripted harness: two watchlist tickers (AAPL, MSFT) both pre-seeded with prior
+   `verdict_state.current_verdict="Hold"`; the AI batch returns `Buy` for both (both are real verdict
+   crossings). `is_paused()` scripted `False` through AAPL's checkpoint-3 read (AAPL pushes and its
+   `verdict_state` advances to `Buy`) then `True` for MSFT's checkpoint-3 read. Result: `notifier.push`
+   called exactly once (AAPL only — confirmed by the call list); MSFT got **no** `call_log` insert and
+   **no** `verdict_state` upsert/update at all (its row stayed exactly `current_verdict="Hold"`, untouched —
+   "the crossing stays exactly as pending"); `state.write_kill_switch_abort` called once with
+   `checkpoint="push"`, `real_rows_this_cycle=1` (AAPL's `change-alert`, matching the real-outcome count so
+   far this cycle); `state.write_heartbeat` never called. Separately confirmed the `BaseException`
+   propagation this AC and AC7 both depend on: `_process_group`'s Phase-3 loop has its own
+   `except Exception` around each ticker, and MSFT's `KillSwitchAbort` was **not** counted into
+   `outcomes["error"]` (outcomes ended at `{'change-alert': 1}`, no `error` key at all) — it propagated
+   straight out of the loop, out of `_process_group`, and up to `main()`'s outer `except
+   state.KillSwitchAbort`.
+6. **PASS.** Re-ran the harness with fresh doubles seeded from AC5's *aborted* end state (`AAPL:Buy`
+   already advanced, `MSFT:Hold` still pending) and `is_paused()` returning `False` throughout: MSFT was
+   pushed (`notifier.push` called with `MSFT`) and `verdict_state.current_verdict` advanced to `Buy`; a
+   `run_heartbeat` row was written (a normal, non-aborted completion this time) — confirms FR35's
+   "no new resume logic needed" claim with the zero additional code this design specifies.
+7. **PASS** — see AC5's propagation trace above; the same scripted run proves the `except Exception` guard
+   inside `_process_group`'s Phase-3 loop does not catch `KillSwitchAbort` (`BaseException`), and it
+   reaches `main()`'s outer handler uncounted in `outcomes["error"]`.
+8. **Live SQL item — folded into a future live-verification pass, not a merge blocker for this increment**
+   (per the increment plan's own text). Not applied to the live project this session (explicit
+   instruction). Verified instead against a local Postgres 16 scratch database — see "SQL idempotency"
+   below for the double-apply result; the RLS/REVOKE deny-all posture (`relrowsecurity`/
+   `relforcerowsecurity` both `true`, zero grants to `anon`/`authenticated`, a `set role anon` SELECT and
+   INSERT both denied with `permission denied for table kill_switch_abort_log`) was confirmed on that
+   scratch database, matching AC8's proof pattern; the live-project row-count/`check_pipeline_health()`
+   portion of AC8 needs a real dispatched run against Supabase and is explicitly release/live-verification
+   territory, not something dev can self-verify locally.
+9. **PASS.** Full suite: 253/0 (Python), 82/0 (TypeScript) — see "Full regression" above. `git diff
+   --name-only` confirms no file outside this increment's list changed.
+
+## SQL idempotency — double-apply result, and the PG-version question
+
+Started a local Postgres 16 cluster (`pg_ctlcluster 16 main start`), created a scratch database
+(`inc12_scratch`; `anon`/`authenticated` roles already existed cluster-wide from a prior fix-cycle's
+verification work), applied `sql/kill_switch_abort_log.sql` **twice**, verbatim, no edits between applies:
+
+- **First apply**: `CREATE TABLE` / `ALTER TABLE` ×2 / `REVOKE`, all succeeded. Confirmed
+  `relrowsecurity`/`relforcerowsecurity` both `true`; zero grants to `anon`/`authenticated`/`public`
+  (`information_schema.role_table_grants`); a `postgres`-role (BYPASSRLS) insert succeeded; `set role anon`
+  then a `SELECT`/`INSERT` both failed with `permission denied for table kill_switch_abort_log`.
+- **Second apply**: `psql:...:35: NOTICE: relation "kill_switch_abort_log" already exists, skipping` /
+  `CREATE TABLE` (no-op) / `ALTER TABLE` ×2 / `REVOKE` — **exit code 0, no error**. Re-checked afterward:
+  `relrowsecurity`/`relforcerowsecurity` unchanged (still `true`/`true`); the row inserted after the first
+  apply was still present, untouched; grants to `anon`/`authenticated` still zero; a second `postgres`
+  insert still succeeded (2 rows total) and `anon` was still denied both `SELECT` and `INSERT`; the
+  `checkpoint` CHECK constraint (`in ('ai_call','push')`) still rejected a bogus value with the same error.
+  Scratch database dropped and the cluster stopped afterward; nothing left running.
+
+**No PG14+ syntax used.** This file has no trigger at all (unlike `sql/tunables_validate_trigger.sql`/
+`sql/holdings_currency_derivation.sql`, which needed `create or replace trigger`, a PG14+ construct, to
+fix BUG-008) — the only re-runnability concern here was the plain `create table`, fixed with `create table
+if not exists` (standard syntax on every Postgres version this project could plausibly be on).
+`alter table ... enable/force row level security` and `revoke` are idempotent by nature (a harmless no-op
+on re-run, not an error) on every Postgres version, so they needed no defensive rewrite. Given the user is
+independently confirming the live project's Postgres major version, this file should apply cleanly
+regardless of the outcome of that check.
+
+## Known limitations / things the design didn't fully anticipate
+
+- **`real_rows_this_cycle`'s formula is copied verbatim from the design's own snippet**
+  (`("cold-start", "quiet", "change-alert", "push-failed", "no-read")` for `run_hourly.py`;
+  `("candidate-logged", "candidate-pushed", "candidate-push-failed", "no-read")` for `run_discovery.py`) —
+  note it deliberately excludes `outcomes["skip"]` even though a skip *does* write a `call_log` row
+  (`state.log_skip`). This is the design's own choice (§13.6.2's snippet), not a deviation I introduced;
+  flagging only because "real (non-skip) `call_log` row" in FR35's own text reads as if a skip should
+  count, while the design's literal code sample doesn't include it. Not fixing silently — the design's
+  code block is unambiguous and matches what `increment-plan.md`'s ACs test against, so I implemented it
+  as written; tech-lead should confirm whether this is intentional or a design-doc gap in a future pass, no
+  design deviation on my part meanwhile.
+- **Live-project confirmation of `check_pipeline_health()`'s zero-SQL-change claim** (AC8's second half —
+  a real dispatched run against Supabase, paused mid-run, produces exactly one row and no alert both while
+  paused and after resume) needs live infrastructure and is out of scope for this session per the explicit
+  instruction not to apply the new SQL live. Folded into a future live-verification pass, per the increment
+  plan's own framing (not a merge blocker for INC-12).
+- No test files were added or edited (`tests/` is qa's per the ownership table); every AC above was
+  self-verified with a throwaway scratch harness, not committed to the repo. qa's own tests will need to
+  build equivalent fakes/mocks for `kill_switch_state`/`kill_switch_abort_log` reads/writes — the shape used
+  here (a `.table(name).select(...).eq(...).limit(...).execute().data` chain, matching `tests/test_state.py`'s
+  existing `FakeSupabase`) should drop in directly.
+- An automated environment checkpoint (`git log` commit `b09e65f`, "checkpoint dev's in-progress
+  boundary-check work (UNVERIFIED)") committed this increment's working tree mid-session, before self-
+  verification was complete — not a commit I made myself, and not the "dev commits after qa passes" event
+  CLAUDE.md's git workflow describes. Flagging so the orchestrator doesn't mistake it for a completed
+  handoff commit; no qa run or reviewer pass has happened yet for INC-12.
