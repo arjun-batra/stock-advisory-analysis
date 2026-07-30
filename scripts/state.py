@@ -17,6 +17,49 @@ def client() -> Client:
     return create_client(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY)
 
 
+# --- kill-switch in-flight boundary checks (FR24 checkpoints 2/3, FR35) ------
+
+def is_paused(sb) -> bool:
+    """FR24: reads kill_switch_state.paused directly, via the same SUPABASE_SECRET_KEY
+    service credential every script already authenticates with (bypasses RLS -- no new
+    SQL object, grant, or secret, per Decision #37). Called at each of FR24's four
+    in-flight boundary checkpoints, immediately before the irreversible action it guards.
+    """
+    rows = sb.table("kill_switch_state").select("paused").eq("id", True).limit(1).execute().data
+    return bool(rows and rows[0]["paused"])
+
+
+class KillSwitchAbort(BaseException):
+    """Raised only by checkpoint 2 ('ai_call') and checkpoint 3 ('push') when is_paused()
+    observes paused=true immediately before the irreversible action each guards. A
+    BaseException, not an Exception: every per-ticker/per-group processing loop in
+    run_hourly.py/run_discovery.py already wraps its own work in `except Exception` so one
+    bad ticker can't take down the run -- a plain Exception subclass raised from inside
+    that loop would be silently caught by that guard and counted as outcomes["error"],
+    which is exactly the "genuine failure misreported" case FR35's causal-tie requirement
+    exists to prevent. Caught exactly once, by a try/except wrapping each entry point's
+    group-processing loop in main().
+    """
+    def __init__(self, checkpoint: str):
+        self.checkpoint = checkpoint   # 'ai_call' | 'push'
+        super().__init__(f"kill-switch paused, aborting at checkpoint={checkpoint}")
+
+
+def write_kill_switch_abort(sb, *, workflow: str, checkpoint: str, real_rows_this_cycle: int) -> None:
+    """FR35 causal tie (operational-controls.md §13.6.3): called ONLY from the
+    `except KillSwitchAbort` branch in run_hourly.py/run_discovery.py's main(), as a direct
+    synchronous consequence of a checkpoint's own is_paused() call returning True. No other
+    code path may insert into kill_switch_abort_log -- that exclusivity is what makes the
+    row's existence proof of a deliberate pause rather than an inference from a symptom a
+    genuine crash could also produce.
+    """
+    sb.table("kill_switch_abort_log").insert({
+        "workflow": workflow,
+        "checkpoint": checkpoint,
+        "real_rows_this_cycle": real_rows_this_cycle,
+    }).execute()
+
+
 # --- reads -------------------------------------------------------------------
 
 def get_watchlist(sb: Client) -> list[dict]:
@@ -149,6 +192,13 @@ def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
         write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
                        label="new-candidate", alert_type=None, alerted=False, snapshot=snap)
         return "candidate-logged"
+
+    # FR24 checkpoint 3 ("push") -- nothing has been written yet for this
+    # candidate, so aborting here needs no special handling: it's left exactly
+    # as unlogged as if this cycle had never reached it (operational-controls.md
+    # §13.6.2).
+    if is_paused(sb):
+        raise KillSwitchAbort("push")
 
     log_id = str(uuid.uuid4())
     delivered = notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id, market=data.get("market"))
@@ -309,6 +359,15 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime, position: dict
     #      BEFORE the push so it can be passed into both push() (tap-through
     #      URL) and this write_call_log() call, instead of the old order that
     #      let alerted get written before the outcome was known. ----
+
+    # FR24 checkpoint 3 ("push") -- nothing has been written yet for this
+    # crossing, so aborting here leaves it exactly as pending as before this
+    # cycle touched it; the next cycle's process_ticker re-evaluates it against
+    # the still-unadvanced verdict_state and retries automatically (FR34/FR35,
+    # operational-controls.md §13.6.2 -- "no new resume logic needed").
+    if is_paused(sb):
+        raise KillSwitchAbort("push")
+
     log_id = str(uuid.uuid4())
     delivered = notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id, market=wl_row.get("market"))
     write_call_log(sb, id=log_id, ticker=ticker, verdict=verdict, rationale=rationale,

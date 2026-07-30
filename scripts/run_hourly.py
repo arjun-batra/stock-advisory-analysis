@@ -78,6 +78,15 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
     if not items:
         return
 
+    # FR24 checkpoint 2 ("ai_call") -- a Yahoo fetch that already happened
+    # above is accepted, bounded residual work; the batched AI call is the
+    # next irreversible action, so it's the boundary. Raises (not a bare
+    # return) since this sits below main() -- caught once by main()'s
+    # try/except around the group-processing loop (operational-controls.md
+    # §13.6.2).
+    if state.is_paused(sb):
+        raise state.KillSwitchAbort("ai_call")
+
     # --- Phase 2: ONE batched AI call for this group, with its own model order ---
     verdicts = ai_judge.judge_batch(
         [{"data": d, "position": p} for (_, d, p) in items], models=models)
@@ -143,15 +152,41 @@ def main() -> None:
     sb = state.client()
     notifier = notify.get_notifier()
 
+    # FR24 checkpoint 1 -- earliest point a pause read is possible, before any
+    # Yahoo fetch or AI call. Bare early return: no run_heartbeat row, no
+    # kill_switch_abort_log row (operational-controls.md §13.6.2 -- mirrors the
+    # "all markets closed" early return above, which already skips the
+    # heartbeat write for the same reason).
+    if state.is_paused(sb):
+        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
+              "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
+        return
+
     watchlist = state.get_watchlist(sb)
     holdings = state.get_holdings_map(sb)
 
     outcomes = Counter()
-    for s in run_sessions:
-        rows = [r for r in watchlist if (r.get("market") or "US") in s["markets"]]
-        print(f"[{s['name']}] {len(rows)} tickers, "
-              f"alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'}")
-        _process_group(sb, notifier, rows, holdings, s["models"], now, outcomes)
+    try:
+        for s in run_sessions:
+            rows = [r for r in watchlist if (r.get("market") or "US") in s["markets"]]
+            print(f"[{s['name']}] {len(rows)} tickers, "
+                  f"alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'}")
+            _process_group(sb, notifier, rows, holdings, s["models"], now, outcomes)
+    except state.KillSwitchAbort as abort:
+        # FR35: a run that already produced real, logged per-ticker work then
+        # aborted at checkpoint 2/3 -- expected-quiet for NFR2, same as a run
+        # that never started (§13.4), but with a causal-tie record of WHY
+        # (kill_switch_abort_log, written only here). No run_heartbeat row
+        # (§13.6.4) -- while still paused, check_pipeline_health() returns
+        # before any alert evaluation regardless; after resume, the existing
+        # resume_baseline guard tolerates the missing row for free.
+        real_rows = sum(outcomes[k] for k in
+                         ("cold-start", "quiet", "change-alert", "push-failed", "no-read"))
+        state.write_kill_switch_abort(sb, workflow="hourly-watchlist",
+                                       checkpoint=abort.checkpoint, real_rows_this_cycle=real_rows)
+        print(f"[kill-switch] paused -- aborted at checkpoint={abort.checkpoint} after "
+              f"{dict(outcomes)}. No run_heartbeat row written this cycle (FR35 expected-quiet).")
+        return
 
     # Heartbeat reflects whether the run was fully clean (issue #2): "partial"
     # when any ticker was skipped, errored, failed its AI read, or failed a

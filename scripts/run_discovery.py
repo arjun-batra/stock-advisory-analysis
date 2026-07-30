@@ -29,6 +29,15 @@ def main() -> None:
     sb = state.client()
     notifier = notify.get_notifier()
 
+    # FR24 checkpoint 1 -- earliest point a pause read is possible, before any
+    # Yahoo fetch or AI call (the screener call below is a live Yahoo fetch).
+    # Bare early return: no run_heartbeat row, no kill_switch_abort_log row
+    # (operational-controls.md §13.6.2).
+    if state.is_paused(sb):
+        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
+              "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
+        return
+
     # Region selects the market set (Phase 6 D5): "na" = US + Canada (the 22:00 UTC
     # post-US-close dispatch); "in" = India NSE (a separate NSE-close-timed dispatch,
     # ~10:00 UTC / 15:30 IST). Defaults to "na" so the existing dispatch is unchanged.
@@ -91,25 +100,43 @@ def main() -> None:
             print(f"  ERROR {c['ticker']} (ingest): {type(e).__name__}: {e}")
             outcomes["error"] += 1
 
-    # --- ONE batched AI call, on discovery's own models ---
-    verdicts = ai_judge.judge_batch(
-        [{"data": d, "position": None} for (_, d) in items],
-        models=config.discovery_models(),
-    )
+    try:
+        # FR24 checkpoint 2 ("ai_call") -- a Yahoo fetch already happened
+        # above (Phase 1 ingest, accepted bounded residual work); the batched
+        # AI call is the next irreversible action, so it's the boundary
+        # (operational-controls.md §13.6.2).
+        if state.is_paused(sb):
+            raise state.KillSwitchAbort("ai_call")
 
-    # --- log every candidate; push Buys that aren't within the 7-day cooldown ---
-    for c, data in items:
-        ticker = c["ticker"]
-        try:
-            ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
-            push = ticker not in recently
-            result = state.process_candidate(sb, notifier, data, ai, push=push)
-            print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
-                  f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
-            outcomes[result] += 1
-        except Exception as e:
-            print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
-            outcomes["error"] += 1
+        # --- ONE batched AI call, on discovery's own models ---
+        verdicts = ai_judge.judge_batch(
+            [{"data": d, "position": None} for (_, d) in items],
+            models=config.discovery_models(),
+        )
+
+        # --- log every candidate; push Buys that aren't within the 7-day cooldown ---
+        for c, data in items:
+            ticker = c["ticker"]
+            try:
+                ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
+                push = ticker not in recently
+                result = state.process_candidate(sb, notifier, data, ai, push=push)
+                print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
+                      f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
+                outcomes[result] += 1
+            except Exception as e:
+                print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
+                outcomes["error"] += 1
+    except state.KillSwitchAbort as abort:
+        # FR35 -- same treatment as run_hourly.py's equivalent branch: no
+        # run_heartbeat row, one causally-tied kill_switch_abort_log row.
+        real_rows = sum(outcomes[k] for k in
+                         ("candidate-logged", "candidate-pushed", "candidate-push-failed", "no-read"))
+        state.write_kill_switch_abort(sb, workflow=heartbeat_key,
+                                       checkpoint=abort.checkpoint, real_rows_this_cycle=real_rows)
+        print(f"[kill-switch] paused -- aborted at checkpoint={abort.checkpoint} after "
+              f"{dict(outcomes)}. No run_heartbeat row written this cycle (FR35 expected-quiet).")
+        return
 
     # DEEP-001/DEEP-002 fix (INC-8, components.md §4.8): "no-read" (fail-safe
     # Hold from a parse/API failure) and "candidate-push-failed" (a real,

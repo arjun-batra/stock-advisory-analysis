@@ -59,6 +59,20 @@ def main() -> None:
             print(f"  skip {ticker}: {type(e).__name__}: {e}")
             skipped += 1
 
+    # FR24 checkpoint 4 -- Yahoo fetches above are not gated (not irreversible);
+    # only the commit-triggering write is. Bare early return: skipping the
+    # write leaves pages/prices.json byte-identical to what's already
+    # committed, so the workflow's `git diff --cached --quiet` guard makes no
+    # commit and the previously published snapshot remains current. No
+    # run_heartbeat row, no kill_switch_abort_log row (out of scope for FR35 --
+    # no per-ticker logged work exists here to protect; already fully covered
+    # by FR25's absence treatment, operational-controls.md §13.6.2).
+    if state.is_paused(sb):
+        print("[kill-switch] paused -- skipping prices.json write (FR24 checkpoint 4); "
+              "no commit will be made, previously published snapshot remains current. "
+              "No run_heartbeat row written this cycle.")
+        return
+
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     with open(OUT_PATH, "w") as f:

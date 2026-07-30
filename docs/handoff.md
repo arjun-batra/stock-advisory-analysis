@@ -1409,3 +1409,27 @@ on the same line for that case (done below).
   nothing to *fix*, only a coverage gap to flag.
 - `tunables_static.test.ts:144-153`'s regex/BUG-008 flag from fix cycle 1 (still open, qa's) is
   unrelated to this fix cycle and unaffected by it.
+
+---
+
+# Handoff — INC-12: kill-switch in-flight boundary checks + mid-run-abort classification (FR24, FR35; DEEP-007)
+
+## Build plan (written before coding, per dev's workflow)
+
+Read `docs/design/increment-plan.md`'s `### INC-12` (files + literal ACs), `docs/design/
+operational-controls.md` §13.6 (all five subsections), `docs/requirements.md` FR24/FR25/FR35 + Decisions
+#37/#38, and `docs/design/components.md` §4.8 (INC-8's heartbeat contract). Approach: add `state.is_paused()`,
+`state.KillSwitchAbort(BaseException)`, `state.write_kill_switch_abort()`, and two checkpoint-3 call sites
+(`process_ticker`/`process_candidate`, each right before its own `notifier.push(...)`, before any write for
+that ticker); checkpoint 1 (bare early return) in `run_hourly.main()`/`run_discovery.main()` right after
+`sb`/`notifier` are constructed; checkpoint 2 (raises `KillSwitchAbort("ai_call")`) in `_process_group`
+after Phase-1 ingest / in `run_discovery.main()` after its own Phase-1 ingest, both immediately before
+`judge_batch(...)`; a `try/except state.KillSwitchAbort` wrapping each `main()`'s group-processing work,
+writing one `kill_switch_abort_log` row and returning with **no** `run_heartbeat` write; checkpoint 4 (bare
+early return) in `publish_prices.py` right before the `pages/prices.json` file write. New SQL:
+`sql/kill_switch_abort_log.sql`, mirroring `kill_switch_audit`'s RLS+FORCE+REVOKE, `create table if not
+exists` for genuine re-runnability (verified by double-apply against local Postgres 16, not just reasoned
+about). No config-schema change. Verify: full Python+TS suites green, every literal AC in the increment
+plan self-checked (grep call-site counts, `BaseException` subclass, manual trace of what each checkpoint
+does/doesn't call), double-apply the new SQL file locally.
+
