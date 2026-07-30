@@ -1193,3 +1193,95 @@ ran the exact scenarios below. Scratch database dropped after verification; noth
   never a wrong write"). If a fourth market is ever added, both need updating — same class of drift risk
   `requirements.md` §10's dual-baseline-table gap (REV-074/078/087) already documents for tunables; not
   new to this increment, just the same pattern recurring in a new place.
+
+## BUG-008 fix (fix cycle 1 of 3) — neither new SQL file re-applied cleanly
+
+**Build plan.** Both `sql/tunables_validate_trigger.sql:84-86` and
+`sql/holdings_currency_derivation.sql:46-48` end in a plain `create trigger ...` with no `or replace`
+and no preceding `drop ... if exists` guard, so a second apply errors `trigger "..." already exists`
+(qa's repro, `docs/test-report.md` Open bugs / BUG-008). Everything else in both files (`create or
+replace function`, no grants/comments in either file — checked, there are none) was already
+re-runnable. Fix: make each file's `create trigger` statement idempotent, verify by applying each
+file twice to a local Postgres and diffing object state, run both full suites, do not touch
+`sql/admin_portal_tunables.sql`, `tests/`, or anything outside these two files.
+
+**Mechanism chosen: `create or replace trigger` (PG14+), not `drop trigger if exists` + `create
+trigger`.** I considered both. `create or replace trigger` is a single atomic DDL statement, so
+(unlike drop-then-recreate, which is two separate auto-committed statements in a `psql -f` run)
+there is never a window where a concurrent write to `public.tunables`/`public.holdings` could land
+while the trigger is momentarily absent — on a live table other surfaces already write to, that
+matters. Postgres-version doubt was resolved, not assumed away: I don't have Supabase MCP/live-
+project access this session, so I can't query the live project's Postgres major version directly,
+but qa's own BUG-008 repro already smoke-tested `create or replace trigger` successfully against a
+local Postgres 16, and this project's local reference Postgres (used throughout dev's and qa's own
+verification, including this fix's) is also 16 — consistent with Supabase's current default of
+PG15+ for new/active projects, with no contrary evidence anywhere in `docs/`. Release/INC-11 should
+still confirm the live project's actual version before applying, per this bug's original framing, but
+I'm not aware of any basis to expect it's older than PG14.
+
+**Files changed:** `sql/tunables_validate_trigger.sql` (line 84's `create trigger` → `create or
+replace trigger`, plus a short comment explaining the fix), `sql/holdings_currency_derivation.sql`
+(same change, line 46). No other lines touched in either file.
+
+**Verified by re-applying, not just reasoning about it.** Started a local Postgres 16
+(`pg_ctlcluster 16 main start`), built a scratch database with `watchlist`/`holdings` (per
+`sql/schema.sql`) plus `sql/admin_portal_tunables.sql` verbatim (stubbing `auth.jwt()`/`is_admin()`,
+which only exist on live Supabase), then for each of the two fixed files: applied once, recorded
+`pg_trigger`/`pg_proc` state (`tgname`, `tgrelid`, `tgfoid`, `tgenabled`, function OID), applied
+again verbatim, and re-checked the same state plus behavior:
+  - Both files' second apply succeeded (`CREATE FUNCTION` / `CREATE TRIGGER`, no error) — the BUG-008
+    repro's exact failure no longer reproduces.
+  - Trigger fire order unchanged after the second apply: `select tgname from pg_trigger where
+    tgrelid = 'public.tunables'::regclass and not tgisinternal order by tgname` still returns
+    `tunables_0_validate_update` then `tunables_stamp_update` (validate still fires first).
+  - Function OIDs identical before/after (`create or replace function` already preserved identity;
+    unaffected by this fix).
+  - Behavior re-confirmed live after the second apply, not just object metadata: a bad
+    `DISCOVERY_GAINER_PCT` value is still rejected; inserting all-`USD` holdings for US/TSX/NSE
+    tickers still derives `USD`/`CAD`/`INR`; a direct `UPDATE ... SET currency='USD'` on a TSX
+    holding is still overridden back to `CAD`; a ticker absent from `watchlist` still raises
+    `holdings.ticker % has no matching watchlist row`.
+  - Existing row data was untouched by the mere re-apply itself (`tunables`/`holdings` row values
+    identical before/after) — re-applying the DDL doesn't reset anything stateful; only a subsequent
+    write re-fires either trigger, same as before this fix.
+  - Scratch database dropped and the local Postgres cluster stopped after verification; nothing left
+    running.
+
+**Everything else in both files checked, not assumed, to already be re-runnable:** both
+`create or replace function` statements are inherently idempotent and were unaffected; neither file
+contains any `grant`, `comment on`, or other stateful statement — read both files fully to confirm
+before concluding the trigger line was the only defect.
+
+**One test-suite side effect, flagged rather than worked around.** Full TS suite:
+`tests/admin_portal/tunables_static.test.ts:144-153` ("... trigger name sorts before
+tunables_stamp_update ...") asserts the file's `create trigger` line against a regex,
+`/create trigger (\S+)\s+before update on public\.tunables/i`, that only matches the literal
+pre-fix `create trigger` syntax — it does not match `create or replace trigger`, so this one test
+now fails (`error: 'new validate trigger not found'`). This is not a behavioral regression: the
+trigger name, its position, and the fire-order it's testing for are all still correct (verified
+directly against `pg_trigger` above); the assertion's regex itself needs `create (or replace )?
+trigger` to match the fixed, correct file. I did not edit it — `tests/` is qa's per the ownership
+table and I was told qa "has already re-verified" this pass. Flagging for qa's next pass rather than
+silently leaving it unexplained. (A second static test at line 156-166, forbidding a literal
+`drop trigger` substring anywhere in the file, was NOT broken by the chosen mechanism — it was only
+briefly broken by my own draft comment prose using that literal substring, which I reworded; the
+final file contains no `drop trigger` statement or comment text at all, consistent with choosing
+`create or replace trigger` over drop-then-recreate.)
+
+**Full regression suite, run quietly, both suites:**
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **249 passed, 0 failed** — unchanged
+  from baseline, as expected for an SQL-only fix.
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **79 passed, 1 failed**
+  (baseline 80/0) — the single failure is `tunables_static.test.ts:144-153` described above, a
+  pre-fix-syntax-assuming assertion, not a regression in file behavior.
+
+**Smoke test:** all three `scripts/` entry points still import cleanly
+(`SKIP_TUNABLES_FETCH=true python3 -c "import sys; sys.path.insert(0,'scripts'); import
+run_hourly, run_discovery, publish_prices"` → `OK`); the SQL fix touches only the two new files,
+nothing Python/TypeScript-side changed, so this is confirmation the fix stayed scoped, not a new
+check.
+
+**Owner of the flagged test-suite item:** qa, to update
+`tunables_static.test.ts:146`'s regex (`create trigger` → `create (or replace )?trigger`) to match
+the fixed file on its next pass. Not blocking a re-review of the SQL fix itself, which is complete
+and independently re-verified above.

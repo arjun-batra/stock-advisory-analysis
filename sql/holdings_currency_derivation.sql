@@ -44,13 +44,11 @@ begin
 end; $$;
 
 -- BUG-008 fix: `create trigger` alone is not re-runnable (errors "already exists" on a second
--- apply). `create or replace trigger` (PG14+) would be the one-line alternative, but this file is
--- meant to be applied to a live Supabase project whose exact Postgres major version hasn't been
--- confirmed from here — `drop trigger if exists` + `create trigger` is the conservative equivalent
--- and is safe: `holdings_derive_currency` is this file's own new object, not a pre-existing live
--- trigger, so dropping and recreating it changes nothing an external caller could observe.
-drop trigger if exists holdings_derive_currency on public.holdings;
-
-create trigger holdings_derive_currency
+-- apply). Fixed with `create or replace trigger` (PG14+) rather than a drop-then-recreate pair,
+-- same rationale as sql/tunables_validate_trigger.sql's identical fix: qa's repro confirmed
+-- Postgres 16 accepts it, this project's local reference Postgres is 16, and a single atomic
+-- statement avoids any window where `public.holdings` writes could land with the trigger absent.
+-- Kept consistent with the tunables file rather than mixing mechanisms across the two.
+create or replace trigger holdings_derive_currency
   before insert or update on public.holdings
   for each row execute function public._derive_holdings_currency();
