@@ -162,15 +162,34 @@ def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
 # --- helpers -----------------------------------------------------------------
 
 def build_position(holding: dict | None, data: dict) -> dict | None:
+    """FR11/FR29 (Decision #35, DEEP-006): defense-in-depth on top of the
+    holdings.currency DB trigger (sql/holdings_currency_derivation.sql), which
+    guarantees holdings.currency agrees with watchlist.market but not that
+    watchlist.market is itself correct for the ticker's actual listing (a
+    narrower, residual risk). If the holding's currency disagrees with the
+    ticker's own independently-fetched fundamentals currency, pl_pct is
+    suppressed rather than computed from mismatched currencies -- FR11's
+    explicit requirement (non-functional-ops.md §7.3). A missing fundamentals
+    currency (Yahoo didn't return one) is "unknown", not "disagrees" -- pl_pct
+    is still computed in that case, unchanged from pre-INC-10 behavior.
+    """
     if not holding:
         return None
     cost = holding.get("cost_basis") or 0
     price = data.get("price") or 0
-    pl_pct = round((price / cost - 1) * 100, 2) if cost else None
+    currency = holding.get("currency")
+    fundamentals_currency = (data.get("fundamentals") or {}).get("currency")
+    if fundamentals_currency and currency and fundamentals_currency != currency:
+        print(f"  [state] WARNING holding currency mismatch for {data.get('ticker')}: "
+              f"holdings.currency={currency!r} vs fundamentals.currency={fundamentals_currency!r} "
+              f"(watchlist.market likely wrong for this ticker) — suppressing pl_pct per FR11")
+        pl_pct = None
+    else:
+        pl_pct = round((price / cost - 1) * 100, 2) if cost else None
     return {
         "shares": holding.get("shares"),
         "cost_basis": cost,
-        "currency": holding.get("currency"),
+        "currency": currency,
         "pl_pct": pl_pct,
     }
 

@@ -23,6 +23,12 @@ interface TunableRow {
  * the table's own CHECK constraint, so there is nothing to add or remove here.
  * `updated_at`/`updated_by` are server-stamped by the `tunables_stamp_update`
  * trigger — never client-supplied — this page only ever sends `value`.
+ *
+ * DEEP-005/INC-10: `validateTunableValue` is now key-aware, mirroring scripts/config.py's per-key
+ * cast/domain contract (docs/design/admin-portal-tunables.md §16.4) — a bad value is rejected here
+ * before any write attempt, and `sql/tunables_validate_trigger.sql` enforces the identical contract
+ * server-side. `ALERTS_ENABLED` renders as a true/false select instead of free text, structurally
+ * preventing the typo class that used to silently disable all real pushes.
  */
 export default function TunablesPage() {
   const supabase = createClient();
@@ -64,7 +70,7 @@ export default function TunablesPage() {
   }
 
   async function handleUpdate(key: string) {
-    const errors = validateTunableValue(editValue);
+    const errors = validateTunableValue(key, editValue);
     setFormErrors(errors);
     if (errors.length > 0) return;
 
@@ -111,7 +117,16 @@ export default function TunablesPage() {
                         {msg}
                       </p>
                     ))}
-                    <input value={editValue} onChange={(e) => setEditValue(e.target.value)} />
+                    {row.key === "ALERTS_ENABLED" ? (
+                      // DEEP-005: a select, not free text — structurally prevents the typo class
+                      // (e.g. "tru") that used to silently disable all real pushes with no error.
+                      <select value={editValue} onChange={(e) => setEditValue(e.target.value)}>
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    ) : (
+                      <input value={editValue} onChange={(e) => setEditValue(e.target.value)} />
+                    )}
                   </td>
                   <td>
                     {row.updated_at} {row.updated_by ? `(${row.updated_by})` : ""}

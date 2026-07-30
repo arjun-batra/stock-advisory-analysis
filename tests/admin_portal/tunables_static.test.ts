@@ -123,15 +123,22 @@ test("AuthGuard: nav includes a link to /tunables", () => {
 });
 
 // --- validateTunableValue: happy path, edge case, invalid input ------------
+// DEEP-005/INC-10: validateTunableValue is now key-aware (was value-only) — mirrors
+// scripts/config.py's per-key cast contract (docs/design/admin-portal-tunables.md §16.4). These three
+// call sites are updated to pass a key, same mechanical adaptation as any other caller of a function
+// whose signature a design-mandated fix changed (same class of update as INC-9's handoff renaming
+// existing test mocks after ingest.get_price_only()'s introduction) — the tests' original intent
+// (non-blank happy path / whitespace / empty rejected) is unchanged, just exercised against
+// GEMINI_MODEL, whose rule is still "non-blank". Per-key rule coverage lives in validation.test.ts.
 
-test("validateTunableValue: a non-blank value has no errors (happy path)", () => {
-  assert.deepEqual(validateTunableValue("gemini-2.5-flash"), []);
+test("validateTunableValue: a non-blank value has no errors (happy path, GEMINI_MODEL)", () => {
+  assert.deepEqual(validateTunableValue("GEMINI_MODEL", "gemini-2.5-flash"), []);
 });
 
-test("validateTunableValue: whitespace-only value is rejected (edge case)", () => {
-  assert.ok(validateTunableValue("   ").length > 0);
+test("validateTunableValue: whitespace-only value is rejected (edge case, GEMINI_MODEL)", () => {
+  assert.ok(validateTunableValue("GEMINI_MODEL", "   ").length > 0);
 });
 
-test("validateTunableValue: empty string is rejected (invalid input)", () => {
-  assert.ok(validateTunableValue("").length > 0);
+test("validateTunableValue: empty string is rejected (invalid input, GEMINI_MODEL)", () => {
+  assert.ok(validateTunableValue("GEMINI_MODEL", "").length > 0);
 });

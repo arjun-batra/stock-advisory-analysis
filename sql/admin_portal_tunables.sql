@@ -76,7 +76,7 @@ create policy "admin_write_tunables" on public.tunables
 insert into public.tunables (key, value, description, example) values
   ('GEMINI_MODEL', 'gemini-2.5-flash', 'Primary watchlist AI model', 'gemini-2.5-flash'),
   ('GEMINI_MODEL_BACKUP', 'gemini-2.5-flash-lite', 'Fallback model (leave empty to disable the fallback model)', 'gemini-2.5-flash-lite'),
-  ('ALERTS_ENABLED', 'true', 'Master switch for real pushes (matches today''s live default; a manual off-hours dry run can still suppress this via workflow_dispatch)', 'true'),
+  ('ALERTS_ENABLED', 'true', 'Master switch for real pushes. Effective value is this AND the workflow''s alerts_enabled input -- that input defaults to true on every scheduled run and is false only during a deliberate manual dry-run test, so this table value is the one that actually matters day-to-day.', 'true'),
   ('DISCOVERY_GAINER_PCT', '5', 'Mover threshold (%) — gainer side', '5'),
   ('DISCOVERY_LOSER_PCT', '-5', 'Mover threshold (%) — loser side', '-5'),
   ('DISCOVERY_VOL_SPIKE', '2.0', 'Volume-spike signal: multiple of the 3-month average volume', '2.0'),
@@ -84,3 +84,16 @@ insert into public.tunables (key, value, description, example) values
   ('DISCOVERY_MIN_MARKET_CAP_INR', '50000000000', 'NSE market-cap floor (₹)', '50000000000'),
   ('DISCOVERY_SHORTLIST_MAX', '15', 'Max candidates sent to the AI in the daily discovery batch', '15'),
   ('DISCOVERY_PUSH_COOLDOWN_DAYS', '7', 'Per-candidate re-push cooldown (days)', '7');
+
+-- --- seed-data correction (DEEP-005, INC-10, docs/design/admin-portal-tunables.md §16.4 "Effective-value
+-- visibility" paragraph) ------------------------------------------------------------------------------
+-- ALERTS_ENABLED's effective value is `_alerts_input AND ALERTS_ENABLED_TABLE` (scripts/config.py), but
+-- this row's description above (as originally seeded by INC-6) only ever described the table half,
+-- under the label "Master switch for real pushes" -- nothing told an operator whether pushes were
+-- actually live. This row's `description` text above is corrected in the source-of-truth INSERT (a
+-- fresh deploy now seeds the corrected text directly); this UPDATE additionally brings the already-live
+-- row's `description` in sync, since the INSERT above cannot re-run against a row that already exists
+-- (primary-key conflict) -- idempotent, safe to apply more than once, touches no other column.
+update public.tunables
+   set description = 'Master switch for real pushes. Effective value is this AND the workflow''s alerts_enabled input -- that input defaults to true on every scheduled run and is false only during a deliberate manual dry-run test, so this table value is the one that actually matters day-to-day.'
+ where key = 'ALERTS_ENABLED';

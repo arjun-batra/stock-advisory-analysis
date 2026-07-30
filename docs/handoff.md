@@ -978,3 +978,218 @@ targeted tests, or the full suite: `SKIP_TUNABLES_FETCH=true python3 -m pytest -
 - Duplicate ticker requests remain proven-unreachable for `watchlist.ticker` (DB primary key) but reachable
   in principle from discovery-candidate batches, per qa's own severity note — unchanged by this fix, which
   only changes how a reachable duplicate is handled once it occurs.
+
+---
+
+# Handoff — INC-10: Tunables write-time validation + holdings-currency derivation (FR30, FR11, FR29;
+DEEP-005+DEEP-006)
+
+**Date:** 2026-07-30. Branch: `claude/big-guns-qv3kjt` (continuing this session's branch per explicit
+instruction — no new branch, no merge, no tag). Not merged to `main`.
+
+## Build plan (written before coding)
+
+Read `docs/design/increment-plan.md`'s `### INC-10` section (Files/Depends-on/8 ACs),
+`docs/design/admin-portal-tunables.md` §16.4's "FIX ROUND (DEEP-005, INC-10)" subsection,
+`docs/design/admin-portal.md` §16.3's "FIX ROUND (DEEP-006, INC-10)" subsection,
+`docs/design/non-functional-ops.md` §7.3 (currency enforcement) and §8 (file-level tags naming the two
+new SQL files), `docs/requirements.md` FR30/FR11/FR29 + Decisions #34/#35, and `docs/review-log.md`'s
+DEEP-005/DEEP-006 entries (file:line evidence). Both fixes are fully specified by the design (exact
+SQL/trigger blocks given verbatim in admin-portal-tunables.md/admin-portal.md) — no design ambiguity to
+flag.
+
+**Approach:**
+- **DEEP-005 (tunables):** mirror `scripts/config.py`'s `_TUNABLE_CASTS` ten-key contract in two
+  independent places. `admin-portal/lib/validation.ts`'s `validateTunableValue` becomes key-aware
+  (`(key, value) -> string[]`, was `(value) -> string[]`) with one rule per curated key (5 float keys, 2
+  int keys, `ALERTS_ENABLED` true/false-only, `GEMINI_MODEL` non-blank, `GEMINI_MODEL_BACKUP` blank
+  allowed — the shipped INC-6 version incorrectly required non-blank for every key, blocking the
+  documented "leave empty to disable the fallback" state). New `sql/tunables_validate_trigger.sql`
+  enforces the identical contract in a `BEFORE UPDATE` trigger, so a direct SQL edit is caught the same
+  way. `admin-portal/app/(app)/tunables/page.tsx`: `ALERTS_ENABLED` renders as a `true`/`false` select,
+  not free text (structurally prevents the typo class, not just catches it). Effective-value visibility
+  (the AND-gate compounding gap): per the design, no new portal widget — instead the `ALERTS_ENABLED`
+  seed row's `description` is corrected to state the AND-gate plainly (`sql/admin_portal_tunables.sql`,
+  both the INSERT text for a fresh deploy and a new idempotent `UPDATE` to sync the already-live row),
+  and INC-8's `call_log.alerted` (already shipped, already visible on the INC-7 track-record view) is
+  the reused live signal — no new schema/UI built for this, per the design's explicit "reuse over
+  building a second indicator" call.
+- **DEEP-006 (holdings currency):** new `sql/holdings_currency_derivation.sql` — a `BEFORE INSERT OR
+  UPDATE` trigger on `holdings` that derives `currency` from `watchlist.market` via the existing FK and
+  **unconditionally overwrites** whatever was submitted (portal, direct SQL, or any future caller
+  alike). `admin-portal/lib/validation.ts`: `HoldingsInput`/`validateHoldingsRow` drop `currency`
+  entirely; new `MARKET_CURRENCY` display-only map. `admin-portal/app/(app)/holdings/page.tsx`: currency
+  `<select>` removed from both the add form and the edit row, replaced with a read-only derived label
+  sourced from the selected ticker's `watchlist.market` (fetched alongside the ticker list); no
+  `currency` field in any insert/update payload. `scripts/state.py`'s `build_position` (explicitly
+  reserved for this increment when INC-8 was told to leave it alone) gets the second, independent
+  defense-in-depth layer: if `holding["currency"]` disagrees with the ticker's own independently-fetched
+  `data["fundamentals"]["currency"]`, `pl_pct` is suppressed (`None`) with a logged warning instead of
+  computed from mismatched currencies, per FR11. A missing (not merely differing) fundamentals currency
+  is treated as "unknown," not "disagrees" — `pl_pct` still computes in that case, unchanged from
+  pre-INC-10 behavior (matches the two pre-existing `build_position` tests, which pass no `fundamentals`
+  key at all).
+
+**Contracts touched:** `validateTunableValue`'s signature and `HoldingsInput`/`validateHoldingsRow`'s
+shape both change — see "Deviation from the Files list" below for the direct consequence on two
+pre-existing test files. `build_position`'s return shape is unchanged (`shares`/`cost_basis`/`currency`/
+`pl_pct`), only `pl_pct`'s computation gains a new suppression branch.
+
+**Verify:** full Python + TypeScript suites, `npm run build`, plus (since neither SQL file can be applied
+to the live project this session) a local scratch Postgres instance to exercise both new triggers'
+actual behavior end-to-end — see "How I verified the SQL" below.
+
+## What changed and why
+
+DEEP-005: the tunables editor validated only non-emptiness. Three of the ten curated keys' `config.py`
+casts can never raise (`str` for `GEMINI_MODEL`/`_BACKUP`, `lambda v: str(v).lower()=="true"` for
+`ALERTS_ENABLED`), so a typo like `ALERTS_ENABLED="tru"` silently disabled all real pushes with no error,
+while a typo in any of the seven numeric keys instead took down every scheduled entry point via
+`SystemExit` at import time — the same form reported success either way. Fix: the same ten-key
+type/domain contract is now enforced at write time, in the portal (before any write attempt) and in the
+database (so a direct SQL edit can't bypass it either).
+
+DEEP-006: `holdings.currency` was free-choice, defaulting to `USD` for every market, never reconciled
+against the held ticker's own `watchlist.market` even though the FK makes the market known at write
+time. A `.TO` position entered as USD 50 against a native CAD 68 showed +36% where the truth is ~0%, fed
+to the AI as fact (FR11) and rendered on the detail page. Fix: currency is now derived unconditionally
+from `watchlist.market` by a DB trigger (not admin-entered, not client-validated), with a second,
+independent defense-in-depth check in `build_position` for the narrower residual case where
+`watchlist.market` itself is wrong for the ticker's real listing.
+
+## Files changed
+
+- **New:** `sql/tunables_validate_trigger.sql` — `_validate_tunable_update()` + `tunables_0_validate_update`
+  trigger (BEFORE UPDATE on `public.tunables`).
+- **New:** `sql/holdings_currency_derivation.sql` — `_derive_holdings_currency()` +
+  `holdings_derive_currency` trigger (BEFORE INSERT OR UPDATE on `public.holdings`).
+- `sql/admin_portal_tunables.sql` — "seed-data correction" the increment plan calls for: `ALERTS_ENABLED`'s
+  seeded `description` corrected to state the AND-gate plainly, in both the INSERT (fresh-deploy
+  source of truth) and a new idempotent `UPDATE` (syncs the already-live row, since the INSERT can't
+  re-run against an existing primary key). No other line in this file changed — the table, stamp
+  trigger, RLS policies, and the other 9 seed rows are untouched.
+- `admin-portal/lib/validation.ts` — `validateTunableValue(key, value)` (was `(value)`), ten per-key
+  rules; `HoldingsInput`/`validateHoldingsRow` drop `currency`; new `MARKET_CURRENCY` map.
+- `admin-portal/app/(app)/tunables/page.tsx` — `ALERTS_ENABLED` renders as a select; `handleUpdate` passes
+  the row's `key` into `validateTunableValue`.
+- `admin-portal/app/(app)/holdings/page.tsx` — currency input removed from add/edit; watchlist fetch now
+  includes `market`; read-only derived-currency label shown in both the add form and the edit row.
+- `scripts/state.py` — `build_position`: new currency-mismatch guard (see above); no other function
+  touched.
+
+### Deviation from the "Files:" list — flagged, not silently applied
+
+`tests/admin_portal/tunables_static.test.ts` and `tests/admin_portal/validation.test.ts` were **not** in
+INC-10's Files list, but implementing `validateTunableValue`'s key-aware signature and dropping
+`currency` from `HoldingsInput`/`validateHoldingsRow` — both explicitly mandated by
+`admin-portal-tunables.md` §16.4 / `admin-portal.md` §16.3 — breaks 6 pre-existing call sites in those
+two files (3 single-arg `validateTunableValue(...)` calls; the currency-checking half of
+`validateHoldingsRow`'s tests). AC8 requires both "full existing test suite passes" and "no file outside
+the list above changed," which are mutually exclusive once a design-mandated signature change is
+implemented. I made the minimal, mechanical adaptation (added the required `key` argument to the three
+`validateTunableValue` calls against `GEMINI_MODEL`, whose rule — non-blank — matches the tests' original
+intent; removed the `currency` field/assertions from `validateHoldingsRow`'s fixtures, replacing "every
+declared currency is accepted" — the one test with no remaining equivalent — with nothing, a net −1
+test) rather than either leaving the suite red or leaving the design's mandated contract change
+unimplemented. This is the same class of adaptation as this file's own INC-9 entry above (`tests/
+test_tunables.py`'s two mocks renamed from `get_market_data` to `get_price_only` after that contract
+changed) — not new test authorship for new behavior, which I did not add (e.g. no new tests for
+`MARKET_CURRENCY` or the other 9 tunable-key rules; that's qa's normal INC-10 pass). Flagging explicitly
+per CLAUDE.md's "never silently deviate" — orchestrator/qa should confirm this is acceptable or
+reassign the two test-file edits.
+
+## How to run it
+
+`python3 -m pytest -q --tb=short` and `node --experimental-strip-types --test tests/admin_portal/*.test.ts`
+from the repo root; `npm run build` from `admin-portal/`. No new env var, no new tunable, no config
+change. The two new SQL files are **not applied to the live project** (explicit instruction — release/
+INC-11 territory); to exercise them locally, apply `sql/admin_portal_tunables.sql` (already-live schema,
+for the `tunables` table + seed) then the two new files against any Postgres instance with `auth.jwt()`/
+`auth.uid()` stubbed (Supabase-provided functions, not used by either new trigger's own logic — only
+needed so the files parse without error outside Supabase).
+
+## How I verified the SQL (no live Supabase access this session)
+
+Spun up a local Postgres 16 instance (already installed in this environment), created a scratch
+database, stubbed `auth.jwt()`/`auth.uid()`, recreated `watchlist`/`holdings`/`tunables` per
+`sql/schema.sql`/`sql/admin_portal_tunables.sql`, then applied both new files verbatim (no edits) and
+ran the exact scenarios below. Scratch database dropped after verification; nothing left running.
+
+## Acceptance-criteria self-verification
+
+1. **PASS.** `ALERTS_ENABLED` is a `<select>` (`admin-portal/app/(app)/tunables/page.tsx`, confirmed by
+   direct read and by `npm run build`'s successful compile). `validateTunableValue` rejects a malformed
+   value for each of the 7 numeric keys before any write is attempted — confirmed both client-side
+   (function returns non-empty errors) and, per AC3 below, server-side via the DB trigger.
+2. **PASS.** Local scratch DB: `update ... set value='' where key='GEMINI_MODEL_BACKUP'` → `UPDATE 1`,
+   `select value from tunables where key='GEMINI_MODEL_BACKUP'` → empty string, not rejected.
+   `validateTunableValue("GEMINI_MODEL_BACKUP", "")` also returns `[]` client-side.
+3. **PASS.** Local scratch DB, direct SQL: `update ... set value='5%' where key='DISCOVERY_GAINER_PCT'`
+   → `ERROR: tunables.value for key DISCOVERY_GAINER_PCT must be numeric (e.g. "5" or "2.0"), got 5%`.
+   `update ... set value='tru' where key='ALERTS_ENABLED'` → `ERROR: ... must be exactly "true" or
+   "false" (case-insensitive), got tru`. A valid edit to each of the 10 keys (verified all 10, including
+   both `ALERTS_ENABLED='false'` and `'TRUE'` for case-insensitivity) succeeded — full transcript above.
+4. **PASS.** `select tgname from pg_trigger where tgrelid = 'public.tunables'::regclass order by tgname`
+   → `tunables_0_validate_update` then `tunables_stamp_update` (confirmed on the scratch DB). The
+   rejected `DISCOVERY_GAINER_PCT='5%'` update left `updated_at`/`updated_by` unchanged (re-selected
+   before/after — identical timestamp, `updated_by` still null from the original seed) — no partial side
+   effect. Note: I named the new trigger `tunables_0_validate_update`, not the design doc's illustrative
+   `tunables_1_validate`/`tunables_2_stamp` — see "Known limitations" below for why.
+5. **PASS.** `admin-portal/app/(app)/holdings/page.tsx`'s add/edit form has no currency input (confirmed
+   by direct read and `npm run build`). Local scratch DB: inserted one holding per market (`AAPL`/US,
+   `SHOP.TO`/TSX, `TCS.NS`/NSE), each with `currency='USD'` explicitly submitted in the INSERT (worse
+   than the portal's actual payload, which no longer sends `currency` at all) — resulting rows show
+   `USD`/`CAD`/`INR` respectively, not `USD` for all three.
+6. **PASS.** Local scratch DB: `update holdings set currency='USD' where ticker='SHOP.TO'` (bypassing the
+   portal, explicitly trying to force USD on a TSX ticker) → row still shows `CAD` after the update —
+   the trigger overrides a client that actively tries to set it, not just one that omits it.
+7. **PASS.** Scratch Python script (`SKIP_TUNABLES_FETCH=true`, no live Supabase): a holding with
+   `currency="USD"` against `data["fundamentals"]["currency"]="CAD"` (the residual "watchlist.market
+   wrong for this ticker" case, cost basis 50 vs price 68) → `pl_pct is None`,
+   `[state] WARNING holding currency mismatch for SHOP.TO: ...` logged. Matching currencies →
+   `pl_pct` computed normally (20.0). Missing `fundamentals` entirely (as both pre-existing
+   `test_build_position_*` fixtures already do) → unaffected, `pl_pct` still computed — confirms no
+   regression on the two pre-existing tests, which is also proven by the full-suite run below (244/244,
+   zero new failures, zero tests needed changing in `tests/test_state.py`).
+8. **PASS.** `python3 -m pytest -q --tb=short` → **244 passed, 0 failed** (identical to the stated
+   baseline — `build_position`'s new branch is a no-op for every existing fixture, none of which include
+   a `fundamentals` key). `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **62
+   passed, 0 failed** (baseline 63, minus the one test with no remaining equivalent — see "Deviation"
+   above; zero unexpected failures). `npm run build` → succeeds, all 7 routes present including
+   `/holdings` and `/tunables`. `git diff --name-only` shows exactly the 7 production files listed above
+   plus the 2 new SQL files plus the 2 flagged test-file adaptations — nothing else.
+
+## Known limitations / things the design didn't fully anticipate
+
+- **Trigger naming departs from the design doc's illustrative names.** `admin-portal-tunables.md` §16.4
+  names the ordering pair `tunables_1_validate`/`tunables_2_stamp`, which reads as if the already-live
+  `tunables_stamp_update` trigger (INC-6, `sql/admin_portal_tunables.sql`) gets renamed. Given this
+  round's explicit caution against redefining/dropping already-applied live objects, I instead named the
+  new trigger `tunables_0_validate_update` — `'0'` sorts before `'s'` in `tgname` order, so it fires
+  first without touching the existing trigger at all. This satisfies AC4's substance (validate-before-
+  stamp, confirmed on the scratch DB above) via a strictly additive change. Flagging since it's a literal
+  departure from the design doc's illustrative naming, though not from its behavioral requirement.
+- **Pre-existing holdings rows, if any existed:** the new `holdings` trigger only fires on `INSERT`/
+  `UPDATE`. A row that is never subsequently written to keeps whatever `currency` it already has —
+  this migration does **not** backfill/correct existing rows (a data change, out of scope for a
+  code-review-time SQL file, and explicitly not something to apply live this session). Any future
+  `UPDATE` to an existing row — even one only touching `shares`/`cost_basis` — re-derives and overwrites
+  `currency` as a side effect (self-healing on next write), since the trigger fires regardless of which
+  columns changed. The live watchlist holds zero holdings today, so this is moot in practice right now,
+  but if a bad row is ever created before this trigger is applied, it stays bad until its next write.
+  Not something this file addresses — flagging for release/INC-11 to note when applying.
+- Neither new SQL file has been applied to the live Supabase project, per the explicit instruction for
+  this increment — both `sql/tunables_validate_trigger.sql` and `sql/holdings_currency_derivation.sql`,
+  plus `sql/admin_portal_tunables.sql`'s new corrective `UPDATE`, need release/INC-11 to apply them (the
+  same "not applied by dev" posture every prior admin-portal SQL file in this project has used at
+  handoff time).
+- `GEMINI_MODEL_BACKUP`'s "blank means disabled" contract is validated (allowed) but not itself
+  regression-tested against `scripts/config.py`'s cast (`str`, which already accepts `""`) — this was
+  already true before INC-10 and isn't a new gap this increment introduces, just noting it wasn't
+  independently re-verified against `config.py` beyond reading the existing cast.
+- `MARKET_CURRENCY` (the portal's display-only mapping) and the DB trigger's `case v_market when ...`
+  mapping are two independent copies of the same US/TSX/NSE → USD/CAD/INR fact, matching the design's
+  own framing ("this constant is display-only... a mismatch... can only ever produce a wrong label,
+  never a wrong write"). If a fourth market is ever added, both need updating — same class of drift risk
+  `requirements.md` §10's dual-baseline-table gap (REV-074/078/087) already documents for tunables; not
+  new to this increment, just the same pattern recurring in a new place.
