@@ -1651,3 +1651,78 @@ regardless of the outcome of that check.
   verification was complete — not a commit I made myself, and not the "dev commits after qa passes" event
   CLAUDE.md's git workflow describes. Flagging so the orchestrator doesn't mistake it for a completed
   handoff commit; no qa run or reviewer pass has happened yet for INC-12.
+
+---
+
+# Handoff — Evidence record: INC-11 live-verification pass (Decision #36) — Postgres version, INC-3 AC3, INC-4 AC6, INC-7 Step 0, INC-10 SQL confirmation
+
+## Context
+
+`docs/design/increment-plan.md`'s `### INC-11` names three checkable, separable items (INC-3 AC3, INC-4
+AC6, INC-7 Step 0 + AC2/AC3), plus a Postgres-major-version doubt `docs/handoff.md`'s "BUG-008 fix (fix
+cycle 1 of 3)" section explicitly carried forward as an open INC-11 prerequisite ("Release/INC-11 should
+still confirm the live project's actual version before applying... I'm not aware of any basis to expect
+it's older than PG14"). Subagents have no Supabase/GitHub credentials this session, so — same posture as
+the INC-3/ClientOptions evidence record above — **this record was executed directly by the orchestrator**,
+not by any subagent, then handed to qa to log per doc-hygiene/attribution rules. qa did not run these
+checks and did not have Supabase/GitHub access this session.
+
+### Raw evidence
+
+**Date:** 2026-07-30. **Run by:** orchestrator, live query against the production Supabase project (user
+explicitly executed these checks; the sole user, accepting the risk of live testing against production).
+
+**1. Live DB Postgres major version.** Confirmed **PostgreSQL 17.6.1** — resolves the residual doubt
+above outright: no longer an assumption, and well above the PG14+ floor `create or replace trigger`
+(`sql/tunables_validate_trigger.sql`, `sql/holdings_currency_derivation.sql`) needs. No corrective action
+required on either file.
+
+**2. INC-3 AC3 (resume-baseline / no-false-alarm under a real pause/resume cycle).**
+`kill_switch_state.paused` false→true at `19:12:47.594Z`. `dispatch_github_workflow('hourly-watchlist.yml',
+'{}')` returned `null` and created **no** workflow run — scheduled dispatches run at :00/:30, the last real
+run was `19:00:01Z`, and none fired at `19:12`. Resumed (paused true→false) at `19:12:57.378Z`.
+`kill_switch_audit` gained exactly two new rows, one per toggle — this also independently reconfirms
+**INC-3 AC4** (the original AC4 evidence, 2026-07-29 above, was a different pause/resume cycle; today's
+exercise reproduces the same audit-trail guarantee on a fresh cycle). **Caveat, recorded deliberately:**
+the actor was `postgres` (direct SQL / service-role credential), so this exercised INC-3's original
+trusted-direct-SQL path, **not** the admin portal's `is_admin()`-gated RPC path — that distinct path
+remains INC-7 AC2/AC3's job, still open (item 5 below).
+
+**3. INC-4 AC6 (live Gemini smoke test).** 90 `call_log` rows in the trailing 3 hours to `19:01:42Z`,
+every one `parse_status='ok'`, `model_used='gemini-2.5-flash'`, `fallback_from=null` — 90 consecutive
+successful live Gemini calls in production, stronger evidence than a single one-off smoke test would have
+been.
+
+**4. INC-7 Step 0 (confirm `sql/kill_switch_portal_grant.sql` is actually live).** `admin_read_kill_switch`
+policy present on `kill_switch_state` (`select`/`authenticated`/`is_admin()`); `set_kill_switch(boolean,
+text)` present and its body contains the `is_admin()` authorization check. **Step 0 passes — no migration
+apply needed.** `docs/design.md`'s FR31/FR32 coverage row claiming this SQL was already live and confirmed
+against production is itself now independently confirmed, not merely trusted.
+
+**5. INC-7 AC2/AC3 — explicitly NOT done, still open.** The portal RPC round-trip and live
+dispatch-suppression proof both require a real authenticated admin **browser** session (the portal's own
+`is_admin()`-gated path) — nobody in this session, subagent or orchestrator, had one available. Do **not**
+infer this closed from item 2's service-role proof above; that exercised a materially different auth path.
+Remains open pending a session with an authenticated admin portal login.
+
+**6. INC-10 SQL objects — applied live and independently re-verified (supplementary to INC-11's three
+named items, folded into the same live-verification pass).** `inc10_tunables_validate_trigger`,
+`inc10_holdings_currency_derivation`, `inc10_alerts_enabled_description_fix` all confirmed live: both
+triggers present and enabled on `public.tunables`/`public.holdings`; `tunables_0_validate_update` sorts
+before `tunables_stamp_update` (correct validate-then-stamp fire order). **DEEP-005 proven closed live,**
+not just against a local scratch database as INC-10's own qa passes did: inside a rolled-back transaction,
+`update tunables set value='yes' where key='ALERTS_ENABLED'` was rejected with `tunables.value for key
+ALERTS_ENABLED must be exactly "true" or "false" (case-insensitive), got yes`; the live row's `value`
+remains `true` and its `description` carries the corrected AND-gate text.
+
+### What this closes
+
+- The PG14+ residual doubt flagged in this file's "BUG-008 fix (fix cycle 1 of 3)" section is resolved,
+  not merely reasoned about further.
+- INC-3 AC3 and INC-4 AC6 — both of INC-11's fully-executable named items — now have dated, attributed,
+  checkable evidence; `docs/test-report.md`'s INC-11 entry flips both from "deferred" to a dated PASS.
+- INC-7 Step 0 passes; INC-7 AC2/AC3 stay open, recorded as open (not silently re-deferred, not silently
+  marked done) — `docs/test-report.md`'s INC-11 entry reflects this distinction explicitly.
+- INC-10's three live SQL objects (already applied per a prior, uncredentialed session) are now
+  independently confirmed present, enabled, and behaviorally correct against the real production database,
+  not just reasoned about from a local scratch-database proxy.
