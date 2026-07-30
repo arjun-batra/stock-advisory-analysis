@@ -6,6 +6,7 @@ writes a call_log row (FR15) — quiet rows carry alerted=false / alert_type=nul
 """
 
 from datetime import datetime, timedelta, timezone
+import uuid
 
 from supabase import create_client, Client
 
@@ -34,14 +35,22 @@ def get_verdict_state(sb: Client, ticker: str) -> dict | None:
 
 # --- writes ------------------------------------------------------------------
 
-def write_call_log(sb, *, ticker, verdict, rationale, label, alert_type, alerted, snapshot) -> str:
+def write_call_log(sb, *, id=None, ticker, verdict, rationale, label, alert_type, alerted, snapshot) -> str:
+    """`id`, when supplied, is a client-generated uuid (str(uuid.uuid4())) written
+    into the row rather than left to the table's `gen_random_uuid()` default.
+    This lets a caller know the row's id BEFORE the insert — needed so the same
+    id can be handed to notify.push() (for the tap-through URL) and to this
+    write in the same call, removing the old ordering assumption that the log
+    row had to exist before the push (components.md §4.6, FR34/DEEP-002)."""
     row = {
         "ticker": ticker, "verdict": verdict, "rationale": rationale,
         "label": label, "alert_type": alert_type, "alerted": alerted,
         "data_snapshot": snapshot,
     }
+    if id is not None:
+        row["id"] = id
     res = sb.table("call_log").insert(row).execute()
-    return (res.data or [{}])[0].get("id", "")
+    return (res.data or [{}])[0].get("id", id or "")
 
 
 def _insert_state(sb: Client, ticker: str, fields: dict) -> None:
@@ -118,6 +127,12 @@ def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
     Discovery never touches verdict_state — candidates aren't watchlist members
     and have no change/cooldown/reminder lifecycle. A non-reading (rate-limited
     or unparseable) is logged but never pushed.
+
+    Delivery-confirmed contract (FR34/DEEP-002, components.md §4.6): `alerted`
+    is written True only on a confirmed push (`delivered is True`); a failed or
+    dry-run (`None`) push writes `alerted=False`. This is what makes
+    `recently_pushed_candidates()`'s `alerted=True` filter (Decision #32) no
+    longer falsely dedupe an undelivered candidate for the cooldown window.
     """
     ticker = data["ticker"]
     verdict = ai["verdict"]
@@ -130,12 +145,18 @@ def process_candidate(sb, notifier, data, ai, *, push: bool) -> str:
         return "no-read"
 
     do_push = push and verdict == "Buy"
-    log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                            label="new-candidate", alert_type=None, alerted=do_push, snapshot=snap)
-    if do_push:
-        notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id, market=data.get("market"))
-        return "candidate-pushed"
-    return "candidate-logged"
+    if not do_push:
+        write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
+                       label="new-candidate", alert_type=None, alerted=False, snapshot=snap)
+        return "candidate-logged"
+
+    log_id = str(uuid.uuid4())
+    delivered = notifier.push(ticker, verdict, rationale, kind="candidate", log_id=log_id, market=data.get("market"))
+    write_call_log(sb, id=log_id, ticker=ticker, verdict=verdict, rationale=rationale,
+                   label="new-candidate", alert_type=None, alerted=(delivered is True), snapshot=snap)
+    if delivered is False:
+        return "candidate-push-failed"
+    return "candidate-pushed"
 
 
 # --- helpers -----------------------------------------------------------------
@@ -256,10 +277,28 @@ def process_ticker(sb, notifier, wl_row, data, ai, now: datetime, position: dict
         _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
         return "quiet"
 
-    # ---- change -> immediate alert, no cooldown ----
-    log_id = write_call_log(sb, ticker=ticker, verdict=verdict, rationale=rationale,
-                            label="watchlist", alert_type="change", alerted=True, snapshot=snap)
-    notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id, market=wl_row.get("market"))
+    # ---- change -> immediate alert, no cooldown; delivery-gated state advance
+    #      (FR34/DEEP-002, components.md §4.6). log_id is generated client-side
+    #      BEFORE the push so it can be passed into both push() (tap-through
+    #      URL) and this write_call_log() call, instead of the old order that
+    #      let alerted get written before the outcome was known. ----
+    log_id = str(uuid.uuid4())
+    delivered = notifier.push(ticker, verdict, rationale, kind="change", log_id=log_id, market=wl_row.get("market"))
+    write_call_log(sb, id=log_id, ticker=ticker, verdict=verdict, rationale=rationale,
+                   label="watchlist", alert_type="change", alerted=(delivered is True), snapshot=snap)
+    if delivered is False:
+        # Real, confirmed failure: the crossing stays pending. current_verdict
+        # is NOT advanced, so the next cycle re-evaluates the same new AI
+        # verdict against the still-unadvanced prior verdict and retries the
+        # push automatically (FR34's literal retry contract) — not a new
+        # cooldown/reminder mechanism, just the single-rule comparison not yet
+        # having been told the first attempt succeeded.
+        _update_state(sb, ticker, {"last_checked_at": now.isoformat()})
+        return "push-failed"
+    # delivered is True (real success) or None (dry run) -> crossing consumed
+    # either way. A dry run is a deliberate, expected non-send; not advancing
+    # on it would let a verdict backlog build up silently while
+    # ALERTS_ENABLED=false and dump all at once the moment it flips back on.
     _update_state(sb, ticker, {
         "current_verdict": verdict,
         "last_checked_at": now.isoformat(),

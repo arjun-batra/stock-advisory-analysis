@@ -111,7 +111,11 @@ def main() -> None:
             print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
             outcomes["error"] += 1
 
-    degraded = outcomes["skip"] + outcomes["error"] + screens_errored
+    # DEEP-001/DEEP-002 fix (INC-8, components.md §4.8): "no-read" (fail-safe
+    # Hold from a parse/API failure) and "candidate-push-failed" (a real,
+    # confirmed push failure) both count as degraded — see run_hourly.py's
+    # equivalent formula for the identical NFR2/Decision #31 rationale.
+    degraded = outcomes["skip"] + outcomes["error"] + screens_errored + outcomes["no-read"] + outcomes["candidate-push-failed"]
     status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, heartbeat_key, status)
     print(f"Done [{status}]. {dict(outcomes)}"

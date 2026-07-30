@@ -192,13 +192,20 @@
     const v = VERDICT[row.verdict] || VERDICT.Hold;
     const scan = row.label === "new-candidate"
       ? `<span class="pill" style="background:var(--candidate-bg);color:var(--candidate-text)">discovery scan</span>` : "";
-    // A skipped cycle (parse_status=='no_data') is "no reading," not a verdict —
-    // its placeholder Hold must not render as a real Hold pill (UI handoff v4).
-    const verdictPill = row.parse_status === "no_data"
+    // A skipped cycle (parse_status=='no_data') or a fail-safe Hold
+    // (parse_status 'failed'/'api_error' — the AI call couldn't be read) is
+    // "no reading," not a verdict — its placeholder Hold must not render as a
+    // real Hold pill (UI handoff v4; widened DEEP-001/INC-8, components.md §4.8,
+    // to cover the fail-safe cases the same way "no_data" already was).
+    const NO_READING = ["no_data", "failed", "api_error"];
+    const verdictPill = NO_READING.includes(row.parse_status)
       ? `<span class="pill" style="background:var(--bg-subtle);color:var(--text-secondary)">no data</span>`
       : `<span class="pill" style="background:${v.bg};color:${v.text}">${esc(row.verdict)}</span>`;
     // Model's self-rated confidence in this verdict (from the view; null on
     // fail-safe rows and rows predating the confidence field — pill omitted).
+    // No change to this guard's condition needed (components.md §4.8): confidence
+    // is already null on every fail-safe row, so NO_READING coverage above is
+    // sufficient without duplicating the check here.
     const confPill = (row.confidence && row.parse_status !== "no_data")
       ? `<span class="pill" style="background:var(--bg-subtle);color:var(--text-secondary)">${esc(row.confidence)} confidence</span>` : "";
     const lastPrice = row.price;                     // extracted from data_snapshot by the view

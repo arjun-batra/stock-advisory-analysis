@@ -154,10 +154,16 @@ def main() -> None:
         _process_group(sb, notifier, rows, holdings, s["models"], now, outcomes)
 
     # Heartbeat reflects whether the run was fully clean (issue #2): "partial"
-    # when any ticker was skipped or errored, "ok" only when all succeeded. One
-    # shared "hourly-watchlist" key across both sessions (design §12 D4/D5) — the
-    # monitor computes the right staleness window per session off this same key.
-    degraded = outcomes["skip"] + outcomes["error"]
+    # when any ticker was skipped, errored, failed its AI read, or failed a
+    # push, "ok" only when all succeeded. One shared "hourly-watchlist" key
+    # across both sessions (design §12 D4/D5) — the monitor computes the right
+    # staleness window per session off this same key.
+    # DEEP-001/DEEP-002 fix (INC-8, components.md §4.8): "no-read" (every
+    # fail-safe Hold from a parse/API failure) and "push-failed" (a real,
+    # confirmed push failure) both count as degraded — a run where EVERY
+    # ticker's AI call failed previously still wrote status="ok" (NFR2,
+    # Decision #31).
+    degraded = outcomes["skip"] + outcomes["error"] + outcomes["no-read"] + outcomes["push-failed"]
     status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
     state.write_heartbeat(sb, "hourly-watchlist", status)
     print(f"Done [{status}]. {dict(outcomes)}")

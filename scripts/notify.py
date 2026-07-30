@@ -71,16 +71,23 @@ def _topic_for(market: str | None, default_topic: str, nse_topic: str) -> str:
 
 class DryRunNotifier:
     """Logs what it *would* send, including the topic it would route to. Used in
-    Phase 2 (no alerting yet) and whenever ALERTS_ENABLED/NTFY_TOPIC are unset."""
+    Phase 2 (no alerting yet) and whenever ALERTS_ENABLED/NTFY_TOPIC are unset.
+
+    push() returns None unconditionally (FR34/DEEP-002, components.md §4.6) — a
+    third, explicit state distinct from True (confirmed delivery) and False (a
+    real failed attempt): "deliberately not attempted." Callers must never
+    conflate a dry run with a failure — it's an operator choice, not an outage.
+    """
 
     def __init__(self, topic: str = "", nse_topic: str = ""):
         self.topic = topic
         self.nse_topic = nse_topic
 
-    def push(self, ticker, verdict, rationale, *, kind, log_id, market=None):
+    def push(self, ticker, verdict, rationale, *, kind, log_id, market=None) -> None:
         topic = _topic_for(market, self.topic, self.nse_topic) or "(no topic set)"
         print(f"[DRY RUN] would push [{kind}] -> topic '{topic}' :: "
               f"{_title(ticker, verdict, kind)} :: {_compose_body(rationale, market)} (log {log_id})")
+        return None
 
 
 class NtfyNotifier:
@@ -89,17 +96,26 @@ class NtfyNotifier:
         self.nse_topic = nse_topic
         self.detail_base = detail_base
 
-    def push(self, ticker, verdict, rationale, *, kind, log_id, market=None):
+    def push(self, ticker, verdict, rationale, *, kind, log_id, market=None) -> bool:
+        """Delivery-confirmed contract (FR34/DEEP-002, components.md §4.6):
+        returns True only on a confirmed 2xx response; False on any `requests`
+        exception or non-2xx status. Never lets an exception propagate — the
+        caller (state.py) decides what a failed delivery means for state
+        advance/retry, this function only reports what actually happened.
+        """
         topic = _topic_for(market, self.topic, self.nse_topic)
         headers = {"Title": _title(ticker, verdict, kind)}
         if self.detail_base and log_id:
             headers["Click"] = f"{self.detail_base}?log_id={log_id}"
         try:
-            requests.post(f"{config.NTFY_BASE_URL.rstrip('/')}/{topic}",
-                          data=_compose_body(rationale, market).encode("utf-8"), headers=headers,
-                          timeout=config.NTFY_TIMEOUT_SECONDS)
+            resp = requests.post(f"{config.NTFY_BASE_URL.rstrip('/')}/{topic}",
+                                  data=_compose_body(rationale, market).encode("utf-8"), headers=headers,
+                                  timeout=config.NTFY_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            return True
         except Exception as e:
-            print(f"[notify error] {ticker}: {type(e).__name__}: {e}")
+            print(f"[notify] ERROR push failed for {ticker}: {type(e).__name__}: {e}")
+            return False
 
 
 def get_notifier():

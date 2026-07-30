@@ -489,3 +489,188 @@ every prior increment's dev pass):**
   test file itself, consistent with INC-6's own handoff note on the same boundary.
 - `sql/kill_switch_portal_grant.sql` is not applied to the live project — orchestrator applies it,
   same as INC-5/INC-6's SQL files.
+
+---
+
+# Handoff — INC-8: Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34;
+DEEP-001+DEEP-002)
+
+**Date:** 2026-07-30. Branch: `claude/big-guns-qv3kjt` (no `inc-8-<slug>` branch created — per this
+session's explicit instruction, deviating from `CLAUDE.md`'s normal per-increment branching; two commit
+checkpoints kept per the solo/low-stakes opt-in). Not merged to `main`, not tagged.
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read `docs/design/increment-plan.md`'s `### INC-8` section (Files/Depends-on/8 ACs),
+`docs/design/components.md` §4.6 (alerting) + §4.8 (reliability/heartbeat), `docs/design/
+data-and-flow.md` §6 (core-flow pseudocode with the new delivery-gated sequencing),
+`docs/requirements.md` NFR2/FR15/FR34 + Decisions #31/#32, and `docs/review-log.md`'s DEEP-001/DEEP-002.
+Design is unambiguous and self-contained — no deviation to flag. Approach: (1) `notify.py` —
+`NtfyNotifier.push()` returns `True` only on a confirmed 2xx (`raise_for_status()` inside `try`), `False`
+on any exception/non-2xx (new `[notify] ERROR push failed for {ticker}: ...` line, replacing the old
+silent-print `[notify error]`); `DryRunNotifier.push()` returns `None` explicitly. (2) `state.py` —
+`write_call_log()` gains an optional client-supplied `id` param (a `str(uuid.uuid4())` generated before
+`push()`, per §4.6's ordering fix, so the same id feeds both the tap-through URL and the log row);
+`process_ticker`'s change branch computes `delivered = notifier.push(...)`, writes
+`alerted=(delivered is True)`, and only advances `verdict_state.current_verdict` when `delivered is not
+False` (True or None/dry-run) — a real failure returns `"push-failed"` and leaves the crossing pending
+for automatic retry next cycle; the pre-existing `parse_status in ("failed","api_error")` fail-safe guard
+at the top of `process_ticker` (state.py, load-bearing #8) is untouched — INC-8 changes only whether
+that outcome counts as degraded downstream, never the state-advance guard itself. `process_candidate`
+gets the identical treatment (`"candidate-push-failed"` outcome), which automatically fixes
+`recently_pushed_candidates()`'s dedup (Decision #32) since it already filters on `alerted=True` and
+nothing else needed to change there. `build_position` is untouched (INC-10's file, not this one). (3)
+`run_hourly.py`/`run_discovery.py` — one-line `degraded = ...` formula change each, adding
+`outcomes["no-read"]` (+ `outcomes["push-failed"]` / `outcomes["candidate-push-failed"]`), exactly the
+fix block components.md §4.8 specifies verbatim. (4) `pages/dashboard.html` — widened the verdict-pill
+special-case from `parse_status === "no_data"` to `["no_data","failed","api_error"].includes(...)`;
+`pages/detail.html` left untouched (it already special-cased `failed`/`api_error` — confirmed by reading
+it, matching the design's "no change needed there" note). No SQL changes, no new config tunable (none
+was needed or introduced). Contracts touched: `Notifier.push()`'s return type (documented above, both
+implementations); `state.write_call_log()` gains one optional kwarg (backward-compatible — every
+existing call site that doesn't pass `id` behaves identically, since Supabase's `gen_random_uuid()`
+default still fires). Verify: full pytest suite + targeted scratch scripts per AC (below) + a JS-logic
+extraction check for the dashboard pill, since no Python test can exercise `pages/*.html`.
+
+## Files touched
+
+- `scripts/notify.py` — `NtfyNotifier.push()` now returns `bool` (`raise_for_status()` inside `try`,
+  distinct `[notify] ERROR push failed for {ticker}: ...` log line on failure); `DryRunNotifier.push()`
+  now returns `None` explicitly (was implicit).
+- `scripts/state.py` — `write_call_log()` gained an optional `id` kwarg; `process_ticker`'s change
+  branch and `process_candidate`'s push branch both compute `delivered = notifier.push(...)` and gate
+  `alerted`/state-advance on it (`"push-failed"` / `"candidate-push-failed"` new outcome labels). The
+  `parse_status in ("failed","api_error")` fail-safe guard (state.py, the no-read branch near the top of
+  `process_ticker`) is byte-for-byte unchanged. `build_position` not touched (INC-10's).
+- `scripts/run_hourly.py` — `degraded` formula: `+ outcomes["no-read"] + outcomes["push-failed"]`.
+- `scripts/run_discovery.py` — `degraded` formula: `+ outcomes["no-read"] +
+  outcomes["candidate-push-failed"]`.
+- `pages/dashboard.html` — verdict-pill special-case widened to
+  `["no_data","failed","api_error"].includes(row.parse_status)`; confidence-pill guard left unchanged
+  per the design's explicit note (confidence is already null on every fail-safe row).
+- `pages/detail.html` — **zero changes** (confirmed via `git diff --stat`, empty output) — it already
+  special-cased `failed`/`api_error` before this increment.
+
+`git diff --name-only` against the pre-increment tree: exactly `pages/dashboard.html`,
+`scripts/notify.py`, `scripts/run_discovery.py`, `scripts/run_hourly.py`, `scripts/state.py` — the five
+files INC-8's design names, nothing else (AC8's diff-scope half).
+
+## How to run / reproduce the verification
+
+```
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short          # full existing suite
+```
+Ad hoc AC verification (I do not own `tests/` — see "Test-suite impact" below for why permanent tests
+weren't added here): three scratch scripts under this session's scratchpad directory (not part of the
+repo, not committed) reused `tests/test_state.py`'s `FakeSupabase`/`_wl_row`/`_data`/`_ai` builders
+directly against the real `state.py`/`notify.py`/`run_hourly.py`/`run_discovery.py` code:
+1. A `ControllableNotifier` double whose `push()` return value is scripted per call (`False`/`True`/
+   `None` in sequence) drove AC5 (fail-then-retry-succeeds), AC6 (dry-run advances state, no backlog
+   dump on the following quiet check), and AC7 (undelivered/dry-run candidates excluded from
+   `recently_pushed_candidates()`).
+2. `notify.requests.post` monkeypatched to a 500-then-200 sequence and to a raising callable drove AC4
+   (`NtfyNotifier.push()` returns `False`/`True` correctly, never raises, logs the new distinct line;
+   `DryRunNotifier.push()` returns `None`).
+3. `run_hourly.main()` / `run_discovery.main()` driven end-to-end (same wiring pattern as
+   `tests/test_run_orchestration.py`'s `wire_main`/`wire_discovery` fixtures) with every ticker/candidate
+   forced to `parse_status="failed"`/`"api_error"` drove AC1 (heartbeat `"partial"`, all-failed and
+   mixed no-read+quiet batches, both entry points) — reproducing DEEP-001's exact scenario and
+   confirming it would have read `"ok"` against the pre-fix formula (`git show HEAD:scripts/run_hourly.py
+   | grep 'degraded ='` on the pre-fix commit shows `outcomes["skip"] + outcomes["error"]` only).
+4. A standalone Node script extracted the exact widened conditional from the edited
+   `pages/dashboard.html` and rendered it against `parse_status` in `{"failed","api_error","no_data",
+   "ok"}`, confirming the first three render the "no data" pill and a genuine `"ok"` Hold still renders
+   the real Hold pill (AC3).
+
+## Acceptance criteria — self-verification
+
+1. **PASS (self-verified via scratch script #3 above).** All-`no-read` batch on both `run_hourly.main()`
+   and `run_discovery.main()` writes `run_heartbeat.status == "partial"`; a mixed no-read+quiet batch on
+   `run_hourly` does too. **qa must add the permanent regression test** (`tests/test_run_orchestration.py`
+   pattern) — this is explicitly named in the increment as a qa test, not a dev one.
+2. **PASS — dev-self-verifiable by grep, done directly:**
+   `grep -n 'outcomes\["no-read"\]' scripts/run_hourly.py scripts/run_discovery.py` and
+   `grep -n 'outcomes\["push-failed"\]\|outcomes\["candidate-push-failed"\]' scripts/run_hourly.py
+   scripts/run_discovery.py` both return a match in each file's `degraded = ...` line.
+3. **PASS — dev-self-verifiable by grep + scratch script #4.** `pages/dashboard.html`'s verdict-pill
+   condition is `["no_data","failed","api_error"].includes(row.parse_status)`; `pages/detail.html` has
+   zero diff. The qa "manual/browser check" half of this AC (a real synthetic `call_log` row rendered in
+   an actual browser) is qa's to run — I verified the exact logic in isolation (Node), not a rendered
+   DOM/browser session.
+4. **PASS (self-verified via scratch script #2).** `NtfyNotifier.push()` returns `True` only on a
+   response where `raise_for_status()` doesn't raise; returns `False` (never raises) on any `requests`
+   exception or non-2xx, logging `[notify] ERROR push failed for {ticker}: ...`.
+   `DryRunNotifier.push()` returns `None` unconditionally. **qa must add the permanent test** (mock
+   `requests.post` to return a 500, assert `push()` returns `False` without raising) — named explicitly
+   as a qa test in the AC.
+5. **PASS (self-verified via scratch script #1).** Simulated push failure: `call_log.alerted == False`,
+   `verdict_state.current_verdict` unchanged (still the OLD verdict), and a second `process_ticker` call
+   with the same new AI verdict fires `notifier.push` again for the same crossing, then succeeds and
+   advances state. All three asserted in one flow, matching the AC's own framing.
+6. **PASS (self-verified via scratch script #1).** Simulated dry run (`delivered=None`):
+   `call_log.alerted == False` but `verdict_state.current_verdict` DOES advance; confirmed no backlog
+   dump — the immediately-following same-verdict check comes back `"quiet"`, not a second alert.
+7. **PASS (self-verified via scratch script #1).** Discovery candidate pushed via dry run
+   (`delivered=None`) or a failed real push (`delivered=False`) both write `alerted=False`, and
+   `state.recently_pushed_candidates()` excludes the ticker in both cases (already-correct filter,
+   `alerted=True`, now fed the right value).
+8. **PARTIAL — see "Test-suite impact" below.** `git diff` confirms the diff is scoped to exactly the
+   five named files (verified above). The "full existing test suite passes" half is **not clean**: 8 of
+   207 previously-passing tests now fail. This is not a regression from an unrelated bug — every one of
+   the 8 failures is a direct, mechanical consequence of the FR34/DEEP-002 contract change these same
+   tests encode the *old* (buggy) behavior of. Full accounting below.
+
+## Test-suite impact (read before treating this as a clean handoff)
+
+**Full suite: `199 passed, 8 failed`** (was `207 passed, 0 failed` immediately before this increment's
+edits — I ran the baseline first and confirmed it). All 8 failures are in files I do not own
+(`tests/test_notify.py`, `tests/test_state.py` — `CLAUDE.md`'s dev row: "never touches: requirements,
+design, tests") and all 8 fail for the same reason: they assert the pre-FR34 contract this increment is
+built to fix.
+
+- **`tests/test_notify.py::test_ntfy_notifier_swallows_network_errors_without_crashing`** — asserts the
+  old log-line substring `"[notify error]"`. AC4 explicitly requires the new, distinct
+  `[notify] ERROR push failed for {ticker}: ...` line; the old and new strings cannot both be true. One
+  line to fix (update the asserted substring).
+- **`tests/test_state.py::test_any_verdict_change_fires_immediate_alert`** (6 parametrized cases) and
+  **`test_discovery_buy_pushes`** — both use `FakeNotifier.push()`, which has no `return` statement
+  (implicitly returns `None`). Under the *old* contract `push()`'s return value was never read, so this
+  didn't matter; under the *new* contract (this increment), `None` means "dry run — deliberately not
+  attempted" (§4.6), so `alerted` is correctly written `False` and these tests' `assert ... is True`
+  fails. This is not a bug in my implementation — it is DEEP-002's own finding, almost verbatim: these
+  specific assertions are what "`call_log.alerted = true` means we intended to push, not delivered"
+  looked like as a green test. The fix is one line in the shared fixture (`FakeNotifier.push` should
+  `return True` to represent a successful real send, the semantic these tests actually intend to
+  exercise), not a design or behavior question.
+
+**Why I did not fix these myself:** `CLAUDE.md`'s agent table is explicit that `tests/` is qa's owned
+artifact and dev never touches it; editing `tests/test_state.py`/`tests/test_notify.py` here would be
+scope creep into another agent's file, independent of how small the fix is. I flagged this rather than
+silently declaring AC8 fully PASS, per dev rule #3 ("if the design is wrong or ambiguous, stop and flag
+it — never silently deviate") — AC8's "full existing test suite passes" and the ownership boundary are
+in tension whenever an increment changes a contract old tests encode, and I'm surfacing that tension
+explicitly rather than picking a side unilaterally.
+
+**Recommended qa fix (not applied — for qa's next pass, not a design decision needed from tech-lead):**
+add a `returns` parameter to `FakeNotifier.__init__` (default `True`, matching "an ordinary successful
+push" as the common case these pre-existing tests intend), and update the one `[notify error]` ->
+`[notify] ERROR push failed for` substring in `test_notify.py`. Both are mechanical, no design judgment
+required — the semantics of what each test is *supposed* to exercise are unchanged by this increment,
+only the contract used to express "the push succeeded" changed shape.
+
+**TypeScript suite:** unaffected — zero `admin-portal/` files touched by this increment (63 baseline
+stands; not re-run since nothing in scope could affect it).
+
+## Known limitations
+
+- The 8 test failures above are a known, accounted-for consequence of this increment's own scope, not a
+  hidden regression — see "Test-suite impact." qa's phase (b) pass for INC-8 needs to both (a) apply the
+  mechanical fixture fix above so the pre-existing suite reflects the new contract, and (b) write the
+  new permanent tests the increment's ACs name explicitly (AC1's all-no-read/mixed heartbeat test, AC4's
+  mocked-500 `push()` test, AC5/AC6/AC7's delivery/dry-run/retry flows) — my scratch scripts (not
+  committed, session-scratchpad only) demonstrate exactly what each of those should assert.
+- `pages/dashboard.html`'s AC3 manual/browser check (a real synthetic `call_log` row rendered and
+  visually confirmed) was not run in an actual browser this session — verified the exact JS conditional
+  in isolation instead (Node). qa should do the browser pass named in the AC.
+- No config-schema change, no new tunable, no SQL change — matches the design's explicit "no config
+  schema change" / "no SQL changes" statements; nothing to flag there.
