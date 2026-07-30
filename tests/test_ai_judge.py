@@ -340,12 +340,104 @@ def test_parse_batch_duplicate_ticker_in_requested_batch_drops_legitimate_second
     out = ai_judge._parse_batch(raw, ["AAPL", "ABC.TO", "ABC.TO"], "test-model")
 
     assert out["AAPL"]["parse_status"] == "ok"
-    # BUG-006: this currently fails -- the surviving out["ABC.TO"] entry is a
-    # fail-safe Hold (the second occurrence's legitimate bare-'ABC' match was
-    # rejected as "ambiguous" purely because the ticker was requested twice),
-    # clobbering the first occurrence's own correctly-resolved entry.
+    # BUG-006 fix-cycle-2 (RESOLVED 2026-07-30): normalized_counts is now built
+    # over DISTINCT requested tickers, so this same-ticker duplicate no longer
+    # inflates its own count and the second occurrence's legitimate bare-'ABC'
+    # match is accepted rather than wrongly rejected as "ambiguous".
     assert out["ABC.TO"]["parse_status"] == "ok", (
         "BUG-006: duplicate-ticker-in-batch causes the guard to reject a "
         "legitimate normalized match as 'ambiguous' (Counter counts the "
         "same requested ticker's own duplicate, not a distinct colliding "
         "ticker) -- see docs/test-report.md open bugs")
+
+
+# --- BUG-006 fix-cycle-2 re-test: counting fix + overwrite guard --------------
+
+def test_parse_batch_duplicate_alongside_genuine_collision_still_fails_safe(capsys):
+    """Regression guard for the highest-stakes assertion in the fix-cycle-2
+    re-test: the BUG-006 counting fix (dedup by DISTINCT requested ticker
+    before building normalized_counts) must not accidentally swallow a
+    genuine cross-ticker collision when a duplicate request is ALSO present
+    in the same batch. Batch: ABC.TO requested twice (duplicate) plus ABC.NS
+    once (a genuinely distinct, real ticker colliding on the same normalized
+    base 'ABC' -- BUG-005's own scenario). distinct_requested = {ABC.TO,
+    ABC.NS}, so normalized_counts['ABC'] == 2 for a REAL reason (two distinct
+    tickers), not an artifact of the duplicate. The second ABC.TO occurrence's
+    bare-'ABC' candidate must still fail safe as ambiguous -- if dedup had
+    over-corrected (e.g. deduping across distinct tickers, or by normalized
+    form instead of exact string), this would wrongly resolve 'ok' and
+    reopen BUG-005's fabrication path."""
+    raw = json.dumps([
+        {"verdict": "Buy", "confidence": "high", "rationale": "first-ABC.TO-unlabeled"},
+        {"ticker": "ABC", "verdict": "Sell", "confidence": "low", "rationale": "second-ABC.TO-bare-ambiguous"},
+        {"ticker": "ABC.NS", "verdict": "Hold", "confidence": "medium", "rationale": "abcns-direct"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.TO", "ABC.NS"], "test-model")
+
+    # First ABC.TO occurrence resolves legitimately (no-label fallback, never
+    # depends on normalization/ambiguity).
+    # Second ABC.TO occurrence's bare-'ABC' candidate is genuinely ambiguous
+    # against the real ABC.NS collision and must fail safe -- but the
+    # overwrite guard means the surviving out["ABC.TO"] is still the FIRST
+    # occurrence's good result, not clobbered by the second's fail-safe.
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    assert out["ABC.TO"]["rationale"] == "first-ABC.TO-unlabeled"
+    assert out["ABC.NS"]["parse_status"] == "ok"
+    assert out["ABC.NS"]["rationale"] == "abcns-direct"
+    log = capsys.readouterr().out
+    assert "duplicate requested ticker 'ABC.TO' (index 1): keeping the earlier resolved verdict" in log
+
+
+def test_parse_batch_overwrite_guard_reachable_independent_of_counting_fix(capsys):
+    """Confirms dev's reachability claim rather than accepting it on word: the
+    overwrite guard (a later fail-safe never clobbers an already-resolved
+    'ok' for the same ticker key) fires via a mechanism OTHER than the
+    counting bug the same fix cycle just closed -- a genuine cross-ticker
+    ambiguity (see test above) is sufficient to make the second occurrence
+    of a duplicate request fail safe even with correct counting, so the
+    guard is not dead code."""
+    raw = json.dumps([
+        {"verdict": "Buy", "confidence": "high", "rationale": "first-ABC.TO-unlabeled"},
+        {"ticker": "ABC", "verdict": "Sell", "confidence": "low", "rationale": "second-ABC.TO-bare-ambiguous"},
+        {"ticker": "ABC.NS", "verdict": "Hold", "confidence": "medium", "rationale": "abcns-direct"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.TO", "ABC.NS"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    # If the guard were dead code (unreachable given the counting fix), the
+    # second occurrence's fail-safe would have overwritten the first, and
+    # this would be "failed" instead.
+    assert out["ABC.TO"]["rationale"] != "second-ABC.TO-bare-ambiguous"
+    assert "keeping the earlier resolved verdict, discarding a later fail-safe" in capsys.readouterr().out
+
+
+def test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere(capsys):
+    """Documents (does not endorse) the scoping decision dev made and qa
+    reviewed in the BUG-006 fix-cycle-2 handoff: when a duplicate ticker
+    request's two occurrences BOTH resolve legitimately ('ok') but to
+    DIFFERENT verdicts, the overwrite guard does not apply (it only protects
+    ok-over-ok is unguarded, deliberately left out of scope this increment
+    per qa's own bug report and the ripple cost of changing `_parse_batch`'s
+    ticker-keyed return contract). The later occurrence silently wins with
+    NO log line distinguishing this from an ordinary single-resolution --
+    this test locks in that current behavior as a known, tracked gap (not a
+    fix-cycle-2 regression) so a future change is deliberate, not accidental."""
+    raw = json.dumps([
+        {"verdict": "Buy", "confidence": "high", "rationale": "first-occ-buy"},
+        {"verdict": "Sell", "confidence": "low", "rationale": "second-occ-sell"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.TO"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    # Last-write-wins: the SECOND occurrence's legitimate verdict silently
+    # overwrites the FIRST's, discarding a divergent, equally-legitimate
+    # verdict with no trace in the log beyond the two ordinary
+    # "positional fallback used" lines (no divergence-specific warning).
+    assert out["ABC.TO"]["verdict"] == "Sell"
+    assert out["ABC.TO"]["rationale"] == "second-occ-sell"
+    log = capsys.readouterr().out
+    assert log.count("positional fallback used for ABC.TO") == 2
+    assert "discarding" not in log  # only the failed-over-ok guard logs a discard

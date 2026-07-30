@@ -1,135 +1,155 @@
 # Test Report — Latest Run
 
 **Owner:** qa. Older run entries moved to `docs/archive/test-report-archive.md` per doc-hygiene rule — this
-file holds only the latest run and open bugs. INC-9's original run (initial ACs 1-6 + BUG-005 filing) is
-archived there; this entry covers BUG-005's fix-cycle-1 re-test only.
+file holds only the latest run and open bugs. INC-9's BUG-005 fix-cycle-1 re-test is archived there; this
+entry covers BUG-006's fix-cycle-2 re-test (final cycle used before escalation would apply).
 
 ---
 
-## INC-9 — BUG-005 fix-cycle-1 re-test (`_parse_batch`'s unambiguity guard) — 2026-07-30
+## INC-9 — BUG-006 fix-cycle-2 re-test (`_parse_batch`'s counting fix + overwrite guard) — 2026-07-30
 
-**Scope.** `scripts/ai_judge.py` (`_parse_batch` only — `git diff --stat 14faba9..HEAD -- scripts/ tests/`
-confirms zero diff; working tree matches the fix commit exactly). Read against dev's fix-cycle-1 handoff
-entry (`docs/handoff.md`, "BUG-005 fix (fix cycle 1 of 3)"), the current `_parse_batch` code, this file's
-own prior BUG-005 entry (now archived), and `docs/design/components.md` §4.4a — noting §4.4a's pseudocode
-still shows the unconditional (pre-guard) normalized match and has not yet been updated by tech-lead to
-reflect dev's unambiguity-guard departure; not treated as authoritative where it conflicts with the fix,
-not edited here.
+**Scope.** `scripts/ai_judge.py` (`_parse_batch` only). `git diff --stat 3693948..HEAD -- scripts/ tests/`
+confirmed empty before this run — working tree matched dev's fix-cycle-2 handoff commit (`11f2b96` code,
+`3693948` handoff) exactly, zero drift. Read against dev's fix-cycle-2 handoff entry (`docs/handoff.md`,
+"BUG-006 fix (fix cycle 2 of 3)"), the current `_parse_batch` code and docstring, `docs/test-report.md`'s
+own prior BUG-006 entry (now archived), and `docs/design/components.md` §4.4a.
 
-### 1. Dev's rejection of qa's suggested alternative — evaluated on the merits, dev is correct
+### 1. §4.4a no-change claim — agree with dev, but flag a doc-drift item
 
-Dev rejected qa's originally-suggested fix ("require an exact match whenever the candidate carries an
-explicit `ticker` field, reserving normalization for the no-field case only") on the grounds that it would
-reject the legitimate bare-`"ABC"`-answers-`"ABC.TO"` case §4.4a exists to serve, not just the collision.
-Verified independently with a concrete case: single-ticker batch requesting `["ABC.TO"]`, model replies
-`[{"ticker": "ABC", ...}]` — the candidate DOES carry an explicit `ticker` field (`"ABC"`, just without the
-suffix), so qa's alternative's "require exact match whenever a `ticker` field is present" test would compare
-`"ABC" != "ABC.TO"` and reject it, sending a legitimate, unambiguous answer to fail-safe. Confirmed by
-running `_parse_batch` directly (see `test_parse_batch_single_ticker_batch_bare_normalized_match_still_resolves`)
-that the shipped fix correctly resolves this case, which qa's alternative would have broken. **Dev's
-reasoning holds; the rejection was correct, not a rationalization.**
+Dev's fix has two parts: (a) `normalized_counts` now built from `{x.upper() for x in tickers}` (dedup)
+instead of raw `tickers` occurrences, and (b) a new guard skipping a fail-safe write into `out` when an
+`"ok"` entry for that ticker key already exists. Dev asserts neither changes §4.4a's contract.
 
-### 2. BUG-005's own test — verified by behaviour, not just green
+**Agree, on the merits.** §4.4a's own prose (`docs/design/components.md` lines 266–330) — the "why this is
+non-obvious" section, the worked examples, the "second-order judgment" discussion of FR20/cross-market
+watchlists — is consistently and exclusively about *distinct, real* tickers colliding on a shared
+normalized base (`ABC.TO`/`ABC.NS`, two different companies). It never once contemplates the same ticker
+string appearing twice in one `tickers` request list; that is a different failure mode (a duplicate
+request, not a second thing to disambiguate) that the contract's prose simply didn't anticipate. Correcting
+the count to operate over distinct requested tickers doesn't loosen what counts as ambiguous between two
+different real tickers — confirmed independently in §2 below, not taken on dev's word. Part (b), the
+overwrite guard, operates one layer below §4.4a entirely: §4.4a governs when a normalized match is
+*accepted*; the guard governs what happens to `out`'s dict-keyed storage after acceptance, a `_parse_batch`
+implementation detail outside what §4.4a specifies either way.
 
-`tests/test_ai_judge.py::test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_market`
-passes on the current code. Independently confirmed this is a genuine fix, not the test being made to pass:
-swapped `scripts/ai_judge.py` for the pre-fix `d006eb2` content (`git show d006eb2:scripts/ai_judge.py`),
-reran the same test — **fails** with the exact BUG-005 symptom (`ABC.NS` resolves `parse_status="ok"` by
-borrowing `ABC.TO`'s rationale, `AssertionError: ... assert 'ok' == 'failed'`), then restored the working
-tree (confirmed clean via `git diff --stat`). The fix discriminates old-vs-new behavior correctly.
+**Doc-drift flag (not a blocker, not routed to tech-lead as a contract dispute):** §4.4a's own pseudocode
+block (`docs/design/components.md` line 289, `Counter(_normalize_ticker(x) for x in tickers)`) still shows
+the pre-BUG-006 raw-occurrence count, not dev's dedup fix. This is the second fix cycle running ahead of
+the pseudocode (the fix-cycle-1 entry noted the same staleness for the guard itself, since resolved). Since
+§4.4a's *prose* already supports dev's reading and no behavioral dispute exists, this is ordinary doc
+hygiene (tech-lead's `components.md` line 134/889-ref action item, already on record in the handoff) rather
+than a finding requiring escalation.
 
-### 3. Legitimate paths independently confirmed
+### 2. Counting fix — genuine cross-market collision still fails safe (highest-stakes assertion)
 
-- No-label positional fallback (dev's claim, INC-9's own original scenario) —
-  `test_parse_batch_legitimate_fallback_missing_ticker_label_still_resolves` (pre-existing) still passes;
-  independently re-verified via direct `_parse_batch` call, unaffected by the new guard.
-- Unambiguous bare-ticker normalized match, single-ticker batch (dev's claim) — new
-  `test_parse_batch_single_ticker_batch_bare_normalized_match_still_resolves`: `["ABC.TO"]` answered with
-  bare `"ABC"` resolves `parse_status="ok"`, fallback log line fires. **Confirmed independently, not taken
-  on dev's word.**
+Verified independently, not accepted on dev's smoke-test word. New
+`test_parse_batch_duplicate_alongside_genuine_collision_still_fails_safe` (`tests/test_ai_judge.py`):
+batch requests `ABC.TO` twice (duplicate) **plus** `ABC.NS` once (a genuinely distinct ticker colliding on
+the same normalized base — BUG-005's own scenario), all in the same call. `distinct_requested = {ABC.TO,
+ABC.NS}` so `normalized_counts["ABC"] == 2` for a real reason (two distinct tickers), not an artifact of
+the duplicate. Confirmed the second `ABC.TO` occurrence's bare-`"ABC"` candidate still correctly fails safe
+as ambiguous — dedup did not over-correct into merging a genuine collision away. Also re-ran the
+pre-existing `test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_market` and
+`test_parse_batch_three_way_base_symbol_collision_normalized_candidate_fails_safe` (both BUG-005-era,
+unmodified) against the current code — both still pass. **BUG-005's fabrication path remains closed.**
 
-### 4. Edge probes on the guard's own new behavior
+### 3. Overwrite guard — reachability independently confirmed, not dead code
 
-Four scenarios probed per the brief, each written as a permanent test in `tests/test_ai_judge.py`:
+Dev's claim: the guard is independently reachable even with correct counting, when a duplicate ticker's two
+occurrences land on different outcomes (one resolves, the other legitimately fails safe). Confirmed via new
+`test_parse_batch_overwrite_guard_reachable_independent_of_counting_fix`, using the same batch as §2 above
+(a genuine collision, not the fixed counting-bug mechanism, is what makes the second occurrence fail safe)
+— `out["ABC.TO"]` correctly retains the first occurrence's `"ok"` result, the log line
+(`"keeping the earlier resolved verdict, discarding a later fail-safe"`) fires, and manual `_parse_batch`
+probing outside pytest reproduced the identical result. The guard is reachable through a mechanism entirely
+separate from the bug it was added to guard alongside — **not dead code.**
 
-| Probe | Result | Verdict |
-|---|---|---|
-| Well-formed response, ambiguous pair (`ABC.TO`/`ABC.NS`) present but both objects fully labeled — fallback never needed | Both resolve via direct label, zero fallback log lines fire | **Correct** — guard does not misfire on a case that never needed rescuing (`test_parse_batch_wellformed_response_with_ambiguous_pair_present_is_unaffected`) |
-| Single-ticker batch, unambiguous bare match | Resolves correctly (§3 above) | **Correct** |
-| 3+ symbols sharing a base (`ABC.TO`/`ABC.NS`/`ABC`), genuine collision — one candidate carries an explicit normalizing-not-exact `ticker` field | The two direct-labeled tickers (`ABC.TO`, `ABC`) resolve correctly; `ABC.NS` (no object of its own, ambiguous normalized candidate, `normalized_counts["ABC"]==3`) correctly fails safe | **Correct** (`test_parse_batch_three_way_base_symbol_collision_normalized_candidate_fails_safe`) |
-| **Same ticker requested twice in one batch** (`["AAPL","ABC.TO","ABC.TO"]`) | The second occurrence's legitimate bare-`"ABC"` normalized match is wrongly rejected as "ambiguous" (`normalized_counts["ABC"]==2`, counting the SAME requested ticker's own duplicate, not a distinct colliding ticker) — and because `out` is keyed by ticker string, this rejection **overwrites** the first occurrence's already-correctly-resolved entry, so the final `out["ABC.TO"]` is a fail-safe Hold despite two independently legitimate answers being available | **Misbehaves — filed as BUG-006, new, not a variation of BUG-005** (`test_parse_batch_duplicate_ticker_in_requested_batch_drops_legitimate_second_match`, currently failing, documenting the defect) |
+### 4. `ok`-over-`ok` scoping decision — agree it's out of this cycle's scope, disagree it should stay unwritten
+
+Dev deliberately left the broader "duplicate ticker resolves to two different legitimate verdicts, later
+silently wins" behavior unfixed, citing (a) qa's own BUG-006 report scoped it out as pre-existing, and (b) a
+real fix means changing `_parse_batch`'s ticker-keyed return contract, rippling to every caller.
+
+**Agree with the scoping call for this fix cycle** — both reasons hold: the original bug report is explicit
+("not itself being re-litigated here"), and a contract change of that shape is a design-level decision, not
+a bug-cycle patch. **Disagree that it should stay undocumented.** Reproduced directly: a batch requesting
+`ABC.TO` twice, both occurrences resolving `"ok"` via the no-ticker-field fallback with divergent verdicts
+(`Buy` then `Sell`) — the second silently wins, with **no log line distinguishing this from an ordinary
+single resolution** (only the two routine "positional fallback used" lines; the overwrite guard's log only
+fires on the failed-over-ok path, not this one). Locked in as a permanent regression-lock test,
+`test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere`. Filing as
+**BUG-007** below — deferred, not a required fix, but per the task brief's instruction, silent
+last-write-wins on divergent verdicts should exist in writing rather than only in code behavior nobody
+flagged.
 
 ### 5. Regression suite
 
-- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **240 passed, 1 failed** (237 baseline + 4
-  new tests: 3 pass [well-formed-unaffected, single-ticker-bare-match, three-way-collision], 1 fails
-  documenting BUG-006). Zero regressions — the 237 baseline tests all still pass unchanged.
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **244 passed, 0 failed** (241 baseline + 3
+  new tests: cross-market-collision-alongside-duplicate, overwrite-guard-reachability,
+  ok-over-ok-lock-in). Zero regressions.
 - `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **63 passed, 0 failed**, matching
-  the recorded baseline exactly (zero `admin-portal/` files touched by this fix cycle).
-- `git diff --stat 14faba9..HEAD -- scripts/` → empty (dev's fix commit is the exact current state, no
-  further code drift since qa's baseline).
+  baseline exactly (zero `admin-portal/` files touched by this fix cycle).
+- DEEP-004 stale-bar tests (`ingest.py`'s `get_market_data`/`_session_state` work, earlier in INC-9) spot-run
+  in isolation (`-k "stale_bar or DEEP004 or deep_004 or session_state"`) → 8 passed, confirming untouched;
+  `git show --stat 11f2b96` confirms the fix commit touched only `scripts/ai_judge.py`.
+- Shippability: entry-point-adjacent tests (`-k "run_hourly or entry_point or e2e"`) → 6 passed. A full live
+  `run_hourly.main()` run is not repeated at this fix-cycle scope (already covered at INC-9's original ACs
+  and the DEEP-003 shippability check, archived); full end-to-end re-confirmation is due at closure per the
+  pipeline, not per fix cycle.
 
-### Verdict — INC-9 BUG-005 fix-cycle-1 re-test
+### Verdict — INC-9 BUG-006 fix-cycle-2 re-test
 
-**Bugs filed: BUG-006 (new). BUG-005 is CLOSED.**
+**PASS. BUG-006 is CLOSED. New finding filed for the record: BUG-007 (deferred, not a blocker).**
 
-- **BUG-005 — RESOLVED 2026-07-30.** The `_normalize_ticker` cross-market collision is genuinely fixed:
-  the repro test passes on current code and is independently confirmed to fail on pre-fix code (§2); the
-  fix's unambiguity guard does not regress either legitimate path dev claimed (§3, independently verified);
-  dev's rejection of qa's suggested alternative fix is correct on the merits (§1).
-- **BUG-006 filed (new, minor-to-moderate — miss-direction, not fabrication-direction)** — see "Open bugs"
-  below.
-- Python suite: 240 passed / 1 failed (BUG-006's own documenting test; zero regressions against the 237
-  baseline). TypeScript suite: 63 passed / 0 failed, unaffected.
-- Fix-cycle count: **1 of 3 used** for BUG-005 (now closed, so no further cycles needed on it). BUG-006 is
-  a fresh bug, its own fix-cycle count starts at 0.
+- **BUG-006 — RESOLVED 2026-07-30.** Both fix parts verified independently: the counting fix correctly
+  narrows to distinct requested tickers without weakening BUG-005's cross-market guard (§2), and the
+  overwrite guard is confirmed reachable through a mechanism independent of the counting fix, not dead
+  code (§3). Dev's §4.4a no-change claim holds on the merits (§1); a minor pseudocode-staleness item is
+  flagged for tech-lead's ordinary doc hygiene, not a contract dispute.
+- **BUG-007 filed (new, minor, deferred by design this increment)** — see "Open bugs" below.
+- Python suite: 244 passed / 0 failed. TypeScript suite: 63 passed / 0 failed. Zero regressions; DEEP-004
+  untouched.
+- Fix-cycle count: BUG-006 closed at 2 of 3 cycles used (1 clean re-test cycle, no third cycle needed).
+
+**INC-9 is now clean — no open bugs blocking it. Ready for reviewer.**
 
 ---
 
 ## Open bugs
 
-**BUG-006 — `_parse_batch`'s BUG-005 unambiguity guard conflates a duplicated ticker *request* with a
-genuine cross-ticker collision, dropping a legitimate second-occurrence match — minor/moderate — INC-9,
-BUG-005 fix-cycle-1 residual, found via edge-probe, not a variation of BUG-005 itself.**
+**BUG-007 — `_parse_batch`'s duplicate-requested-ticker resolution is silently last-write-wins when both
+occurrences resolve legitimately (`ok`) to DIFFERENT verdicts — minor, deferred by design — INC-9, BUG-006
+fix-cycle-2 residual, filed for the record per explicit instruction, not currently blocking.**
 
-**Where:** `scripts/ai_judge.py`, `_parse_batch`'s `normalized_counts = Counter(_normalize_ticker(x) for x
-in tickers)` (the guard added in BUG-005's fix) plus the pre-existing `out[t] = ...` dict-keyed-by-ticker
-assignment.
+**Where:** `scripts/ai_judge.py`, `_parse_batch`'s `out[t] = result` (final write), specifically the
+overwrite guard added in BUG-006's fix only protects the `failed`-over-`ok` direction
+(`if result["parse_status"] == "failed" and out.get(t, {}).get("parse_status") == "ok": continue`) — the
+`ok`-over-`ok` direction is unguarded and was pre-existing before BUG-005/006 both.
 
-**Repro (`tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_in_requested_batch_drops_legitimate_second_match`):**
-request `["AAPL", "ABC.TO", "ABC.TO"]` (the SAME ticker requested twice — not two different tickers sharing
-a base); model response: `AAPL` directly labeled, index 1 unlabeled (`{"verdict":"Sell", "rationale":
-"first-ABC.TO-unlabeled", ...}`), index 2 labeled `{"ticker":"ABC", "rationale":
-"second-ABC.TO-bare-answer", ...}`. `AAPL` resolves normally. The first `ABC.TO` occurrence (index 1)
-legitimately resolves via the no-ticker-field fallback (`parse_status="ok"`, `rationale="first-ABC.TO-unlabeled"`).
-The second `ABC.TO` occurrence (index 2) tries the fallback too: its candidate carries an explicit
-`ticker="ABC"` field that normalizes to `"ABC"`, matching what's being resolved — but `normalized_counts["ABC"]`
-is `2`, purely because `"ABC.TO"` appears twice in the *requested* `tickers` list (not because two distinct
-tickers collide), so the guard's `== 1` unambiguity test fails and this candidate is rejected as
-"ambiguous." Because `out` is a plain dict keyed by ticker string, the second occurrence's fail-safe result
-**overwrites** the first occurrence's already-correct entry.
+**Repro (`tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere`):**
+request `["ABC.TO", "ABC.TO"]`; model response has two unlabeled objects (no `ticker` field on either, so
+neither depends on the ambiguity guard at all) with divergent verdicts — index 0 `Buy`, index 1 `Sell`.
+Both occurrences legitimately resolve via the no-ticker-field positional fallback (`parse_status="ok"`
+each). The second occurrence's write silently overwrites the first's in `out["ABC.TO"]` — final result is
+`Sell`, discarding the `Buy` resolution with no trace beyond the two routine "positional fallback used"
+log lines (no divergence-specific warning, unlike the guarded failed-over-ok path which does log).
 
-**Expected:** a ticker requested twice in the same batch is not a cross-ticker collision — the guard's
-ambiguity concept should only apply across *distinct* normalized forms, not an artifact of the same ticker
-appearing more than once in the request list. At minimum, neither occurrence should regress relative to
-what a single request for that ticker would have resolved to.
+**Expected:** not prescribed here (a real fix changes `_parse_batch`'s ticker-keyed return contract, a
+design-level decision per dev's own scoping note) — flagging only that this silent behavior exists and
+should be visible in writing, per the task brief's explicit instruction.
 
-**Actual:** the final `out["ABC.TO"]` is a fail-safe Hold (`parse_status="failed"`), discarding a
-legitimately resolvable answer that was available at index 1.
+**Actual:** later-occurrence-wins with zero indication in logs or return value that a divergent, equally
+legitimate verdict was discarded.
 
-**Severity/direction note:** this is a MISS, not a fabrication — no wrong verdict is attributed, the ticker
-just fails safe to Hold when a real answer existed. Lower severity than BUG-005 (which was a fabrication
-risk), filed as minor/moderate rather than major. Production reachability is narrow but not provably zero:
-`scripts/sql/schema.sql`'s `watchlist.ticker` is a `text primary key` (duplicate watchlist entries are
-DB-impossible), but `_parse_batch`'s `tickers` argument is whatever `judge_batch` is called with, and
-discovery-candidate batches (`prefilter.py`'s screener results) are not proven duplicate-free by any
-constraint checked this session — flagging as a real, if narrow, edge case worth closing rather than a
-theoretical one.
+**Severity/direction note:** both verdicts are legitimately resolved (not a fabrication or a fail-safe
+miss) — this is a determinism/observability gap, not a correctness violation of the "never fabricate, only
+miss" invariant. Lower severity than BUG-006. Reachability is the same narrow-but-not-provably-zero
+condition BUG-006 already established (discovery-candidate batches not proven duplicate-free;
+`watchlist.ticker` itself is DB-deduplicated).
 
-**Not in scope for this bug:** the underlying "duplicate ticker in a batch overwrites in `out`" dict-keying
-behavior predates BUG-005's guard and is not itself being re-litigated here — only the guard's
-new interaction with it (turning a previously-any-answer-survives overwrite into a fail-safe-survives
-overwrite) is what's newly reported.
+**Not in scope for a fix this increment** — qa agrees with dev's scoping call to defer (BUG-006's own bug
+report explicitly scoped this direction out; a proper fix ripples to every `_parse_batch`/`judge_batch`
+caller). Filed so the deferral is on record, not silent.
 
-**Owner:** dev (with tech-lead recording any resulting `components.md` §4.4a wording update alongside the
-BUG-005 guard note it's already carrying).
+**Owner:** tech-lead (design-level call on whether/how to change `_parse_batch`'s ticker-keyed return
+contract, if ever addressed) — not a dev-fix-cycle bug.

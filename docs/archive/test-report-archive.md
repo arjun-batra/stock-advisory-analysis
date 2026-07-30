@@ -2237,3 +2237,26 @@ foreign label to compare against in the first place).
 
 **Owner:** dev (with tech-lead recording the corroboration-check decision in `components.md` §4.4a, same
 pattern as the original DEEP-003 fix).
+
+---
+
+## INC-9 — BUG-005 fix-cycle-1 re-test (`_parse_batch`'s unambiguity guard) — 2026-07-30
+
+**Scope.** `scripts/ai_judge.py` (`_parse_batch` only — `git diff --stat 14faba9..HEAD -- scripts/ tests/`
+confirms zero diff; working tree matches the fix commit exactly). Read against dev's fix-cycle-1 handoff
+entry (`docs/handoff.md`, "BUG-005 fix (fix cycle 1 of 3)"), the current `_parse_batch` code, this file's
+own prior BUG-005 entry (archived above), and `docs/design/components.md` §4.4a — noting §4.4a's pseudocode
+still shows the unconditional (pre-guard) normalized match and had not yet been updated by tech-lead to
+reflect dev's unambiguity-guard departure; not treated as authoritative where it conflicts with the fix.
+
+**Verdict.** BUG-005 CLOSED (dev's rejection of qa's suggested alternative fix verified correct on the
+merits; the repro test independently confirmed to fail on pre-fix code and pass on current code; both
+legitimate paths dev claimed — no-label positional fallback, single-ticker bare-normalized match —
+independently re-verified). BUG-006 filed (new, minor/moderate — miss-direction not fabrication-direction):
+`_parse_batch`'s BUG-005 unambiguity guard conflates a duplicated ticker *request* with a genuine
+cross-ticker collision, dropping a legitimate second-occurrence match via `out`'s ticker-keyed
+last-write-wins. Full detail moved forward into the BUG-006 entries below rather than restated here.
+
+Python suite: 240 passed / 1 failed (BUG-006's own documenting test; zero regressions against the 237
+baseline). TypeScript suite: 63 passed / 0 failed, unaffected. Fix-cycle count: 1 of 3 used for BUG-005 (now
+closed). BUG-006 fresh, its own fix-cycle count started at 0.
