@@ -44,7 +44,10 @@ on top of the already-shipped INC-3–INC-7 baseline (which stays IMPLEMENTED �
 public interface or data-model column that already-shipped code depends on): **INC-8 (DEEP-001+002,
 NFR2/FR15/FR34), INC-9 (DEEP-003+004, no requirements face + FR17), INC-10 (DEEP-005+006, FR30/FR11/FR29),
 INC-11 (Decision #36's three live-verification checks)** — full detail, file lists, and dev-self-verifiable
-acceptance criteria in `docs/design/increment-plan.md`. Sequencing (001+002, then 003+004, then 005+006)
+acceptance criteria in `docs/design/increment-plan.md`. **INC-8 is now IMPLEMENTED** — dev-built,
+qa-tested (PASS, zero bugs, `docs/test-report.md`), and reviewer-cleared (Pass 24, CLEAR, zero
+blockers/majors — `docs/review-log.md`); INC-9, INC-10, and INC-11 are approved (user GATE-3-equivalent
+approval, 2026-07-30) and not yet built. Sequencing (001+002, then 003+004, then 005+006)
 follows `big-guns`'s own recommendation: 001+002 share the same two entry-point files and the same
 `outcomes`/degraded formula; 003+004 are both judgment-input-path integrity fixes independent of the
 portal; 005+006 are both admin-portal write-validation fixes sharing `validation.ts`. **`DEEP-007`
@@ -71,10 +74,10 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | File | Covers | Sections |
 |---|---|---|
 | `docs/design.md` (this file) | Load-bearing decisions, retired-work pointer, requirement coverage map | §0, §15 |
-| `docs/design/increment-plan.md` **(INC-3–INC-7 all IMPLEMENTED; INC-8–INC-11 STALE, DRAFT — 2026-07-30 fix round, pending dev)** | The project plan: INC-3 through INC-11, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
+| `docs/design/increment-plan.md` **(INC-3–INC-8 all IMPLEMENTED, INC-8 reviewer-CLEAR Pass 24; INC-9–INC-11 approved 2026-07-30, not yet built)** | The project plan: INC-3 through INC-11, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
 | `docs/design/foundations.md` | Purpose, confirmed architecture choices, accepted risks, high-level architecture diagram | §1–§3 |
-| `docs/design/components.md` **(STALE fix-round additions in §4.2/§4.4/§4.6/§4.8, INC-9/INC-8, pending dev)** | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
-| `docs/design/data-and-flow.md` **(STALE fix-round additions in §5/§6, INC-8, pending dev)** | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
+| `docs/design/components.md` **(§4.2/§4.4 STALE fix-round additions, INC-9, approved 2026-07-30, not yet built; §4.6/§4.8 IMPLEMENTED, INC-8, reviewer-CLEAR Pass 24)** | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
+| `docs/design/data-and-flow.md` **(§5/§6 fix-round additions IMPLEMENTED, INC-8, reviewer-CLEAR Pass 24)** | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
 | `docs/design/non-functional-ops.md` **(STALE fix-round additions in §7.3/§7.5/§8, INC-9/INC-10, pending dev)** | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(IMPLEMENTED, INC-3/INC-4)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
@@ -211,14 +214,14 @@ INC-3–INC-7.**
 | FR7, FR8 | §0 #1/#2 (this file); `data-and-flow.md` §6 single-rule change detector |
 | FR9, FR10 | `components.md` §4.4 AI judgment (no fixed rules/style); §0 #8 fail-safe (this file) |
 | FR12, FR13, FR14 | `components.md` §4.6 ntfy, §4.7 detail page |
-| FR15, FR16 | `data-and-flow.md` §5 `call_log`, §6 (every check logged, incl. no-change/cold-start/skip). **FR15's `alerted` field redefined (Decision #32, DEEP-002, INC-8, STALE pending merge):** confirmed-delivered, not attempted — `components.md` §4.6, `data-and-flow.md` §6. |
+| FR15, FR16 | `data-and-flow.md` §5 `call_log`, §6 (every check logged, incl. no-change/cold-start/skip). **FR15's `alerted` field redefined (Decision #32, DEEP-002, INC-8, IMPLEMENTED, reviewer-CLEAR Pass 24):** confirmed-delivered, not attempted — `components.md` §4.6, `data-and-flow.md` §6. |
 | FR17 | `components.md` §4.1 gates; `non-functional-ops.md` §7.5 skip-with-log. **Sharpened (Decision #33, DEEP-004, INC-9, STALE pending merge):** structural stale-bar/closed-market check — `components.md` §4.2, `non-functional-ops.md` §7.5. |
-| FR34 (alert delivery/retry semantics, Decision #32) | **STALE — design pending merge, INC-8.** `components.md` §4.6, `data-and-flow.md` §6. |
+| FR34 (alert delivery/retry semantics, Decision #32) | **IMPLEMENTED, INC-8, reviewer-CLEAR Pass 24.** `components.md` §4.6, `data-and-flow.md` §6. |
 | FR18 | `components.md` §4.6 per-market topic routing |
 | FR19–FR22 | `frontend.md` §10 dashboard, §11 CORS/prices.json |
 | FR23 | `components.md` §4.6 (notifications), §4.7 (detail page); `frontend.md` §10 (dashboard, client dual-tz); `data-and-flow.md` §5 UTC contract |
 | NFR1 | `components.md` §4.4 batched call; `non-functional-ops.md` §7.1 cost |
-| NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor. **"Completes degraded" sharpened (Decision #31, DEEP-001, INC-8, STALE pending merge):** heartbeat degraded formula must count fail-safe-Hold outcomes — `components.md` §4.8. |
+| NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor. **"Completes degraded" sharpened (Decision #31, DEEP-001, INC-8, IMPLEMENTED, reviewer-CLEAR Pass 24):** heartbeat degraded formula must count fail-safe-Hold outcomes — `components.md` §4.8. |
 | NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
 | NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |

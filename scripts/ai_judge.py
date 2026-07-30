@@ -2,8 +2,14 @@
 
 Builds the verdict prompt, calls the configured AI provider in strict-JSON
 mode, validates the schema, retries once on a bad reply, and fails safe to
-Hold if it still can't parse — so a malformed response can only ever MISS a
-signal, never fabricate one.
+Hold if it still can't parse. A malformed response can only ever MISS a
+signal, never fabricate one — and that claim holds specifically because
+`_parse_batch`'s positional fallback (the one path that resolves a ticker
+from an object the model didn't label) accepts that object only when its own
+`ticker` field is absent or normalizes to the ticker being resolved;
+anything else falls through to a fail-safe Hold instead of borrowing a
+different company's verdict/rationale under `parse_status: "ok"` (§4.4a,
+DEEP-003 fix).
 
 Provider-neutral (FR33, `docs/design/operational-controls.md` §14): this
 module never imports an SDK directly or classifies a provider's raw
@@ -175,12 +181,35 @@ def _models_to_try(models: list[str] | None = None) -> list[str]:
     return out
 
 
+def _normalize_ticker(t: str) -> str:
+    """Case-fold and strip a trailing .TO/.NS market suffix, so a ticker can be
+    compared for identity regardless of case or suffix. Same suffix convention
+    `ingest._market_for` already keys off — not a new one introduced here."""
+    t = t.upper()
+    for suffix in (".TO", ".NS"):
+        if t.endswith(suffix):
+            return t[: -len(suffix)]
+    return t
+
+
 def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     """Parse a JSON array of verdicts into {ticker: result}.
 
     Returns None only if no array could be extracted at all (caller retries).
     If an array is present but a given ticker is missing/invalid, that ticker
     gets a fail-safe Hold while the others still resolve.
+
+    Positional-fallback attribution contract (§4.4a, DEEP-003 fix): when a
+    requested ticker has no labeled object in the response, the array object
+    at the same index is a candidate fallback ONLY when it corroborates the
+    ticker being resolved — its own `ticker` field is absent (the model just
+    forgot the label, in request order) or normalizes to the same ticker. A
+    DIFFERENT normalized ticker at that index means the response array is
+    misaligned (a dropped/shifted entry) — accepting it would misattribute
+    another company's verdict/rationale under `parse_status: "ok"`, which is
+    the one path that could fabricate rather than merely miss a signal. Any
+    candidate that fails this check falls through to the same fail-safe Hold
+    as every other parse failure.
     """
     try:
         obj = json.loads(raw)
@@ -198,14 +227,27 @@ def _parse_batch(raw: str, tickers: list[str], model: str) -> dict | None:
     if arr is None:
         return None
 
-    by_ticker = {str(o["ticker"]).upper(): o
-                 for o in arr if isinstance(o, dict) and o.get("ticker")}
+    by_ticker = {}
+    for o in arr:
+        if not (isinstance(o, dict) and o.get("ticker")):
+            continue
+        key = str(o["ticker"]).upper()
+        if key in by_ticker:
+            print(f"  [ai_judge] duplicate ticker '{key}' in model response; keeping the last occurrence")
+        by_ticker[key] = o
 
     out = {}
     for i, t in enumerate(tickers):
         o = by_ticker.get(t.upper())
+        used_fallback = False
         if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
-            o = arr[i]                           # positional fallback (same order requested)
+            cand = arr[i]                        # positional fallback (same order requested)
+            cand_ticker = cand.get("ticker")
+            if not cand_ticker or _normalize_ticker(str(cand_ticker)) == _normalize_ticker(t):
+                o, used_fallback = cand, True
+        if used_fallback:
+            print(f"  [ai_judge] positional fallback used for {t} (array index {i} had no "
+                  f"matching 'ticker' label)")
         if isinstance(o, dict) and o.get("verdict") in VALID_VERDICTS and o.get("rationale"):
             conf = str(o.get("confidence", "")).lower()
             out[t] = {"verdict": o["verdict"],

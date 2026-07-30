@@ -249,6 +249,24 @@ def get_market_data(ticker: str) -> dict:
         out["notes"].append("no price data (delisted/halted/bad ticker)")
         return out
 
+    # FR17/Decision #33 stale-bar structural check (INC-9, DEEP-004 fix): must
+    # run before ANY price/volume math below. _session_state() only knows
+    # weekday+wall-clock, not whether today is a holiday (no maintained
+    # calendar exists, Decision #8), so on a closed-market day yfinance still
+    # returns the prior session's bar and _session_state alone would call it
+    # live. Comparing the bar's own date to today's market-local date catches
+    # that here, structurally, before session_live/volume pro-rating can ever
+    # see a stale bar.
+    live, frac = _session_state(market)
+    tz = config.NSE_MARKET_TZ if market == "NSE" else config.MARKET_TZ
+    last_bar_date = h.index[-1].date()            # yfinance's own bar date, exchange-local
+    today_market = datetime.now(tz).date()
+    if live and last_bar_date < today_market:
+        out["notes"].append(
+            f"market appears closed today ({today_market}) — latest available bar is from "
+            f"{last_bar_date}; treating as no usable data (FR17/Decision #33)")
+        return out   # has_price stays False: same skip-with-log path as any other no-data day
+
     close = h["Close"].dropna()
     vol = h["Volume"].dropna()
     out["has_price"] = True
@@ -274,7 +292,8 @@ def get_market_data(ticker: str) -> dict:
     # the open — the prompt was effectively told "volume is dead" every morning).
     # Pro-rate by the elapsed session fraction; too early (<10%), the estimate
     # is dominated by the open auction/U-shape, so mark it n/a instead.
-    live, frac = _session_state(market)
+    # live/frac were already computed above (stale-bar check reuses the same
+    # call rather than calling _session_state twice).
     out["session_live"] = live
     if live and isinstance(out["volume_vs_avg"], (int, float)):
         if frac < 0.1:
