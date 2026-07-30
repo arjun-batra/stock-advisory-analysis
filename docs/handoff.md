@@ -674,3 +674,123 @@ stands; not re-run since nothing in scope could affect it).
   in isolation instead (Node). qa should do the browser pass named in the AC.
 - No config-schema change, no new tunable, no SQL change — matches the design's explicit "no config
   schema change" / "no SQL changes" statements; nothing to flag there.
+
+---
+
+# Handoff — INC-9: Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004)
+
+## Build plan (written before coding)
+
+Read `docs/design/increment-plan.md`'s INC-9 section, `docs/design/components.md` §4.2 (ingestion) +
+§4.4/§4.4a (parse & retry, the new positional-fallback attribution contract), `docs/design/
+non-functional-ops.md` §7.5, `requirements.md` FR17 + Decisions #33/#34, and `docs/review-log.md`'s
+DEEP-003/DEEP-004 entries (file:line citations). Both fixes are structural, self-contained, and scoped to
+exactly two files — no config-schema change, no SQL, no new tunable, matching the increment's own "no
+config-schema change" statement.
+
+- **DEEP-003 (`scripts/ai_judge.py`, `_parse_batch`):** narrow the positional fallback so `arr[i]` is
+  accepted only when its own `ticker` field is absent (legitimate — model forgot the label, request
+  order preserved) or normalizes (new `_normalize_ticker` helper — case-fold, strip `.TO`/`.NS`) to the
+  ticker being resolved. Anything else (a genuinely different ticker at that index — the misaligned-array
+  case DEEP-003's evidence describes) falls through to `_FAIL_SAFE_PARSE`. Add the
+  `positional fallback used for {t}` log line (fires only on the legitimate path) and a duplicate-ticker
+  log line in the `by_ticker` dict-build loop (was a silent last-wins). Correct the module docstring's
+  unqualified "can only ever MISS a signal" claim to name this mechanism.
+- **DEEP-004 (`scripts/ingest.py`, `get_market_data`):** move the `_session_state()` call earlier and
+  insert the stale-bar/closed-market structural check immediately after `h` is confirmed non-empty and
+  before any of `close`/`price`/`pct_change_*`/`volume_vs_avg` are computed — per-market tz via
+  `config.MARKET_TZ`/`config.NSE_MARKET_TZ`, compare `h.index[-1].date()` to today's market-local date;
+  if the session reads live but the last bar predates today, append a note and `return out` with
+  `has_price` still `False` (same skip-with-log path as any other no-data day). The later, now-redundant
+  `_session_state()` call is removed — `live`/`frac` from the earlier call are reused.
+
+**Verification plan:** run the full existing suite (structural check must not disturb the pre-existing
+`_session_state`/pro-rating tests, all of which exercise wall-clock-only scenarios where the check is a
+no-op); grep-verify AC2 (`positional fallback used for`) and AC5 (`last_bar_date` precedes the pro-rating
+math, one function, manual read); write small scratch scripts (session-scratchpad only, not committed)
+exercising both DEEP-003 scenarios (misattribution-must-fail-safe, legitimate-fallback-must-still-work)
+and both DEEP-004 scenarios (stale bar during nominal live hours -> `has_price=False` + reason note;
+same-day bar -> unaffected) against a monkeypatched `ingest.datetime` — the same seam a qa test would
+use, since `_session_state` and the new check share the same imported `datetime` name.
+
+No deviation from design — proceeded without flagging tech-lead.
+
+## Files changed
+
+- `scripts/ai_judge.py` — module docstring (names the positional-fallback mechanism instead of asserting
+  an unqualified claim); new `_normalize_ticker` helper; `_parse_batch` rewritten per §4.4a's contract
+  (narrowed fallback acceptance test, `used_fallback` log line, duplicate-ticker log line in the
+  `by_ticker` build loop). No other function touched.
+- `scripts/ingest.py` — `get_market_data` only: the stale-bar structural check inserted right after the
+  empty-history guard, before any price/volume math; the later duplicate `_session_state()` call removed
+  in favor of reusing the earlier result. `get_price_only`/`_session_state`/`_market_for`/everything else
+  untouched.
+
+## How to run it
+
+`python3 -m pytest -q --tb=short` from the repo root (no new env vars, no config changes). To exercise
+either fix directly: `python3 -c "import ai_judge; ai_judge._parse_batch(raw_json_str, tickers, model)"`
+or `ingest.get_market_data(ticker)` with `yf.Ticker` monkeypatched (see `tests/test_ingest.py`'s
+`FakeYFTickerNoInfoNoNews` pattern) — freeze `ingest.datetime` (a fake `datetime` subclass with an
+overridden `now(tz)` classmethod, assigned to `ingest.datetime`) to control "today" for the stale-bar
+scenario, since `get_market_data` takes no explicit clock parameter and neither does `_session_state`'s
+default path.
+
+## Acceptance-criteria self-verification
+
+1. **PASS.** Scratch script (session-scratchpad, not committed): request `[A,B,C]`, model response
+   `[A,X,B]` (drops C, hallucinates X) -> `C` resolves `parse_status="failed"` (not B's verdict/rationale
+   under `"ok"`); `B` itself still resolves normally via its own direct label. Second scratch scenario: a
+   same-order response where the middle object has no `ticker` label at all -> that ticker still resolves
+   `parse_status="ok"` with the unlabeled object's own verdict/rationale (the legitimate fallback case).
+   Both confirmed by direct assertion, not just log inspection.
+2. **PASS.** `grep -n "positional fallback used for" scripts/ai_judge.py` returns the log line; the
+   scratch run's captured stdout shows it fires exactly once, only for the legitimate-fallback ticker —
+   zero occurrences in the misattribution scenario (correctly suppressed since that candidate fails the
+   corroboration check and is never accepted).
+3. **PASS.** Module docstring no longer states the MISS-only claim unqualified — it now names
+   `_parse_batch`'s narrowed positional-fallback acceptance test as the mechanism that makes it true
+   (manual read, top of `scripts/ai_judge.py`).
+4. **PASS.** Scratch script with a monkeypatched `ingest.datetime`: history ending 3 business days before
+   the frozen "today" (2026-07-27 vs. frozen 2026-07-30), frozen clock at 12:45 ET (nominal live session)
+   -> `has_price=False` and a note containing "market appears closed today" naming both dates. Second
+   scenario, same frozen clock, history ending on the frozen "today" itself -> unaffected: `has_price=True`,
+   `session_live=True`, normal pro-rating path reached.
+5. **PASS.** `grep -n "last_bar_date" scripts/ingest.py` — both occurrences (the assignment and the
+   comparison) are inside `get_market_data`, positioned directly after the empty-history guard and before
+   `close = h["Close"].dropna()` / any of `pct_change_1d`/`pct_change_5d`/`pct_change_20d`/`volume_vs_avg`
+   — confirmed by direct read, not merely a late-added early-return guard bolted after the math.
+6. **PASS.** `python3 -m pytest -q --tb=short` -> **229 passed, 0 failed** — identical to the pre-INC-9
+   baseline (229 Python / 63 TypeScript, confirmed by the user at `f66d693`); TypeScript suite untouched
+   (zero `admin-portal/` files in scope, not re-run — nothing in this increment's diff could affect it).
+   `git diff --name-only` against the pre-INC-9 commit shows exactly `scripts/ai_judge.py` and
+   `scripts/ingest.py` changed (plus tech-lead's own in-flight `docs/design.md`/
+   `docs/design/increment-plan.md` status-marker edits, which are not this increment's files and were not
+   touched by dev).
+
+**No pre-existing test needed changing or broke** — unlike INC-8, no test in `tests/` encoded the old
+positional-fallback or stale-bar-blind behavior as an assertion, so there is no test-suite tension to flag
+here; the full suite was green before and after with zero edits to `tests/`.
+
+## Known limitations / things the design didn't fully anticipate
+
+- **DEEP-004's accepted edge case is unchanged and still applies**: in the first seconds/minutes after a
+  genuinely open session's start, if yfinance hasn't posted today's intraday bar yet, this check could
+  misfire and skip a ticker for one cycle on a normal trading day (self-corrects 30 min later next cycle).
+  This is documented in `components.md` §4.2 as an accepted MISS-direction risk, not something this
+  increment needed to mitigate further.
+- `h.index[-1].date()` is taken at face value as "yfinance's own bar date, exchange-local" per the design
+  snippet — no explicit timezone conversion is applied to the index before calling `.date()`. This matches
+  every existing fixture pattern in `tests/test_ingest.py` (naive `pd.date_range` indices) and the design's
+  own comment; if a live yfinance response's index were ever UTC-normalized rather than exchange-local,
+  this comparison would need revisiting, but that's a pre-existing assumption this increment inherits, not
+  a new one it introduces.
+- One qa-facing note for the next phase: AC1's "second test" (legitimate fallback with a same-order,
+  ticker-label-missing response) and AC4's "second test" (same-day bar unaffected) are both explicitly
+  the *regression* half of each AC — worth qa keeping both the failure-mode and the working-mode assertion
+  in the same test file so a future change to either check is caught from both directions, the same
+  pattern INC-8's design called out for its own dual-assertion ACs.
+- `docs/design/increment-plan.md` and `docs/design.md` currently carry uncommitted, in-flight edits from
+  tech-lead (status-marker updates reflecting INC-8's Pass-24 clearance) that predate this session's INC-9
+  work and are outside dev's ownership (`CLAUDE.md`'s agent table: tech-lead owns `docs/design.md`) — noted
+  here only so INC-9's own commit doesn't get blamed for unrelated doc diffs already present in the tree.
