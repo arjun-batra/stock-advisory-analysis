@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T10:01:38.938312+00:00",
+  "generated_at": "2026-07-30T10:31:39.295742+00:00",
   "prices": {
     "AAPL": {
       "chg": -0.56,
@@ -104,10 +104,10 @@
       "price": 190.01
     },
     "RELIANCE.NS": {
-      "chg": 1.06,
+      "chg": 1.33,
       "currency": "INR",
       "market": "NSE",
-      "price": 1289.4
+      "price": 1292.9
     },
     "RY.TO": {
       "chg": -3.03,
@@ -134,10 +134,10 @@
       "price": 112.55
     },
     "TCS.NS": {
-      "chg": -0.52,
+      "chg": -0.6,
       "currency": "INR",
       "market": "NSE",
-      "price": 2434.0
+      "price": 2431.8
     },
     "TD.TO": {
       "chg": -3.21,
