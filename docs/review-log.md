@@ -2209,9 +2209,21 @@ in the codebase; see `docs/review-log.md` Pass 27 above for the closure detail.
 
 ---
 
-### DEEP-007 — `[REQUIREMENTS-GAP]` — **minor** — owner: pm (FR24 boundary text) or tech-lead (§13.1)
+### DEEP-007 — `[REQUIREMENTS-GAP]` — **minor, re-scoped to major — STILL OPEN as of Pass 28 (2026-07-30)**
+— owner: pm (FR24 boundary text) or tech-lead (§13.1)
 
-**The kill-switch stops future *dispatches*, not the system. A run already executing when the toggle flips
+**Status update, Pass 28 (INC-12's diff-scoped audit):** INC-12 shipped four Python-layer boundary
+checkpoints per Decision #37/FR24/FR35 and closed the original finding for every irreversible action past
+those four boundaries — independently re-verified, see `docs/review-log.md` Pass 28 above. **Not fully
+closed:** Pass 28 traced the code beyond the four named checkpoints and found a fifth, unguarded
+irreversible-action path — `run_hourly.py`'s `config.write_tunables_cache_if_fetched()` call, which executes
+unconditionally before checkpoint 1 is ever reached and can still produce a real `contents: write` commit to
+`main` during a pause. Logged as REV-116 (major), Pass 28. DEEP-007 stays **open** until REV-116 is fixed
+and re-verified; do not mark RESOLVED at Phase-4 closure until then. Original finding text below is
+preserved for context and remains accurate for the scenario it originally described (dispatch-layer-only
+enforcement) — that scenario is now closed; REV-116 is the residual.
+
+**Original finding (2026-07-29, pre-INC-12).** The kill-switch stops future *dispatches*, not the system. A run already executing when the toggle flips
 completes in full — Yahoo fetches, the batched AI call, real pushes, and a commit to `main` — while the
 portal badge already reads `PAUSED`.**
 
@@ -2266,3 +2278,479 @@ fetch failing while the rest of Supabase works (which is exactly REV-095, a clie
 cache masked for a full day rather than surfaced). Dropping tier 2 and letting a failed fetch fail loud —
 already the double-miss behaviour — would remove all five pieces of machinery above. Worth one paragraph of
 reconsideration at the next config-related change request; not worth reopening at closure.
+
+---
+
+## Pass 28 — 2026-07-30 (INC-12 diff-scoped audit — kill-switch in-flight boundary checks + mid-run-abort
+classification; FR24, FR35; DEEP-007 closure attempt) — **NOT CLEAR**
+
+**Scope.** `git diff --name-only 8919bb9..HEAD` (Pass 27 cleared at `8919bb9`). Files in scope:
+`sql/kill_switch_abort_log.sql` (new), `scripts/state.py`, `scripts/run_hourly.py`,
+`scripts/run_discovery.py`, `scripts/publish_prices.py`, `tests/test_kill_switch_boundary.py` (new),
+`docs/handoff.md` (INC-12 entry + INC-11 evidence record), `docs/test-report.md` (INC-12 + INC-11 entries),
+plus the batched doc-status cleanup in `docs/design.md`, `docs/design/increment-plan.md`,
+`docs/design/components.md`, `docs/design/non-functional-ops.md` (REV-108/110/111/115 closures, commit
+`0ace984`). `pages/prices.json`'s automated refresh (`a560053`) is unrelated live-data churn, not reviewed.
+`b09e65f` (mid-edit checkpoint) superseded by `530c687` (dev's completed handoff) — audited the latter's
+final state throughout, per the brief. Read for traceability: `docs/design/operational-controls.md` §13.6
+(all five subsections, full text), `docs/design/increment-plan.md`'s `### INC-12`, `docs/requirements.md`
+FR24/FR25/FR35/FR32 + Decisions #37/#38 (full text, including the requirements changelog rows), and
+`DEEP-007`'s original finding text.
+
+**Method.** Read the shipped code directly (`state.py`, `run_hourly.py`, `run_discovery.py`,
+`publish_prices.py`, `sql/kill_switch_abort_log.sql`) rather than trusting dev's handoff or qa's report, per
+the brief's explicit instruction to verify each of the four checkpoints sits before the irreversible action
+it claims to guard. Traced the full call graph from each `main()` entry point forward, not just the four
+named checkpoint locations, specifically to answer "is any irreversible action reachable after a pause that
+no checkpoint covers." Grepped the whole `scripts/` tree for `kill_switch_abort_log` to independently confirm
+FR35's exclusivity/causal-tie claim. Grepped all of `sql/` for `revoke` to place the new table's REVOKE
+statement against every precedent in this exact codebase (REV-081, REV-086, `kill_switch_portal_grant.sql`,
+`schema_truncate_grant_closure.sql`/REV-099). Read `tests/test_kill_switch_boundary.py` directly (not just
+qa's summary) to confirm the 22 tests assert what the report claims, and independently traced whether
+`config.write_tunables_cache_if_fetched()` — called unconditionally by `run_hourly.main()` before any
+checkpoint — is exercised or masked by the test fixtures (it is masked: `SKIP_TUNABLES_FETCH=true` makes
+`_TUNABLES` empty in every test, so the function no-ops silently in the suite regardless of what it does in
+production).
+
+---
+
+### 1. Is DEEP-007 genuinely closed? — **No. Three of four named checkpoints are solid; a fifth,
+unguarded irreversible-action path was found by tracing the code beyond the four checkpoints the design
+names.**
+
+Checkpoints 2, 3, and 4 were independently verified correct, each sitting immediately before the exact
+irreversible action it claims to guard, with no gap:
+- **Checkpoint 2** (`run_hourly._process_group`, line 87; `run_discovery.main`, line 108): `is_paused(sb)`
+  sits after Phase-1 ingest and before `ai_judge.judge_batch(...)` in both files — no Yahoo fetch or AI
+  call fires past this point when paused. Verified by reading both call sites directly.
+- **Checkpoint 3** (`state.process_ticker`, line 368; `state.process_candidate`, line 200): `is_paused(sb)`
+  sits immediately before `log_id = str(uuid.uuid4())`/`notifier.push(...)` in both branches, after every
+  read-only computation and before any write (`write_call_log`, `_update_state`/`_insert_state`) for that
+  ticker/candidate. Confirmed no write of any kind precedes the check in either function.
+- **Checkpoint 4** (`publish_prices.main`, line 70): `is_paused(sb)` sits after the Yahoo-fetch loop (not
+  itself irreversible) and immediately before the `pages/prices.json` write the workflow's `git diff
+  --cached` commit step depends on.
+
+**Checkpoint 1, as designed, is also correctly placed** — `run_hourly.main()`/`run_discovery.main()`,
+after `sb`/`notifier` construction, before `state.get_watchlist(sb)`/`prefilter.find_candidates(...)`. But
+tracing `run_hourly.main()` from its first line (not just the checkpoint-1 location the design names)
+surfaces an irreversible action that precedes checkpoint 1 entirely and is guarded by nothing:
+
+**`run_hourly.py:114` — `config.write_tunables_cache_if_fetched()` is the literal first statement inside
+`main()`, called unconditionally, before `state.client()`, before `notify.get_notifier()`, before
+checkpoint 1's `is_paused()` read.** This function (`config.py:147-185`) writes `tunables_cache.json` to
+disk whenever this run's live Supabase tunables fetch succeeded and differs from the committed cache — and
+that file write is exactly the `contents: write` commit path DEEP-007's own original evidence text named
+by name: *"an in-flight `hourly-watchlist` run — which also holds `contents: write` and is the sole writer
+of `tunables_cache.json`... keeps going and can still push a commit to `main` after the operator believes
+the system is stopped."* INC-12 closed that sentence for every action past checkpoint 1 — but this specific
+write happens *before* checkpoint 1 is ever reached, on every single invocation of `run_hourly.main()`,
+paused or not.
+
+This is not a hypothetical: Decision #37's own text promises "four checkpoints, each immediately before an
+irreversible action" and describes this as delivering "enforcement at defined boundaries with an explicitly
+bounded residual window" (`requirements.md:430`). `operational-controls.md:62-68`'s own accepted-risk note
+goes further and asserts a specific, false claim: *"a manually-triggered run's own `main()` now hits FR24
+checkpoint 1... within a few lines of starting... the residual window this risk leaves shrinks from 'the
+entire run completes' to 'between manual dispatch and `main()` reaching checkpoint 1' (config/secret
+loading, sub-second, **no irreversible action possible in that window**)."* That claim is demonstrably false
+against the shipped code: `write_tunables_cache_if_fetched()` sits in exactly that window, and it is not
+"config/secret loading" — it is a real file write that a separate workflow step (outside Python's control)
+turns into a `git commit`/`git push` to `main`.
+
+**Why this survived dev/qa without being caught.** `tests/test_kill_switch_boundary.py`'s `wire_main`
+fixture (`:61-67`) monkeypatches `run_hourly.state.client`, `run_hourly.notify.get_notifier`,
+`config.is_market_open`/`is_nse_open`/`FORCE_RUN` — but never touches `config.write_tunables_cache_if_fetched`
+or `config._TUNABLES`. In the test environment `SKIP_TUNABLES_FETCH=true` (set by the suite's own
+convention, confirmed in `config.py:57-60`) makes `_TUNABLES` empty at import time, so
+`write_tunables_cache_if_fetched()`'s own `if not _TUNABLES: return` guard makes it a silent no-op in
+every one of the 22 new tests and every pre-existing test — this is a real code path that is structurally
+invisible to the entire test suite, not a scenario any permanent test could have caught without deliberately
+un-skipping the tunables fetch. Dev's own scratch-harness verification (per the handoff) drove `main()`
+through mocked doubles the same way and would have hit the identical blind spot.
+
+**Blast radius, so this is calibrated correctly.** Narrower than the original DEEP-007 finding: it requires
+(a) this run's live tunables fetch to have actually returned a value that differs from the committed cache
+(not every run — only the run immediately after an admin edits a curated tunable via the portal), and (b) a
+new invocation of `run_hourly.main()` starting after the pause flag is set, which per §13.1's own accepted-risk
+framing is itself a narrow window (a manual `workflow_dispatch`, restricted to Arjun, or a dispatch-to-runner-start
+race). It is not "real AI spend" or "a real push" — the write's payload is the admin's own already-approved
+tunables values. But it is a genuine, real commit to `main`, unguarded, in the exact scenario DEEP-007 and
+Decision #37 both exist to close, and it directly falsifies a specific sentence already committed to
+`operational-controls.md`.
+
+**Verdict: DEEP-007 is NOT resolved.** Logged as **REV-116** below. Recommend one more fix cycle (move
+`config.write_tunables_cache_if_fetched()` to after checkpoint 1's `is_paused()` read, or gate it behind
+its own `is_paused()` check) before DEEP-007 is marked RESOLVED and before Phase-4 closure treats FR24 as
+fully delivered against its own reworded (Decision #37) text. This does **not** block merging INC-12's own
+qa-passed code to `main` — all nine of the increment's own literal ACs are independently verified correct
+(see §4 below) — but it does block treating DEEP-007 as closed.
+
+### 2. The `BaseException` decision — no unwinding risk found; verified, not merely accepted on the design's
+reasoning.
+
+Grepped `scripts/ai_judge.py`, `scripts/ai_provider.py`, and `scripts/notify.py` for `with `/`finally`/
+`contextmanager`/`__enter__`/`__exit__` — **zero matches in any of the three files**. No context manager, no
+`try/finally` cleanup block, exists anywhere on the call paths between where `KillSwitchAbort` is raised and
+where it is caught. More importantly, both raise sites are placed at genuine *operation boundaries*, not
+mid-operation: checkpoint 2 raises in `_process_group` *before* `ai_judge.judge_batch(...)` is ever called
+(no Gemini client is constructed, no HTTP request is in flight, on that path); checkpoint 3 raises inside
+`process_ticker`/`process_candidate` *before* `log_id`/`notifier.push(...)`/`write_call_log`/`verdict_state`
+are touched (no push HTTP request, no Supabase write, is ever started on that path). So the `BaseException`
+propagating past `_process_group`'s `except Exception` guard never interrupts a partially-completed
+operation — there is no partial network call, no half-written row, no held resource to leave inconsistent,
+because nothing had started yet when the exception fires. The design's own reasoning (`operational-controls.md
+:322-338`) makes exactly this claim; independently verified against the actual code and its dependencies
+rather than accepted on account. Two permanent tests (`test_kill_switch_abort_subclasses_base_exception_not_
+exception`, `test_kill_switch_abort_is_not_caught_by_a_bare_except_exception`) plus one end-to-end trace
+(`test_kill_switch_abort_propagates_through_process_group_uncounted_in_error`) lock this in; read all three
+directly, they assert what qa's report says. **No `[SECURITY]` or `[BLOAT]` finding here — the choice is
+sound and its one theoretical risk (skipping legitimate cleanup) does not apply to this codebase's current
+shape.** Worth one calibration note for the future, not logged as a finding: if a `with`/`finally` block is
+ever added between checkpoint 2/3 and the action they guard (e.g. a future HTTP session context manager
+around `notifier.push`), this exact property should be re-verified, since `BaseException` will bypass it too.
+
+### 3. FR35's causal-tie requirement — exclusivity confirmed; the no-heartbeat-row argument holds; one
+independent addendum to qa's asymmetry write-up.
+
+**Exclusivity.** Grepped all of `scripts/` for `kill_switch_abort_log` — the only `.insert(...)` call
+against that table anywhere in the codebase is `state.write_kill_switch_abort()` (`state.py:56`), which is
+itself called only from the two `except state.KillSwitchAbort` branches in `run_hourly.py:185` and
+`run_discovery.py:135`. Combined with the SQL's RLS+FORCE+REVOKE (verified below, independent of the
+missing-TRUNCATE gap), a row's existence really is proof-of-pause exactly as §13.6.3 claims — no other code
+path, tested or untested, can produce one.
+
+**The no-heartbeat-row / `check_pipeline_health()` argument.** Read `sql/phase5_monitoring.sql:123-303`
+directly (unchanged by this diff, as the brief notes). Confirmed `check_pipeline_health()`'s first action is
+`if v_paused then return` (`:163`) before any alert evaluation — so an abort that happens *while still
+paused* needs no new SQL, exactly as claimed. Confirmed every staleness comparison in the function uses
+`GREATEST(last_run_at, v_resume_baseline)` (`:194,221,249,279`) — so a missing heartbeat row after an abort
+is tolerated by the same mechanism §13.4 already built for checkpoint 1's case, exactly as claimed. This
+argument holds in full; no SQL change was needed and none was made.
+
+**The `is_paused()` failure-mode asymmetry (qa's finding, independently re-derived, plus one addition qa's
+report doesn't cover).** Re-traced all four checkpoints' exception handling directly:
+- **Checkpoint 1** (`run_hourly.py:160`, `run_discovery.py:36`): outside any `try`/`except` in `main()`. A
+  real (non-`KillSwitchAbort`) exception from `is_paused()` propagates fully uncaught — the run crashes
+  before any Yahoo fetch/AI call. Matches qa's `test_is_paused_failure_at_checkpoint1_fails_closed_the_run_
+  never_proceeds`, read directly and confirmed to assert this.
+- **Checkpoint 3** (`state.py:200,368`): inside `process_ticker`/`process_candidate`, which
+  `_process_group`'s Phase-3 loop wraps in `except Exception` (`run_hourly.py:104-106`). A real exception
+  there is caught, counted as an ordinary `outcomes["error"]`, and contributes to a `partial` heartbeat this
+  cycle — a materially gentler failure mode. Matches qa's second test, read directly and confirmed.
+- **Checkpoint 2** (`run_hourly.py:87`, inside `_process_group`, **not** qa's report): `is_paused(sb)` sits
+  between the Phase-1 ingest loop and `judge_batch(...)`, outside any `try`/`except` in `_process_group` —
+  the surrounding `for s in run_sessions: ... except state.KillSwitchAbort` in `main()` catches only
+  `KillSwitchAbort`, not an ordinary exception. A real failure here crashes the whole run, same class as
+  checkpoint 1. **Not exercised by any of the 22 new tests** (verified by reading the full file — no test
+  targets checkpoint 2's `is_paused()` failure specifically).
+- **Checkpoint 4** (`publish_prices.py:70`): outside any `try`/`except` in `main()`, same crash class as
+  checkpoint 1. Also not exercised by a dedicated test.
+
+**Judgment: the asymmetry is acceptable, not a defect.** All four checkpoints fail *closed* with respect to
+the guarded irreversible action (nothing downstream ever runs on a failed pause-check, in all four cases),
+and all four eventually surface to NFR2 — checkpoints 1/2/4 via a loud crash that leaves no `run_heartbeat`
+row (eventually caught by `check_pipeline_health()`'s staleness check, since nothing suppresses alerting for
+a genuine crash), checkpoint 3 via an immediate `partial` heartbeat this same cycle. Neither path silently
+swallows a genuine Supabase-connectivity failure. But the design doc documents only the checkpoint-1-vs-3
+split (via qa's test-report addendum, not in `operational-controls.md` itself) and never mentions that
+checkpoint 2 and 4 share checkpoint 1's hard-crash mode — worth one sentence in §13.6.1 so a future
+maintainer reading only the design doc isn't surprised by checkpoint 2/4's behavior. Logged as **REV-119**,
+minor, non-blocking.
+
+### 4. Increment ACs 1–9 — independently spot-verified against the tests, not accepted on qa's account.
+
+Read `tests/test_kill_switch_boundary.py` in full (527 lines). The call-site-count regex (AC2), the
+checkpoint-1/4 side-effect-free assertions (AC3), the checkpoint-2 zero-row sub-case (AC4), the
+checkpoint-3 exactly-pending assertion and `real_rows_this_cycle` count (AC5), the resume test (AC6), the
+`BaseException` propagation trace (AC7), and the two-open-market-groups single-abort-row test all assert
+what `docs/test-report.md` claims, against the real `state.py`/`run_hourly.py`/`run_discovery.py`/
+`publish_prices.py` code (via `KillSwitchFakeSupabase`, a thin, correctly-isolated extension of
+`test_state.py`'s existing `FakeSupabase` — confirmed its `_execute_insert` override does not also leak an
+abort-log row into `call_log`, the one place a shared-fixture mistake could have silently invalidated every
+FR35 assertion in the file). **All 9 ACs independently confirmed PASS**, consistent with qa's verdict.
+
+### 5. `real_rows_this_cycle` excludes `outcomes["skip"]` — independent read, sharper than qa's framing,
+still non-blocking.
+
+qa flagged a "textual tension" between FR35's "at least one real (non-skip) `call_log` row" and §13.6.2's
+code sample. Read `requirements.md:234` character-by-character: FR35's own parenthetical **defines** "real"
+as "non-skip" — under that plain reading there is no tension at all with excluding `skip` from the sum; the
+design's code sample (`outcomes["cold-start"|"quiet"|"change-alert"|"push-failed"|"no-read"]`) matches this
+exactly. **A sharper, genuine tension exists one level deeper, which qa's framing doesn't quite land on:**
+§13.6.3's own prose describes the rows this field protects as *"real, complete work product (real verdicts
+from a real AI call)"* (`operational-controls.md:377`) — but the sum includes `outcomes["no-read"]`, and
+`state.py:332` explicitly documents that outcome's `call_log` row as *"a fail-safe placeholder, NOT a real
+verdict."* So the code counts a row §13.6.3's own adjacent prose says isn't "real" by the very definition
+that prose uses elsewhere. **Nothing behavioral hinges on this** — confirmed the field is genuinely
+informational only (`kill_switch_abort_log.sql:34`'s comment, `§13.6.5`'s comment, and no code anywhere
+reads `real_rows_this_cycle` back for a decision) — but it is a wording inconsistency worth a one-clause fix
+so a future reader isn't misled about what the number counts. Logged as **REV-120**, minor, non-blocking,
+routed to pm (FR35's own text is the cleaner edit point) rather than qa's original tech-lead-only routing,
+since this specific tension lives in requirements prose, not just the design.
+
+### 6. SQL review — `sql/kill_switch_abort_log.sql`, as production SQL (not yet applied live)
+
+**Additive.** New, standalone table; touches nothing else. Confirmed no `alter`/`drop` against
+`kill_switch_state`/`kill_switch_audit` anywhere in the file.
+
+**Idempotent.** `create table if not exists` (correct — no PG14+ construct needed, no trigger in this file);
+`alter table ... enable/force row level security` and `revoke` are naturally idempotent. Dev's local
+double-apply against Postgres 16 (documented in `docs/handoff.md`) is consistent with this reasoning; no
+PG14+-specific syntax is used anywhere in the file, so it applies cleanly against the now-confirmed live
+Postgres 17.6.1 regardless.
+
+**RLS/FORCE correct.** `enable row level security` + `force row level security`, zero policies — denies
+every role without `BYPASSRLS` (i.e., everyone except the `postgres`/service-role connection), matching
+`kill_switch_audit`'s proven-live pattern exactly.
+
+**REVOKE — incomplete. `[SECURITY]` finding, major, blocks live application.** `:39` reads `revoke insert,
+update, delete on public.kill_switch_abort_log from public, anon, authenticated;` — **missing `truncate`.**
+RLS does not govern `TRUNCATE` in Postgres at all (it's gated purely by the table-level `TRUNCATE`
+privilege), and this exact codebase has independently rediscovered and closed this precise gap **four**
+times already: `admin_allowlist` (REV-081), `tunables` (REV-086), `kill_switch_state`/`kill_switch_audit`
+(`sql/kill_switch_portal_grant.sql`, INC-7), and a dedicated six-table sweep
+(`sql/schema_truncate_grant_closure.sql`, REV-099, logged **major**) covering every other table in the
+schema. `kill_switch_abort_log` is new since that sweep, so it was never in scope for REV-099 — but the
+lesson that sweep exists specifically to generalize ("Supabase's default public-schema grants otherwise
+leave [TRUNCATE] live for `anon`/`authenticated` regardless of RLS being enabled",
+`schema_truncate_grant_closure.sql:8-10`) was not applied to this new table. **The gap originates in the
+design, not dev's implementation** — `operational-controls.md:443`'s own code sample has the identical
+omission, and dev correctly implemented the design's literal block (the established convention in this
+project). Given this table exists specifically to be tamper-evident proof of a deliberate pause (§13.6.3's
+whole causal-tie argument rests on "no other code path... ever inserts into this table" — a `TRUNCATE`
+doesn't insert, but it would silently destroy every prior abort record without leaving a trace, undermining
+the append-only audit posture the table exists for), this is not cosmetic. Classified **major**, matching
+REV-099's own severity for the identical gap class. **Must not be applied live as-is.** Logged as
+**REV-117** below; one-line fix: `revoke insert, update, delete, truncate on public.kill_switch_abort_log
+from public, anon, authenticated;`, mirroring `admin_allowlist`'s exact shape.
+
+**No SELECT policy** — correct and intentional per the design's own text (nothing reads this table yet); not
+a gap.
+
+### 7. Traceability (FR24, FR25, FR35, FR32/NFR2/NFR7)
+
+| Link | Location | Status |
+|---|---|---|
+| Requirement | `requirements.md:195-225` FR24/FR25/FR35, `:317-318` FR32, Decisions #37 (`:430`)/#38 (`:431`) | present |
+| Design | `operational-controls.md` §13.6.1–§13.6.6 | present, but §13.1's "no irreversible action possible in that window" claim is now false — see REV-116 |
+| Implementation | `state.py` (`is_paused`, `KillSwitchAbort`, `write_kill_switch_abort`, 2 call sites), `run_hourly.py` (2 checkpoints + wrapper), `run_discovery.py` (2 checkpoints + wrapper), `publish_prices.py` (1 checkpoint), `sql/kill_switch_abort_log.sql` | present for checkpoints 1–4 as named; incomplete for the 5th irreversible action found (REV-116) |
+| Tests | `tests/test_kill_switch_boundary.py` (22 tests, all 9 literal ACs) | present, independently verified |
+
+**Pass 2 (scope creep): clean.** Every change maps to a file/AC the increment plan names; no undocumented
+behavior. `KillSwitchFakeSupabase`'s slight extension of `FakeSupabase` is test-only scaffolding, not
+production scope creep.
+
+**Pass 3 (hardcoding): clean.** No new tunable was needed (`kill_switch_state`'s schema is read, not
+extended, matching the design's explicit "no config-schema change"); `checkpoint`'s two literal values
+(`'ai_call'`, `'push'`) are a closed enum matching `KillSwitchAbort.checkpoint`'s own two literal values —
+call-shape structure, not a tunable. No embedded prompt strings or model parameters touched by this diff.
+
+**Pass 4 (leanness): clean.** `state.py`'s three new functions are minimal and match the design's code
+blocks near-verbatim; no dead code, no commented-out code, no unused imports (`uuid` already imported and
+now used at two call sites, was already used elsewhere in the file). No narration-comment bloat beyond this
+codebase's established rationale-comment convention (consistent with Pass 15's calibration note on the same
+convention).
+
+**Pass 6 (structure): one finding.** `docs/code-map.md`'s `sql/` file list (`:28-35`) does not mention
+`sql/kill_switch_abort_log.sql` (new, this increment) or `sql/schema_truncate_grant_closure.sql` (pre-existing
+omission, from an earlier fix round, now conspicuous alongside this one). Per this project's own review rules,
+a code-map that no longer matches reality is a **major**, owner tech-lead. No dependency-direction violation,
+no import-cycle, no oversized function introduced by this diff — `state.py`'s three new functions are 8, 14,
+and 13 lines respectively; `_process_group`/`main()`'s checkpoint additions are each 3–8 lines. Logged as
+**REV-118**.
+
+---
+
+### NEW FINDINGS — Pass 28
+
+**REV-116 — `[CODE-GAP]`/`[DESIGN-GAP]` — major — DEEP-007 residual: `run_hourly.py`'s tunables-cache
+commit path is reachable before FR24 checkpoint 1 ever executes.**
+Location: `scripts/run_hourly.py:114` (`config.write_tunables_cache_if_fetched()`, the first statement in
+`main()`) vs `:160` (checkpoint 1's `is_paused()` read); `scripts/config.py:147-185`
+(`write_tunables_cache_if_fetched`); `docs/design/operational-controls.md:62-68` (the specific false claim,
+"no irreversible action possible in that window"); `docs/requirements.md:430` (Decision #37's "four
+checkpoints... each immediately before an irreversible action" promise).
+Description: see §1 above in full. A real `contents: write` commit path (writing `tunables_cache.json`,
+committed by the surrounding GitHub Actions workflow step) executes unconditionally before any pause check
+in `run_hourly.main()`, on every invocation where this run's live tunables fetch returned a value differing
+from the committed cache — including a manually-triggered run during a pause (the exact accepted-risk
+scenario `operational-controls.md:59-68` claims INC-12 shrinks to "no irreversible action possible," which
+is false against the shipped code) and a dispatch-to-runner-start race for a scheduled run. Masked from the
+test suite by `SKIP_TUNABLES_FETCH=true` making `_TUNABLES` empty in every test environment, so no
+committed test (dev's scratch harness or qa's 22 permanent tests) could have caught it without deliberately
+exercising the live-fetch path.
+Suggested fix: move `config.write_tunables_cache_if_fetched()` to after checkpoint 1's `is_paused()` check
+in `run_hourly.main()` (it does not need to run before the pause read — it has no dependency on the market
+gate or watchlist fetch that follow it), or gate the call itself behind its own `is_paused()` read. Either
+fix is a few-line change confined to `run_hourly.py`/`config.py`. `operational-controls.md:59-68`'s "no
+irreversible action possible in that window" sentence needs correcting either way (to name this call and
+its resolution) regardless of which code fix is chosen.
+Owner: **dev** (code fix) + **tech-lead** (design correction to §13.1 and, if the checkpoint-1 placement
+text in §13.6.2 should explicitly account for this pre-existing call, that too). **DEEP-007 remains OPEN,
+not resolved, until this is fixed** — recommend one more fix cycle before Phase-4 closure treats FR24 as
+fully delivered against Decision #37's reworded text. Does not block merging INC-12's own code (its own 9
+ACs are independently verified correct, see §4 above).
+
+**REV-117 — `[SECURITY]` — major — `sql/kill_switch_abort_log.sql`'s REVOKE statement omits `TRUNCATE`, the
+same gap class already found and fixed four times in this codebase.**
+Location: `sql/kill_switch_abort_log.sql:39`; `docs/design/operational-controls.md:443` (the design's
+matching code sample, same omission); precedent at `sql/admin_portal_rls.sql:17` (REV-081),
+`sql/admin_portal_tunables.sql:25` (REV-086), `sql/kill_switch_portal_grant.sql:26,32` (INC-7's
+`kill_switch_state`/`kill_switch_audit` closure), `sql/schema_truncate_grant_closure.sql` (REV-099, major,
+six more tables).
+Description: see §6 above in full. RLS does not govern `TRUNCATE`; without the revoke, `anon`/`authenticated`
+retain Supabase's default public-schema `TRUNCATE` privilege on this new, otherwise fully locked-down table —
+undermining the append-only audit posture FR35's whole causal-tie argument depends on (a `TRUNCATE` would
+silently destroy every prior `kill_switch_abort_log` row with no trace, though it cannot forge a false
+one). Not yet applied live — must be fixed before the orchestrator applies it.
+Suggested fix: `revoke insert, update, delete, truncate on public.kill_switch_abort_log from public, anon,
+authenticated;`, mirroring `admin_allowlist`'s exact four-verb shape (the closest precedent — no legitimate
+write path to this table exists at all, same as `admin_allowlist`).
+Owner: **tech-lead** (§13.6.5's code sample) + **dev** (the one-line SQL fix, same pattern as REV-081/086's
+fix commits). **Blocks live application of this SQL file** — does not block merging INC-12's Python
+code/tests, which are independent of this file's content.
+
+**REV-118 — `[STRUCTURE]` — major — `docs/code-map.md`'s `sql/` file list is stale: omits this increment's
+new file and one earlier one.**
+Location: `docs/code-map.md:28-35`.
+Description: the `sql/` bullet enumerates `schema.sql`, `scheduler_pgcron.sql`, `phase5_monitoring.sql`/
+`enable_monitor_alerts_rls.sql`, `dashboard_latest_call_view.sql`, `kill_switch.sql`, `admin_portal_rls.sql`,
+`admin_portal_tunables.sql`, `kill_switch_portal_grant.sql`, plus three named historical/superseded files —
+it does not mention `sql/kill_switch_abort_log.sql` (new, this increment) or
+`sql/schema_truncate_grant_closure.sql` (pre-existing, from the REV-099 fix round, apparently missed at the
+time). Per this project's review rules a stale code-map is a major, since the map is the one-page mental
+model every agent orients from before reading the design docs.
+Suggested fix: one clause appended to the `sql/` bullet naming both files (`kill_switch_abort_log.sql`
+alongside `kill_switch.sql`/`kill_switch_portal_grant.sql`; `schema_truncate_grant_closure.sql` as the
+sixth-table TRUNCATE-grant closure, cross-referencing `schema.sql`/`phase5_monitoring.sql`). Not a
+functional gap — no agent has been misled by it yet, since both omitted files are single-purpose, additive
+grant/table files with no dependency-direction implications — but it is exactly what CLAUDE.md's git
+workflow rule ("If the increment changed structure, tech-lead refreshes docs/code-map.md before the merge
+commit") calls for and what happened for it not to happen at INC-12's own merge.
+Owner: **tech-lead**. Should be folded into the pre-merge code-map refresh CLAUDE.md already requires,
+rather than treated as a separate follow-up.
+
+**REV-119 — `[DESIGN-GAP]` — minor — §13.6.1/§13.6.2 don't document that checkpoints 2 and 4 share
+checkpoint 1's hard-crash failure mode on a Supabase-unreachable `is_paused()` call.**
+Location: `docs/design/operational-controls.md` §13.6.1 (`:237-254`) and §13.6.2 (`:256-320`); contrast
+`docs/test-report.md:88-105` (qa's own probe, which documents only checkpoints 1 and 3).
+Description: see §3 above. All four checkpoints fail closed and all four eventually alert (no defect), but
+the design doc is silent on the fact that checkpoints 2 (`run_hourly.py:87`) and 4 (`publish_prices.py:70`)
+share checkpoint 1's whole-run-crash mode rather than checkpoint 3's gentler per-ticker-error mode — a
+future on-call reader consulting only the design doc (not this review log or qa's test-report addendum)
+would not know which class a given checkpoint's failure falls into.
+Suggested fix: one sentence in §13.6.1 (or a small table) stating the two-way split explicitly: checkpoints
+1/2/4 (outside any `except Exception`) crash the whole run on a genuine `is_paused()` failure; checkpoint 3
+(inside `_process_group`'s per-ticker guard) degrades gracefully to a per-ticker error. Owner: **tech-lead**.
+Not a merge blocker.
+
+**REV-120 — `[REQUIREMENTS-GAP]` — minor — a wording inconsistency between §13.6.3's "real, complete work
+product (real verdicts from a real AI call)" framing and `real_rows_this_cycle`'s inclusion of
+`outcomes["no-read"]` (a documented fail-safe placeholder, not a real verdict).**
+Location: `docs/design/operational-controls.md:377` vs `scripts/state.py:332` (the "NOT a real verdict"
+comment) and `run_hourly.py:184`/`run_discovery.py:134` (the sum that includes `"no-read"`).
+Description: see §5 above. Purely a wording issue — the field is informational only, nothing reads it back
+for a decision, and no behavior needs to change. FR35's own "(non-skip)" parenthetical is unambiguous and
+matches the code exactly on the `skip` question qa raised; the sharper tension is one level deeper, between
+§13.6.3's own adjacent prose and the code's inclusion of `no-read`.
+Suggested fix: one clause in §13.6.3 acknowledging that `real_rows_this_cycle` counts "any non-skip
+`call_log` row produced this cycle, including fail-safe placeholders" rather than only genuine verdicts —
+or, if pm prefers, a matching one-clause narrowing in FR35's own text. Owner: **pm** (cleaner edit point,
+since the ambiguity originates in how "real" is used across both the requirement and the design). Not a
+merge blocker.
+
+**REV-121 — `[DESIGN-GAP]` — minor — anticipated, not yet a defect: INC-12's own status markers (§13.6
+DRAFT, `INC-12` DRAFT) will be stale the instant this pass's verdict lands, the same propagation pattern as
+REV-073/079/084/090/093-094/108/110/111/115.**
+Location: `docs/design/operational-controls.md:8,17,226` ("§13.6 DRAFT, pending user approval"),
+`docs/design.md:60` ("INC-12 designed, DRAFT pending user approval"), `docs/design/increment-plan.md:1`
+(title still lists INC-12 as DRAFT).
+Description: accurate at write-time (dev/qa's work postdates the last design-doc edit), due for the same
+batched follow-up edit this log has flagged five times before. Given this pass's verdict is **NOT CLEAR**
+(REV-116/117/118 open), the correct language for tech-lead's next edit is not simply "IMPLEMENTED,
+reviewer-CLEAR Pass 28" — it should reflect the qualified state: dev-built and qa-tested PASS, but reviewer
+NOT CLEAR pending REV-116 (DEEP-007 residual) and REV-117 (SQL fix) before the SQL is applied and DEEP-007
+is marked resolved. Owner: **tech-lead**, folded into the same edit as REV-118/119's design-doc touches once
+the fix cycle above completes — premature to word precisely before REV-116/117 are fixed and re-verified.
+Not a merge blocker.
+
+---
+
+### Open items after Pass 28
+
+**Blockers: 0. New majors: 3** (REV-116, REV-117, REV-118) — none halt merging INC-12's own qa-passed
+code/tests to `main` (all 9 of the increment's literal ACs are independently verified correct), but
+**REV-116 and REV-117 must be fixed and re-verified before DEEP-007 is marked RESOLVED and before
+`sql/kill_switch_abort_log.sql` is applied live** — recommend routing both to dev/tech-lead as one short fix
+cycle ahead of Phase-4 closure, per this project's "Max 3 fix cycles" convention (this would be fix cycle 1).
+
+**New minors: 3** (REV-119, REV-120, REV-121), all non-blocking.
+
+**DEEP-007 — NOT RESOLVED.** Remains open, re-scoped: checkpoints 2–4 and the FR35 classification mechanism
+are independently verified correct and complete; checkpoint 1's own placement is correct for the actions
+FR24 names, but a fifth, pre-checkpoint-1 irreversible-action path (REV-116) was found and is not yet
+guarded. Not moved to archive — stays live in this log under its original `DEEP-007` heading (amend that
+entry's status line to point here rather than duplicating the finding).
+
+**Carried, unchanged (not touched by this diff) — confirmed still accurate by the doc-status batched cleanup
+this pass independently re-verified (REV-108/110/111/115, all four now closed — see below), everything else
+untouched:** REV-063 residual + REV-071 (dev), REV-065 (tech-lead), REV-066 + REV-052 (tech-lead + pm),
+REV-067 (tech-lead), REV-072 (tech-lead), REV-048 (qa), REV-049(b) (release), REV-080 (qa), REV-079
+(tech-lead), REV-097 (dev or pm), REV-100 (dev), REV-101 (tech-lead/dev), REV-102 (tech-lead), REV-103/104/
+105 (release), REV-106 (dev), REV-107 (qa, carried to closure), REV-109 (qa), REV-114 (qa — general
+no-SQL-in-CI gap, unchanged), plus REV-070's AC3 residual and INC-4's AC6 — **both now RESOLVED per the
+INC-11 live-verification pass** (`docs/test-report.md`'s INC-11 entry, `docs/handoff.md`'s INC-11 evidence
+record) — pm should close these two out explicitly at Phase-4 rather than carry them as open. BUG-007
+(qa's `_parse_batch` deferral) unchanged, still open, still minor, still deferred by design.
+
+**Resolved this pass, independently re-verified against current file content: 4** — REV-108, REV-110,
+REV-111, REV-115 (the batched INC-8/9/10 status-marker + REV-113-completeness cleanup, commit `0ace984`).
+Confirmed via direct read of `design.md:8-52,90-92`, `components.md:199-203`, `non-functional-ops.md:24-38` —
+all now read IMPLEMENTED/reviewer-CLEAR with correct Pass citations, and the REV-113-completeness clauses
+(REV-115) are present in both files named. All four moved to `docs/archive/review-log-archive.md` per doc
+hygiene, closing dispositions above.
+
+**Routing (new items only):**
+- **dev** — REV-116 (move or gate `write_tunables_cache_if_fetched()`), REV-117 (one-line SQL REVOKE fix).
+- **tech-lead** — REV-116 (§13.1 correction), REV-117 (§13.6.5 code-sample fix), REV-118 (code-map refresh),
+  REV-119 (§13.6.1 failure-mode note), REV-121 (status markers, once the fix cycle above lands).
+- **pm** — REV-120 (FR35/§13.6.3 wording), plus close out REV-070/AC3 and INC-4/AC6 as delivered at Phase-4
+  per the INC-11 evidence now on record.
+
+---
+
+### Pass 28 summary
+
+**New findings by tag — 6:** `[CODE-GAP]`/`[DESIGN-GAP]` 1 major (REV-116), `[SECURITY]` 1 major (REV-117),
+`[STRUCTURE]` 1 major (REV-118), `[DESIGN-GAP]` 2 minor (REV-119, REV-121), `[REQUIREMENTS-GAP]` 1 minor
+(REV-120). **No `[SCOPE-CREEP]`, no `[HARDCODED]`, no `[BLOAT]`.**
+
+**Resolved this pass: 4** (REV-108, REV-110, REV-111, REV-115), independently re-verified against current
+file content.
+
+**Open blocker count: 0. Open major count: 3 (all new this pass).**
+
+### Verdict — Pass 28 / INC-12
+
+**NOT CLEAR.** INC-12's own nine literal acceptance criteria are independently verified correct — all four
+checkpoints are placed exactly where the design specifies, `BaseException`'s propagation is real and
+permanently tested, FR35's causal-tie classification is exclusive and correctly argued, and the 22 new tests
+are rigorous (not paper coverage — several assert negative properties, like "no `call_log`/`verdict_state`
+write happens," that a weaker test could have missed). **This does not, however, mean DEEP-007 is closed.**
+Tracing the code beyond the four named checkpoints surfaced a fifth, unguarded irreversible-action path
+(REV-116) that falsifies a specific sentence already committed to the design doc and sits squarely inside
+DEEP-007's own original scope — the same class of gap this whole increment exists to close, via a code path
+nobody had traced because it precedes the checkpoint everyone was looking at. Independently, the new SQL
+file (not yet applied live, reviewed here as production SQL per the brief) has a real, precedented
+`[SECURITY]` gap (REV-117) that must not ship as-is, and the code-map is now stale (REV-118).
+
+**What this means for the pipeline.** None of the three majors block merging INC-12's own code — it does
+exactly what its nine ACs ask, correctly and with real test coverage. They **do** block two specific claims:
+(1) that `DEEP-007` is resolved, and (2) that `sql/kill_switch_abort_log.sql` is ready to apply live. Given
+this is the final code increment and Phase-4 closure follows this pass, recommend: one short fix cycle (dev
+fixes REV-116's code path and REV-117's SQL line; tech-lead corrects the two design-doc sentences these
+findings falsify) followed by a targeted re-verification pass (not a full 6-pass re-audit — the diff will be
+small and contained to the two fixes), then Phase-4's full whole-codebase audit as planned. This mirrors the
+exact structure of every prior fix-round in this log (Pass 14→15, Pass 16→17, Pass 18→19, Pass 26→27) and
+should take one cycle, not three.
