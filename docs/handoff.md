@@ -794,3 +794,86 @@ here; the full suite was green before and after with zero edits to `tests/`.
   tech-lead (status-marker updates reflecting INC-8's Pass-24 clearance) that predate this session's INC-9
   work and are outside dev's ownership (`CLAUDE.md`'s agent table: tech-lead owns `docs/design.md`) — noted
   here only so INC-9's own commit doesn't get blamed for unrelated doc diffs already present in the tree.
+
+---
+
+## BUG-005 fix (fix cycle 1 of 3) — `_normalize_ticker`'s cross-market collision in `_parse_batch`
+
+### Build plan (written before coding)
+
+Read `docs/test-report.md`'s BUG-005 entry (repro, expected/actual, qa's suggested-not-prescribed fix),
+`docs/design/components.md` §4.4a's positional-fallback contract (the exact pseudocode I implemented
+against in INC-9), and `docs/review-log.md`'s DEEP-003 entry (same fabrication class, adjacent case). Root
+cause: `_normalize_ticker` strips `.TO`/`.NS` before comparing, so two *different* real watchlist tickers
+sharing a base symbol across markets (`ABC.TO`/`ABC.NS`) normalize identically, letting the positional
+fallback's corroboration check treat an already-consumed `ABC.TO` object as if it corroborates `ABC.NS`.
+**Fix shape:** a normalized-only match (candidate has an explicit `ticker` field that doesn't exactly equal
+the ticker being resolved but normalizes to it) is now accepted only when that normalized form is
+*unambiguous* — exactly one of the batch's requested tickers normalizes to it (`collections.Counter` over
+`tickers`, computed once per `_parse_batch` call). The no-ticker-field ("model forgot the label") branch is
+untouched — it never depended on normalization to identify a match, so it can't be ambiguous the same way.
+Considered qa's suggested alternative (require an *exact* match whenever the candidate carries an explicit
+`ticker` field, reserving normalization for the no-field case only) but rejected it: §4.4a's own contract
+and this task's stated constraint both require a bare `"ABC"` reply to still resolve a request for
+`"ABC.TO"` when unambiguous — qa's alternative would reject that legitimate case outright, not just the
+collision. The unambiguity-guard shape preserves that legitimate normalized match while closing the
+collision. **File:** `scripts/ai_judge.py` only (`_parse_batch`, `_normalize_ticker` untouched, module
+docstring updated to state the refined invariant). Verify: `tests/test_ai_judge.py`'s three
+`_parse_batch`-scoped tests (BUG-005's repro test, the misattribution test, the legitimate-fallback test)
+plus the full suite; manual smoke of the collision repro, the no-label legitimate case, and a bare-ticker
+normalized match in a single-ticker (unambiguous) batch.
+
+### Departure from §4.4a — flagged, not silently applied
+
+**Yes, this fix extends §4.4a's literal contract.** §4.4a's pseudocode (`components.md` lines ~236–251)
+accepts a normalized match unconditionally: "its own `ticker` field is absent, OR its own ticker normalizes
+... to the one we're resolving." It does not mention batch-wide ambiguity at all — that gap is exactly
+BUG-005. My fix adds a new condition (`normalized_counts[t_norm] == 1`) that §4.4a's text does not specify.
+This is a correctness fix to a documented gap, not a reinterpretation of what §4.4a already says — but
+since it changes the accept/reject boundary of the corroboration check, tech-lead should record the
+unambiguity guard in `components.md` §4.4a (same pattern the test-report's BUG-005 entry already names:
+"tech-lead recording the corroboration-check decision in `components.md` §4.4a, same pattern as the
+original DEEP-003 fix"). I have not edited the design doc.
+
+### Files changed
+
+- `scripts/ai_judge.py` — `_parse_batch`: added a `Counter` of normalized forms over the batch's requested
+  `tickers`; the normalized-match branch of the positional-fallback check now also requires
+  `normalized_counts[_normalize_ticker(t)] == 1`. Module docstring and `_parse_batch`'s own docstring
+  updated to state the refined invariant (BUG-005 closes the residual gap DEEP-003's narrowing left open).
+  No other function touched; `_normalize_ticker` itself is unchanged. New import: `from collections import
+  Counter`.
+
+### How to run it
+
+`SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short tests/test_ai_judge.py -k parse_batch` for the
+targeted 3 tests, or the full suite: `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short`.
+
+### Full regression + smoke test
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **237 passed, 0 failed** (236 baseline + the
+  1 previously-failing BUG-005 test now passing; matches the task's stated success bar exactly).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **63 passed, 0 failed**, unaffected
+  (zero `admin-portal/` files in scope).
+- Manual smoke via `ai_judge._parse_batch` directly, three scenarios:
+  1. BUG-005 repro (`["ABC.TO", "ABC.NS"]`, response `[{no ticker, verdict/rationale A}, {"ticker":
+     "ABC.TO", verdict/rationale B}]`) → `ABC.TO` resolves `parse_status="ok"`/`rationale="abc-to-reason"`
+     via its own direct label; `ABC.NS` now resolves `parse_status="failed"` (fail-safe), no longer
+     inherits `ABC.TO`'s rationale.
+  2. Legitimate no-label fallback (INC-9's own committed scenario, `["AAPL","MSFT","TSLA"]`, MSFT's object
+     unlabeled) → `MSFT` still resolves `parse_status="ok"` with its own object's verdict/rationale, log
+     line still fires — unaffected by this fix, confirming the constraint against regressing it holds.
+  3. Legitimate bare-ticker normalized match in an *unambiguous* single-ticker batch (`["ABC.TO"]`,
+     response `[{"ticker": "ABC", ...}]`) → still resolves `parse_status="ok"` via the normalized match,
+     confirming the "model answers ABC when asked about ABC.TO" case §4.4a exists to serve is preserved,
+     not regressed by the new ambiguity guard.
+
+### Known limitations
+
+- The ambiguity check is scoped to the tickers requested *in the current batch* only, per the task's
+  framing ("unambiguous within the batch being parsed"). A three-way collision (e.g. a batch somehow
+  requesting the same base symbol on all three markets) is likewise caught, since `Counter` counts however
+  many tickers share a normalized form, not just two.
+- Not in scope for this fix cycle (unchanged): `by_ticker`'s existing duplicate-ticker log line, the
+  misaligned-array (DEEP-003 original) check, and `ingest.py` (BUG-005 is `ai_judge.py`-only per the task's
+  scope).
