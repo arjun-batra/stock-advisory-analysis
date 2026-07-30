@@ -81,6 +81,14 @@ begin
   return new;
 end; $$;
 
+-- BUG-008 fix: `create trigger` alone is not re-runnable (errors "already exists" on a second
+-- apply). `create or replace trigger` (PG14+) would be the one-line alternative, but this file is
+-- meant to be applied to a live Supabase project whose exact Postgres major version hasn't been
+-- confirmed from here — `drop trigger if exists` + `create trigger` is the conservative equivalent
+-- and is safe: `tunables_0_validate_update` is this file's own new object, not a pre-existing live
+-- trigger, so dropping and recreating it changes nothing an external caller could observe.
+drop trigger if exists tunables_0_validate_update on public.tunables;
+
 create trigger tunables_0_validate_update
   before update on public.tunables
   for each row execute function public._validate_tunable_update();
