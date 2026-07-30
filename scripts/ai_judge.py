@@ -99,11 +99,27 @@ def _ticker_block(data: dict, position: dict | None) -> str:
         f"Position: {'HELD' if position else 'WATCH-ONLY'}",
     ]
     if position:
-        lines.append(
-            f"  Shares: {position['shares']}, Cost basis: {position['cost_basis']} "
-            f"{position['currency']}, Current price: {data['price']}, "
-            f"Unrealized P/L: {_pct(position['pl_pct'])}"
-        )
+        if position.get("currency_mismatched"):
+            # REV-113 (INC-10 fix round #2): build_position() already suppresses
+            # pl_pct for a currency mismatch (§7.3/FR11), but the raw cost_basis
+            # and price were still landing on one line, unlabeled, next to each
+            # other -- inviting the model to compute and state its own P/L
+            # figure from two differently-denominated numbers. Withhold both
+            # raw figures rather than merely the derived ratio (DEEP-006's own
+            # suggested fix: keep the bad row from reaching the prompt at all).
+            lines.append(
+                f"  Shares: {position['shares']}. Cost basis and current price are not "
+                f"shown together: the recorded holding currency ({position['currency']}) does "
+                f"not match this ticker's market currency ({f.get('currency') or 'unknown'}), so "
+                "the two figures are not comparable -- do not compute or state an unrealized "
+                "gain/loss for this position."
+            )
+        else:
+            lines.append(
+                f"  Shares: {position['shares']}, Cost basis: {position['cost_basis']} "
+                f"{position['currency']}, Current price: {data['price']}, "
+                f"Unrealized P/L: {_pct(position['pl_pct'])}"
+            )
     # Why the discovery screen shortlisted this name today (e.g. gainer,
     # volume-spike, 52w-high) — the very event the verdict should weigh.
     # Absent on watchlist tickers.

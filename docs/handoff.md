@@ -1285,3 +1285,127 @@ check.
 `tunables_static.test.ts:146`'s regex (`create trigger` → `create (or replace )?trigger`) to match
 the fixed file on its next pass. Not blocking a re-review of the SQL fix itself, which is complete
 and independently re-verified above.
+
+## REV-112/REV-113 fix (fix cycle 2 of 3) — `_ticker_block` currency-mismatch fabrication risk + corrective-SQL packaging
+
+### Build plan (written before coding)
+
+Read `docs/review-log.md` Pass 26's REV-113/REV-112 entries, `docs/design/non-functional-ops.md` §7.3,
+and `docs/requirements.md` FR11/FR29. **REV-113** (major, priority): `ai_judge._ticker_block`
+(`:101-106`) rendered a held position's raw `cost_basis`/currency and unlabeled `price` on one line even
+when `build_position` had suppressed `pl_pct` for a currency mismatch — the model could still compute
+its own gain/loss from the two adjacent, differently-denominated numbers and state it as fact. §7.3
+already documents the invariant (pl_pct suppression) and DEEP-006's own suggested fix ("stop a bad row
+from reaching the prompt at all") is on record, so this closes that intent one layer further, not a new
+design decision. **REV-112** (minor): the DEEP-005 seed-description correction lived as a trailing
+`update` inside `sql/admin_portal_tunables.sql`, an already-applied (INC-6), non-re-runnable migration —
+so it would never actually reach the live project. Files: `scripts/ai_judge.py` (REV-113 render fix),
+`scripts/state.py` (expose the mismatch condition `build_position` already computes, so `_ticker_block`
+doesn't re-derive it — CLAUDE.md's "extract on second occurrence" rule), `sql/admin_portal_tunables.sql`
+(remove the trailing `update`, pointer comment only) + new `sql/admin_portal_tunables_alerts_enabled_
+description_fix.sql` (the correction, as its own additive/idempotent/re-runnable file). Verify: full
+pytest + node --test suites unchanged from baseline (249/0, 82/0 expected), manual `_ticker_block`
+render check for both the mismatch and agreeing-currency cases, no design doc edited.
+
+### REV-113: what `_ticker_block` now emits, and why
+
+For a held position where `build_position` detects a currency mismatch (holding currency vs. the
+independently-fetched fundamentals currency, the exact FR11 condition), `_ticker_block` now emits:
+
+```
+Shares: 10. Cost basis and current price are not shown together: the recorded holding currency (USD)
+does not match this ticker's market currency (CAD), so the two figures are not comparable -- do not
+compute or state an unrealized gain/loss for this position.
+```
+
+instead of the old `Shares: N, Cost basis: X CUR, Current price: Y, Unrealized P/L: n/a` line. I chose
+**omission over labeling** (the reviewer's two suggested shapes): labeling both figures with their own
+currencies would still put two numbers side by side that *look* subtractable/divisible, and a model
+computing its own cross-currency "adjusted" ratio despite a label is the same risk class DEEP-005/006/
+this finding are all about — the guard needs to hold even against a model that half-ignores an
+instruction. Omitting both raw figures (not just the derived `pl_pct`) matches DEEP-006's own
+already-recorded fix intent quoted in REV-113 ("stop a bad row from reaching the prompt at all") and
+removes the arithmetic opportunity structurally rather than trusting an instruction to suppress it.
+`Shares` is kept (not currency-denominated, no mismatch risk, still useful HELD-vs-WATCH-ONLY context).
+The current price is not lost to the model — it still appears, correctly labeled with the fundamentals
+currency, in the unrelated "Price/volume" line below (unchanged), which is the ticker's own real listing
+price and needed for price/volume analysis regardless of any holding.
+
+To avoid duplicating the mismatch condition (build_position's `fundamentals_currency and currency and
+fundamentals_currency != currency`) a second time in `ai_judge.py`, `build_position` (`scripts/
+state.py`) now also returns `currency_mismatched: bool` on the position dict it already builds and
+hands to `judge_batch`/`_ticker_block` via the existing `{"data":..., "position":...}` contract —
+`state.py` stays the single owner of the FR11 invariant-detection logic; `ai_judge.py` only consumes the
+already-computed fact. No existing test asserts the full key-set of `build_position`'s return value
+(`tests/test_state.py:307-370` all check specific keys, e.g. `pos["pl_pct"]`), so this is additive, not
+breaking.
+
+**Does this change §7.3's specified contract? No.** §7.3's text is about the currency invariant itself
+("pl_pct is suppressed... rather than computed from mismatched currencies, per FR11's explicit
+requirement") — it says nothing about the prompt-rendering layer's exact wording, and this fix
+implements the intent §7.3/FR11 and DEEP-006 already establish (no model-facing fabrication of a
+cross-currency figure), just at the one remaining layer (the raw inputs, not just the derived output)
+that intent hadn't yet reached. I did not edit `non-functional-ops.md`. One adjacent doc line is *not*
+fully precise anymore and is worth tech-lead's attention at the next design-doc pass (not blocking, not
+edited by me): `docs/design/components.md` §4.4's one-line prompt-content summary says the per-ticker
+block has "shares/cost-basis/price/P&L for held" unconditionally — true in the non-mismatch case, no
+longer true in the mismatch case. Flagging, not fixing — design docs are tech-lead's per the ownership
+table.
+
+### REV-112: where the correction moved, and why
+
+New file: `sql/admin_portal_tunables_alerts_enabled_description_fix.sql` — one `update public.tunables
+... where key = 'ALERTS_ENABLED'` statement, byte-identical to the one removed from `sql/
+admin_portal_tunables.sql`, with a header explaining the move and its idempotency (same shape as this
+round's other two new files, `tunables_validate_trigger.sql`/`holdings_currency_derivation.sql`). Chose
+"new separate file" over "apply-time note" (the reviewer's two suggested fixes) because INC-11 is about
+to apply those same two new files — adding this as a third file in that same batch is a natural,
+low-effort home that actually gets executed, rather than relying on a release engineer reading an extra
+instruction correctly by hand. `sql/admin_portal_tunables.sql` itself: removed only the trailing
+`update` block (never applied live — only the file's original `create table`/seed seeded at INC-6 is
+"Deployed as part of INC-6" per `docs/runbook.md` §2.3) and replaced it with a one-line pointer comment;
+lines 1-86 (the already-applied create-table/seed content) are untouched. No SQL applied to the live
+project.
+
+### Files changed
+
+- `scripts/ai_judge.py` — `_ticker_block`'s held-position line branches on `position["currency_mismatched"]`.
+- `scripts/state.py` — `build_position` returns `currency_mismatched: bool` alongside the existing keys.
+- `sql/admin_portal_tunables.sql` — trailing corrective `update` removed, replaced with a pointer comment; nothing else changed.
+- `sql/admin_portal_tunables_alerts_enabled_description_fix.sql` — new, the relocated correction.
+
+### How to run it
+
+`SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` (full suite);
+`node --experimental-strip-types --test tests/admin_portal/*.test.ts` (full suite); manual render check:
+`python3 -c "..."` building a mismatched-currency `data`/`holding` pair, calling
+`state.build_position()` then `ai_judge._ticker_block()`, confirming `cost_basis`/`price` never appear
+on the same line for that case (done below).
+
+### Full regression + smoke test
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **249 passed, 0 failed** — matches
+  baseline exactly; REV-113's change added no new duplicated-condition code and no existing test builds
+  a held-position prompt through `_ticker_block` (`tests/test_ai_judge.py` only exercises `position:
+  None`), so nothing broke and nothing needed a workaround.
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **82 passed, 0 failed** —
+  matches baseline exactly; no TS test reads `sql/admin_portal_tunables.sql`'s trailing lines or the
+  new SQL file's content.
+- Manual `_ticker_block` render check (mismatch: USD holding on a CAD-fundamentals ticker; agreement:
+  CAD holding on a CAD-fundamentals ticker) — mismatch case shows the new omission line with no
+  `cost_basis` figure anywhere in the block; agreement case is byte-identical to the pre-fix rendering
+  (`Shares: 10, Cost basis: 50.0 CAD, Current price: 68.0, Unrealized P/L: 36.0%`) — the guard fires only
+  on an actual mismatch, unchanged behavior otherwise.
+- Smoke test: `SKIP_TUNABLES_FETCH=true python3 -c "import sys; sys.path.insert(0,'scripts'); import
+  run_hourly, run_discovery, publish_prices"` → all three entry points import cleanly.
+
+### Known limitations / things qa may need to update
+
+- No existing test exercises `_ticker_block` with a non-`None` `position` at all (mismatched or
+  agreeing) — qa may want to add a `test_ai_judge.py` case for both branches now that REV-113 gives the
+  mismatch branch product-relevant behavior worth a permanent regression guard (mirrors how DEEP-006's
+  `build_position` guard got its own three tests in `test_state.py`). Not something I added myself since
+  `tests/` is qa's per the ownership table and none of the 249 pytest / 82 TS tests broke, so there's
+  nothing to *fix*, only a coverage gap to flag.
+- `tunables_static.test.ts:144-153`'s regex/BUG-008 flag from fix cycle 1 (still open, qa's) is
+  unrelated to this fix cycle and unaffected by it.

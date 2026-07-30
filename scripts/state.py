@@ -172,6 +172,12 @@ def build_position(holding: dict | None, data: dict) -> dict | None:
     explicit requirement (non-functional-ops.md §7.3). A missing fundamentals
     currency (Yahoo didn't return one) is "unknown", not "disagrees" -- pl_pct
     is still computed in that case, unchanged from pre-INC-10 behavior.
+
+    `currency_mismatched` is exposed on the returned dict (REV-113, INC-10
+    fix round #2) so `ai_judge._ticker_block` -- the only other consumer that
+    needs to know about the mismatch -- can also withhold the raw cost-basis/
+    price figures from the prompt, without re-deriving this same condition a
+    second time.
     """
     if not holding:
         return None
@@ -179,7 +185,8 @@ def build_position(holding: dict | None, data: dict) -> dict | None:
     price = data.get("price") or 0
     currency = holding.get("currency")
     fundamentals_currency = (data.get("fundamentals") or {}).get("currency")
-    if fundamentals_currency and currency and fundamentals_currency != currency:
+    mismatched = bool(fundamentals_currency and currency and fundamentals_currency != currency)
+    if mismatched:
         print(f"  [state] WARNING holding currency mismatch for {data.get('ticker')}: "
               f"holdings.currency={currency!r} vs fundamentals.currency={fundamentals_currency!r} "
               f"(watchlist.market likely wrong for this ticker) — suppressing pl_pct per FR11")
@@ -191,6 +198,7 @@ def build_position(holding: dict | None, data: dict) -> dict | None:
         "cost_basis": cost,
         "currency": currency,
         "pl_pct": pl_pct,
+        "currency_mismatched": mismatched,
     }
 
 
