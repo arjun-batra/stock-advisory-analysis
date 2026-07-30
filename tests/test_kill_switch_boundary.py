@@ -498,6 +498,88 @@ def test_is_paused_failure_at_checkpoint3_is_caught_as_an_ordinary_per_ticker_er
 
 
 # =============================================================================
+# REV-116 (Pass 28, docs/review-log.md) -- DEEP-007 residual: the
+# tunables-cache write (a real `contents: write` commit path) must never fire
+# before checkpoint 1's pause read, in either direction.
+#
+# Every other test in this suite runs with SKIP_TUNABLES_FETCH=true
+# (tests/conftest.py), which empties config._TUNABLES at import time and
+# makes write_tunables_cache_if_fetched()'s own `if not _TUNABLES: return`
+# guard a silent no-op regardless of call ordering -- exactly why 22 prior
+# boundary tests all passed while the defect (write ran unconditionally as
+# main()'s first statement, before state.client()/checkpoint 1 even existed)
+# was live. This test deliberately bypasses that skip: it populates
+# config._TUNABLES/_TUNABLES_CACHE directly (not via the SKIP_TUNABLES_FETCH
+# env var, so the module-level skip stays in effect for every other test in
+# the suite) and wraps the REAL write_tunables_cache_if_fetched with a
+# call-counting spy that still calls through, so the assertion is against the
+# function actually doing its real merge/validate/write work, not a stub that
+# would pass no matter where the call sits.
+# =============================================================================
+
+@pytest.fixture
+def real_tunables_write_spy(monkeypatch, tmp_path):
+    """Makes config.write_tunables_cache_if_fetched() do real work (real
+    merge/validate against a real, temporary cache file) instead of the
+    SKIP_TUNABLES_FETCH no-op every other test relies on, and counts calls
+    without changing behavior (wraps, does not replace, the real function)."""
+    monkeypatch.setattr(config, "_TUNABLES", {"GEMINI_MODEL": "gemini-spy-test-value"})
+    monkeypatch.setattr(config, "_TUNABLES_CACHE", {})   # differs from _TUNABLES -> a real write would occur
+    monkeypatch.setattr(config, "_CACHE_PATH", tmp_path / "tunables_cache.json")
+
+    real_fn = config.write_tunables_cache_if_fetched
+    calls = {"n": 0}
+
+    def _spy():
+        calls["n"] += 1
+        return real_fn()
+    monkeypatch.setattr(config, "write_tunables_cache_if_fetched", _spy)
+    calls["path"] = tmp_path / "tunables_cache.json"
+    return calls
+
+
+def test_rev116_tunables_cache_write_not_reached_while_paused(monkeypatch, wire_main, real_tunables_write_spy):
+    """The core REV-116 regression: a paused run must reach zero calls to the
+    real tunables-cache write, not just an empty _TUNABLES-masked no-op.
+    Fails on the pre-fix ordering (git show d875078:scripts/run_hourly.py),
+    where the write was main()'s unconditional first statement, reachable
+    before state.client()/checkpoint 1 existed at all."""
+    sb = wire_main
+    sb.paused = True
+
+    run_hourly.main()
+
+    assert real_tunables_write_spy["n"] == 0
+    assert not real_tunables_write_spy["path"].exists()
+
+
+def test_rev116_tunables_cache_still_refreshes_on_closed_market_when_not_paused(
+        monkeypatch, wire_main, real_tunables_write_spy):
+    """The design property (docs/design/tunables-fallback.md) this fix must
+    NOT regress: 'the cache refreshes on every dispatch regardless of whether
+    the market check inside main() goes on to skip work.' Market closed, no
+    FORCE_RUN, kill switch not paused -- checkpoint 1's own gate must exit
+    early (no watchlist fetch, no AI call), but the real tunables write must
+    still have fired exactly once before that early exit, exactly as it did
+    pre-fix, and must have actually written the merged file."""
+    sb = wire_main
+    sb.paused = False
+    monkeypatch.setattr(config, "is_market_open", lambda now: False)
+    monkeypatch.setattr(config, "is_nse_open", lambda now: False)
+    monkeypatch.setattr(config, "FORCE_RUN", False)
+    monkeypatch.setattr(run_hourly.state, "get_watchlist",
+                         lambda sb: (_ for _ in ()).throw(AssertionError(
+                             "must not reach the watchlist fetch on a closed, non-forced market")))
+
+    run_hourly.main()
+
+    assert real_tunables_write_spy["n"] == 1
+    assert real_tunables_write_spy["path"].exists()
+    import json
+    assert json.loads(real_tunables_write_spy["path"].read_text())["GEMINI_MODEL"] == "gemini-spy-test-value"
+
+
+# =============================================================================
 # Probe: two aborts in one run -- can it ever happen?
 # =============================================================================
 
