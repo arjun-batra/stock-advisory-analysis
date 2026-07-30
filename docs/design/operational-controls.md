@@ -26,8 +26,9 @@ rewrite to settle what "the run produced real work, then stopped" means for NFR2
 reviewer-cleared (Pass 24), so it was unblocked; the user approved the design for build (GATE-3-equivalent,
 2026-07-30). **Not yet reviewer-clear:** Pass 28's diff-scoped audit found two new majors — **REV-116**
 (tracing past the four named checkpoints surfaced a fifth, unguarded, pre-checkpoint-1 irreversible write in
-`run_hourly.py`'s `main()`; **DEEP-007 is not yet fully resolved** as a result, see §13.1's accepted-risk
-note below, still accurate to Pass 27 and pending correction once dev's fix lands) and **REV-117** (the new
+`run_hourly.py`'s `main()`; **DEEP-007 is not yet fully resolved** as a result — dev's code fix has landed
+and §13.1's accepted-risk note / §13.6.2's checkpoint-1 placement text are now corrected to match it, but
+reviewer has not yet re-audited the fix, so DEEP-007 stays open until that happens) and **REV-117** (the new
 SQL file's `REVOKE` omits `TRUNCATE`, fixed in §13.6.5 below as of this update; blocks only live application
 of `sql/kill_switch_abort_log.sql`, not merging INC-12's Python code). Neither blocks INC-12's own qa-passed
 code from being on `main`. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance
@@ -72,8 +73,18 @@ the dispatch layer described in this section; FR24's dispatch-layer text scopes 
 **scheduled** workflow dispatches." What changes once §13.6 ships: a manually-triggered run's own `main()`
 now hits FR24 checkpoint 1 (§13.6.2) within a few lines of starting, regardless of how it was invoked, and
 self-aborts if paused — so the residual window this risk leaves shrinks from "the entire run completes" to
-"between manual dispatch and `main()` reaching checkpoint 1" (config/secret loading, sub-second, no
-irreversible action possible in that window). Only Arjun has write access to trigger `workflow_dispatch`
+"between manual dispatch and `main()` reaching checkpoint 1." **That remaining window is free of any
+irreversible action — but only because checkpoint 1 is, in each of the three entry points, positioned ahead
+of everything except its own genuine preconditions** (in `run_hourly.py`/`run_discovery.py`:
+`config.require_secrets(...)` for the secrets `state.client()` itself needs, then `sb = state.client()`;
+nothing else runs first). This was not always true: REV-116 (`docs/review-log.md` Pass 28) found
+`run_hourly.py`'s tunables-cache write — a real `contents: write` commit path — sitting above checkpoint 1
+as `main()`'s literal first statement, reachable unconditionally even while paused. Fixed by moving
+checkpoint 1 itself up to precede it (§13.6.2), not by moving the write down — the write stays *before* the
+market-gate check for an unrelated, still-load-bearing reason (`tunables-fallback.md:302-303`'s "refreshes
+on every dispatch" property). **The claim above holds only for as long as no future edit adds a new
+statement ahead of checkpoint 1 in any of these three files without first checking whether it's a genuine
+precondition — see `design.md` §0 rule #13.** Only Arjun has write access to trigger `workflow_dispatch`
 manually, so the exposure was already low; §13.6 was not built to close this specific risk (it exists to
 satisfy Decision #37's in-flight-run guarantee), but closes most of it as a side effect.
 
@@ -298,11 +309,31 @@ failures to look like checkpoint 1's (a hard run-crash), not checkpoint 3's (a g
 #### 13.6.2 The four checkpoints — placement and control flow
 
 **Checkpoint 1 — entry to `main()` (`run_hourly.py`, `run_discovery.py` only; FR24's text does not name
-this checkpoint for `publish_prices.py`, see checkpoint 4 below).** Placed immediately after `sb =
-state.client()` / `notifier = notify.get_notifier()` are constructed (the earliest point a pause read is
-possible) and before any Yahoo fetch or AI call — `state.get_watchlist(sb)` in `run_hourly.py`,
-`prefilter.find_candidates(...)` in `run_discovery.py` (a live Yahoo screener call, §4.3). A bare
-early-return, no exception:
+this checkpoint for `publish_prices.py`, see checkpoint 4 below).** The two files no longer share one
+placement — `run_hourly.py`'s moved as a fix for REV-116 (`docs/review-log.md` Pass 28; see §13.1's
+accepted-risk note for what this fix restores):
+
+- **`run_discovery.py`** keeps the original placement: immediately after `sb = state.client()` /
+  `notifier = notify.get_notifier()` are constructed (the earliest point a pause read was possible there)
+  and before any Yahoo fetch or AI call — `prefilter.find_candidates(...)` (a live Yahoo screener call,
+  §4.3). Dev traced this file's `main()` top-to-bottom for REV-116 and confirmed nothing irreversible
+  precedes it; no fix was needed here.
+- **`run_hourly.py`** moved to the very top of `main()`, preceded only by its genuine precondition —
+  `config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")` (the two secrets `state.client()` itself
+  needs) then `sb = state.client()` — and now precedes **both** the market-gate computation **and**
+  `config.write_tunables_cache_if_fetched()`, the pre-existing `contents: write` commit path REV-116 found
+  reachable, unconditionally, even while paused. `GEMINI_API_KEY` is not a precondition for reading the
+  pause flag, so its validation stays where it's actually needed: a second, narrower
+  `config.require_secrets("GEMINI_API_KEY")` call immediately before the AI call further down.
+  `write_tunables_cache_if_fetched()` itself was deliberately **not** moved below the checkpoint's old
+  position — the simpler-looking fix — because `tunables-fallback.md:302-303` states as an explicit design
+  property that the write runs before the market gate so the cache "refreshes on every dispatch regardless
+  of whether the market check goes on to skip work"; moving only the write down would have silently broken
+  that on every closed-market invocation (most of the day). Moving checkpoint 1 up instead preserves both
+  properties: nothing irreversible precedes the pause read, and the cache still refreshes on every
+  non-paused dispatch, open market or not.
+
+Both remain a bare early-return, no exception:
 ```python
 if state.is_paused(sb):
     print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "

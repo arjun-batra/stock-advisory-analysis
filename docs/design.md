@@ -182,6 +182,20 @@ intent from `SD.md §0`:
     `sql/admin_portal_rls.sql:17`, when the table has no legitimate anon/authenticated write path at all —
     the common case for this project's tables). Don't rely on a later sweep to catch what a template block
     should have gotten right the first time.
+13. **Checkpoint 1 in each entry point's `main()` must precede every irreversible action in that
+    function, and be preceded by nothing but its own genuine, minimal preconditions
+    (`operational-controls.md` §13.6.2, §13.1).** Found violated once: REV-116 (`docs/review-log.md` Pass
+    28) — `run_hourly.py`'s tunables-cache write, a real `contents: write` commit path, sat above checkpoint
+    1 as `main()`'s literal first statement, reachable unconditionally even while paused. **The fix is
+    two-sided and easy to get half-right:** moving the *write* down to checkpoint 1's old position (instead
+    of moving the *checkpoint* itself up) would have silently broken `tunables-fallback.md`'s "refreshes on
+    every dispatch regardless of whether the market check goes on to skip work" property on every
+    closed-market invocation. Before adding, reordering, or removing any statement above checkpoint 1 in
+    `run_hourly.py::main`, `run_discovery.py::main`, or (for checkpoint 4) `publish_prices.py::main`, check
+    both: (a) is this a genuine precondition for reading the pause flag (e.g. the two Supabase secrets
+    `state.client()` needs) — if not, it belongs below the checkpoint, not above it; (b) does moving
+    something below the checkpoint break a different stated design property elsewhere — if so, move the
+    checkpoint up past it instead of moving the other thing down.
 
 ---
 
