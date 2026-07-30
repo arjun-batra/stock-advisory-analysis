@@ -165,3 +165,20 @@ test("holdings_currency_derivation.sql: does not redefine the holdings table or 
   assert.doesNotMatch(sql, /drop table/i);
   assert.doesNotMatch(sql, /drop policy/i);
 });
+
+test("holdings_currency_derivation.sql: trigger creation is idempotent -- create or replace, never a bare create trigger (BUG-008 regression guard)", () => {
+  const sql = readFileSync(HOLDINGS_CURRENCY_SQL, "utf8");
+  // Same defect class as tunables_validate_trigger.sql's BUG-008: a bare `create trigger` errors
+  // `trigger "..." already exists` on a second apply. Assert the re-runnable property directly
+  // rather than matching one particular syntax string. Strip SQL line comments first -- the
+  // file's own BUG-008 explanatory comment mentions the literal string "create trigger" in prose.
+  const sqlNoComments = sql.replace(/--.*$/gm, "");
+  const triggerStatements = [...sqlNoComments.matchAll(/create\s+(or replace\s+)?trigger\b/gi)];
+  assert.ok(triggerStatements.length >= 1, "no trigger-creation statement found in the file");
+  for (const stmt of triggerStatements) {
+    assert.ok(
+      stmt[1],
+      `found a bare "create trigger" (not idempotent -- BUG-008) in: "${stmt[0]}"; use "create or replace trigger"`
+    );
+  }
+});

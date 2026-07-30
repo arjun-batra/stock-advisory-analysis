@@ -143,7 +143,10 @@ test("tunables_validate_trigger.sql: a CASE branch exists for every one of the 1
 
 test("tunables_validate_trigger.sql: trigger name sorts before tunables_stamp_update (fires first, validate-then-stamp)", () => {
   const sql = readFileSync(TUNABLES_VALIDATE_SQL, "utf8");
-  const triggerMatch = sql.match(/create trigger (\S+)\s+before update on public\.tunables/i);
+  // Matches both `create trigger ...` and `create or replace trigger ...` -- this test is about
+  // fire-order (tgname sorting), not about which creation form is used; idempotency of the
+  // creation form itself is a separate, dedicated test below (BUG-008).
+  const triggerMatch = sql.match(/create (?:or replace )?trigger (\S+)\s+before update on public\.tunables/i);
   assert.ok(triggerMatch, "new validate trigger not found");
   const newTriggerName = triggerMatch![1];
   assert.ok(
@@ -151,6 +154,26 @@ test("tunables_validate_trigger.sql: trigger name sorts before tunables_stamp_up
     `trigger name '${newTriggerName}' must sort before 'tunables_stamp_update' (Postgres fires same-event ` +
       `BEFORE triggers in tgname order) so a rejected write never reaches the stamp trigger`
   );
+});
+
+test("tunables_validate_trigger.sql: trigger creation is idempotent -- create or replace, never a bare create trigger (BUG-008 regression guard)", () => {
+  const sql = readFileSync(TUNABLES_VALIDATE_SQL, "utf8");
+  // A bare `create trigger` (no `or replace`, no preceding `drop trigger if exists`) errors
+  // `trigger "..." already exists` on a second apply -- this is the exact defect BUG-008 filed
+  // and dev fixed. Assert the property that actually matters (re-runnable against a live table
+  // per docs/runbook.md's idempotency requirement), not just that some particular syntax string
+  // is present -- every `create ... trigger` statement in the file must be the `or replace` form.
+  // Strip SQL line comments first -- the file's own BUG-008 explanatory comment mentions the
+  // literal string "create trigger" in prose, which must not be mistaken for a real statement.
+  const sqlNoComments = sql.replace(/--.*$/gm, "");
+  const triggerStatements = [...sqlNoComments.matchAll(/create\s+(or replace\s+)?trigger\b/gi)];
+  assert.ok(triggerStatements.length >= 1, "no trigger-creation statement found in the file");
+  for (const stmt of triggerStatements) {
+    assert.ok(
+      stmt[1],
+      `found a bare "create trigger" (not idempotent -- BUG-008) in: "${stmt[0]}"; use "create or replace trigger"`
+    );
+  }
 });
 
 test("tunables_validate_trigger.sql: does not redefine the tunables table, the stamp trigger, or either RLS policy (strictly additive)", () => {
