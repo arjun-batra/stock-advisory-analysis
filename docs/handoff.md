@@ -877,3 +877,104 @@ targeted 3 tests, or the full suite: `SKIP_TUNABLES_FETCH=true python3 -m pytest
 - Not in scope for this fix cycle (unchanged): `by_ticker`'s existing duplicate-ticker log line, the
   misaligned-array (DEEP-003 original) check, and `ingest.py` (BUG-005 is `ai_judge.py`-only per the task's
   scope).
+
+---
+
+## BUG-006 fix (fix cycle 2 of 3) — duplicate-requested-ticker miscounted as ambiguity in `_parse_batch`
+
+### Build plan (written before coding)
+
+Read `docs/test-report.md`'s "Open bugs" BUG-006 entry (repro, root cause, explicit "not in scope" note on
+the pre-existing overwrite semantics), `docs/design/components.md` §4.4a (now updated by tech-lead with the
+BUG-005 unambiguity guard's pseudocode and stated intent — "exactly one of the tickers requested this call
+normalizes to that form"), and my own fix-cycle-1 handoff entry above. Root cause per qa: `normalized_counts
+= Counter(_normalize_ticker(x) for x in tickers)` counts raw occurrences of the requested `tickers` list, so
+the SAME ticker string requested twice (not two distinct tickers colliding) inflates its own count to 2 and
+the guard rejects it as "ambiguous" — then, because `out` is keyed by ticker string, that wrongly-rejected
+fail-safe overwrites the first occurrence's already-good entry. **Fix shape:** count *distinct* requested
+tickers (dedup by uppercased string) before building the `Counter`, so a duplicate request no longer counts
+against itself while a genuine cross-ticker collision (`ABC.TO`/`ABC.NS`, two distinct strings) still counts
+correctly. Read §4.4a's prose closely first ("exactly one of the tickers requested this call normalizes to
+that form") — it reads naturally as "one of the distinct tickers", consistent with the fix; see the
+departure note below for why I judged this a counting correction, not a contract change. **Also:** per the
+task's explicit prompt to consider the overwrite path independently, added a narrow guard so a later
+fail-safe result never overwrites an already-resolved "ok" for the same ticker key — reachable even with
+correct counting whenever a duplicate request's two occurrences land on genuinely different outcomes (one
+resolves, the other doesn't). Did **not** change `out`'s ticker-string keying/last-write-wins semantics more
+broadly (e.g. ok-over-ok) — qa's bug report explicitly scopes that out ("not itself being re-litigated
+here"), and redesigning the return shape would ripple into every caller of `_parse_batch`, well past this
+bug's scope. **File:** `scripts/ai_judge.py` only (`_parse_batch`'s `Counter` construction and the
+per-ticker write to `out`; `_normalize_ticker` untouched). Verify: the BUG-006 repro test (qa's, already
+committed), the existing BUG-005/DEEP-003 `_parse_batch` tests (guard against regressing the collision case
+the counting fix must still catch), full suite, plus manual smoke of three scenarios (BUG-006 repro,
+ok-then-fail-safe duplicate, genuine cross-market collision still fails safe).
+
+### Does this change §4.4a again? No — flagged for confirmation, not silently assumed
+
+This is a counting-mechanism correction, not a change to what §4.4a specifies. §4.4a's stated contract is
+"a normalized-only match is accepted only when it is unambiguous within the batch: exactly one of the
+tickers requested this call normalizes to that form" — the *intent*, restated repeatedly in §4.4a's own "why
+this is non-obvious" and BUG-005-refinement prose, is to catch **distinct, real tickers** colliding on a
+shared normalized base (its own worked example is always `ABC.TO`/`ABC.NS`, two different companies). A
+ticker requested twice is not a second thing to be confused with — it's the same thing asked about twice;
+there is nothing to disambiguate. The literal pseudocode (`Counter(...) for x in tickers`, no dedup) simply
+didn't anticipate that a batch could contain a literal duplicate string, which is exactly BUG-006's finding.
+Correcting the count to operate over distinct requested tickers makes the code match the contract's own
+stated purpose; it doesn't add, remove, or loosen what counts as "ambiguous" between two different real
+tickers — verified with the smoke-test scenario 3 below, the genuine `ABC.TO`/`ABC.NS` collision still fails
+safe unchanged. The overwrite guard (ok is never replaced by a later fail-safe for the same key) is likewise
+not a §4.4a change — §4.4a governs when a normalized match is *accepted*, not what happens to `out`'s
+dict-keyed storage after a result is already accepted; that's a narrower, local safety net one layer down.
+**No design doc edit made or needed on my read — flagging per the task's instruction so tech-lead/orchestrator
+can confirm rather than silently trusting my judgment on it.**
+
+### Files changed
+
+- `scripts/ai_judge.py` — `_parse_batch`:
+  - `normalized_counts` now built from `{x.upper() for x in tickers}` (dedup) rather than the raw `tickers`
+    list, so a ticker requested twice counts once toward its own normalized form, not twice.
+  - The per-ticker write into `out` now goes through a local `result` variable; before writing, if `result`
+    is a fail-safe (`parse_status == "failed"`) and `out` already holds an `"ok"` entry for that same ticker
+    key, the write is skipped (logged, not silent) instead of overwriting the earlier good verdict.
+    Otherwise last-write-wins is unchanged (matches qa's "not in scope" note on the pre-existing overwrite
+    behavior).
+  - Docstring (`_parse_batch`'s own) updated to state both refinements and why. No other function touched.
+
+### How to run it
+
+`SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short tests/test_ai_judge.py -k parse_batch` for the
+targeted tests, or the full suite: `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short`.
+
+### Full regression + smoke test
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **241 passed, 0 failed** (240 baseline + the
+  1 previously-failing BUG-006 test now passing; matches the task's stated success bar exactly).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **63 passed, 0 failed**, unaffected
+  (zero `admin-portal/`-relevant files touched).
+- Manual smoke via `ai_judge._parse_batch` directly, three scenarios:
+  1. BUG-006 repro (`["AAPL","ABC.TO","ABC.TO"]`, second `ABC.TO` occurrence answered with bare `"ABC"`) →
+     `AAPL` resolves `ok`; `ABC.TO` resolves `ok` (both occurrences now legitimately reachable — the
+     surviving entry is the second occurrence's, per unchanged last-write-wins for ok-over-ok, which is
+     within scope of what this fix guarantees: qa's assertion is `parse_status == "ok"`, not which of the
+     two legitimate rationales survives).
+  2. Overwrite-guard scenario (`["ABC.TO","ABC.TO"]`, first occurrence resolves `ok` via the no-label
+     fallback, second occurrence's candidate collides with an unrelated ticker and fails safe) → the guard
+     fires (`[ai_judge] duplicate requested ticker 'ABC.TO' (index 1): keeping the earlier resolved
+     verdict...`), `out["ABC.TO"]` stays the first occurrence's `ok` result, not clobbered by the later
+     fail-safe.
+  3. Genuine cross-market collision, unchanged (`["ABC.TO","ABC.NS"]`, one unlabeled response object) →
+     both still fail safe (`parse_status="failed"` for both), confirming the counting fix didn't loosen
+     BUG-005's own guard.
+
+### Known limitations
+
+- The overwrite guard added here only protects the specific "ok, then later fail-safe, same ticker key"
+  direction. It does not change what happens when a duplicate request resolves to two different legitimate
+  ("ok") answers at each occurrence — last-write-wins still applies there (scenario 1 above), unchanged
+  from pre-BUG-005 behavior and explicitly out of scope per qa's bug report. If a future increment wants
+  deterministic behavior for that case (e.g. always keep the first, or merge/flag both), that's a design
+  decision (`out`'s ticker-keyed return shape would need to change, rippling to callers) — not addressed
+  here.
+- Duplicate ticker requests remain proven-unreachable for `watchlist.ticker` (DB primary key) but reachable
+  in principle from discovery-candidate batches, per qa's own severity note — unchanged by this fix, which
+  only changes how a reachable duplicate is handled once it occurs.
