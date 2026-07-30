@@ -231,3 +231,65 @@ def test_min_market_cap_is_config_driven_not_hardcoded(monkeypatch):
                "min_price": config.DISCOVERY_MIN_PRICE,
                "exchanges": config.DISCOVERY_ALLOWED_EXCHANGES}
     assert prefilter._passes_quality(q, profile) is False
+
+
+# --- find_candidates: duplicate-free output (REV-109) --------------------------
+# BUG-006/BUG-007's deferral rests entirely on find_candidates() returning no
+# duplicate ticker across a single call -- today that's guaranteed only by the
+# `seen`-dict dedup's *current shape* (prefilter.py's raw-building loop), not by
+# any test or explicit contract. This locks the invariant so a future screener
+# change (a query added outside the raw-building loop, or two find_candidates()
+# calls merged into one batch) is caught here instead of silently reopening the
+# exact precondition BUG-006/BUG-007 exist to guard against.
+
+def test_find_candidates_returns_no_duplicate_tickers_even_with_overlapping_screens(monkeypatch):
+    """Same symbol returned by multiple underlying screens (e.g. a day_gainers
+    AND most_actives overlap, or a US/Canada cross-listing quirk) must still
+    surface at most once in find_candidates()'s returned candidate list."""
+    monkeypatch.setattr(prefilter.time, "sleep", lambda *_a, **_kw: None)
+
+    overlapping_quote = _quote(
+        symbol="ACME", regularMarketChangePercent=config.DISCOVERY_GAINER_PCT,
+    )
+    other_quote = _quote(symbol="BETA", regularMarketChangePercent=config.DISCOVERY_GAINER_PCT)
+
+    def fake_screen(query, **kw):
+        # Every screen call returns the SAME overlapping symbol plus one other,
+        # simulating maximal cross-screen overlap -- the worst case for dedup.
+        return {"quotes": [dict(overlapping_quote), dict(other_quote)]}
+
+    monkeypatch.setattr(prefilter.yf, "screen", fake_screen)
+
+    candidates, attempted, errored, funnel = prefilter.find_candidates(exclude=set(), region="na")
+
+    assert attempted > 1   # confirms multiple overlapping screens actually ran
+    assert errored == 0
+    tickers = [c["ticker"] for c in candidates]
+    assert len(tickers) == len(set(tickers)), f"duplicate ticker(s) in find_candidates() output: {tickers}"
+    assert "ACME" in tickers and "BETA" in tickers
+    # after_dedup must reflect unique symbols, not raw (overlapping) quote count
+    assert funnel["after_dedup"] == 2
+    assert funnel["raw"] > funnel["after_dedup"]   # proves real overlap was fed in and collapsed
+
+
+def test_find_candidates_dedup_also_holds_for_india_region(monkeypatch):
+    """Same invariant, the `region='in'` code path (a distinct branch in
+    find_candidates(), not covered by the 'na' test above)."""
+    monkeypatch.setattr(prefilter.time, "sleep", lambda *_a, **_kw: None)
+
+    in_quote = _quote(
+        symbol="TCS", exchange="NSI",
+        marketCap=config.DISCOVERY_MIN_MARKET_CAP_INR, regularMarketPrice=config.DISCOVERY_MIN_PRICE_INR,
+        regularMarketChangePercent=config.DISCOVERY_GAINER_PCT,
+    )
+
+    def fake_screen(query, **kw):
+        return {"quotes": [dict(in_quote)]}
+
+    monkeypatch.setattr(prefilter.yf, "screen", fake_screen)
+
+    candidates, attempted, errored, funnel = prefilter.find_candidates(exclude=set(), region="in")
+
+    tickers = [c["ticker"] for c in candidates]
+    assert len(tickers) == len(set(tickers))
+    assert tickers == ["TCS"]

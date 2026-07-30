@@ -125,3 +125,43 @@ test("both admin_write_watchlist and admin_write_holdings policies gate on publi
     assert.match(match![0], /using \(public\.is_admin\(\)\)/i);
   }
 });
+
+// --- DEEP-006/INC-10 (FR11/FR29, Decision #35): holdings.currency is derived, not admin-entered ----
+
+const HOLDINGS_PAGE = path.join(PORTAL_DIR, "app", "(app)", "holdings", "page.tsx");
+const HOLDINGS_CURRENCY_SQL = path.join(REPO_ROOT, "sql", "holdings_currency_derivation.sql");
+
+test("holdings page: no currency <select>/<input> in the add or edit form", () => {
+  const src = readFileSync(HOLDINGS_PAGE, "utf8");
+  assert.doesNotMatch(src, /name=["']currency["']/);
+  assert.doesNotMatch(src, /CURRENCIES\.map/);
+});
+
+test("holdings page: insert()/update() payloads never send `currency` (server derives it unconditionally)", () => {
+  const src = readFileSync(HOLDINGS_PAGE, "utf8");
+  const writeCalls = [...src.matchAll(/\.(insert|update)\(\s*\{?\[?\{?([\s\S]*?)\}\]?\)/g)];
+  assert.ok(writeCalls.length >= 2, "expected both an insert() and an update() call in holdings page.tsx");
+  for (const call of writeCalls) {
+    assert.doesNotMatch(call[2], /currency\s*:/, `${call[1]}() payload must not send currency: ${call[2]}`);
+  }
+});
+
+test("holdings page: displays a read-only derived currency (via MARKET_CURRENCY), not an editable field", () => {
+  const src = readFileSync(HOLDINGS_PAGE, "utf8");
+  assert.match(src, /MARKET_CURRENCY/);
+  assert.match(src, /derived from market/i);
+});
+
+test("holdings_currency_derivation.sql: trigger fires on BEFORE INSERT OR UPDATE and unconditionally sets new.currency", () => {
+  const sql = readFileSync(HOLDINGS_CURRENCY_SQL, "utf8");
+  assert.match(sql, /before insert or update on public\.holdings/i);
+  assert.match(sql, /new\.currency\s*:=\s*v_currency/);
+});
+
+test("holdings_currency_derivation.sql: does not redefine the holdings table or admin_write_holdings policy (strictly additive)", () => {
+  const sql = readFileSync(HOLDINGS_CURRENCY_SQL, "utf8");
+  assert.doesNotMatch(sql, /create table/i);
+  assert.doesNotMatch(sql, /create policy/i);
+  assert.doesNotMatch(sql, /drop table/i);
+  assert.doesNotMatch(sql, /drop policy/i);
+});

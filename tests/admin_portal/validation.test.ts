@@ -11,9 +11,12 @@ import assert from "node:assert/strict";
 import {
   validateWatchlistRow,
   validateHoldingsRow,
+  validateTunableValue,
   MARKETS,
   TYPES,
   STATUSES,
+  CURRENCIES,
+  MARKET_CURRENCY,
 } from "../../admin-portal/lib/validation.ts";
 
 // --- watchlist: happy path ---------------------------------------------
@@ -90,4 +93,79 @@ test("validateHoldingsRow: non-numeric shares/cost_basis and missing ticker all 
   assert.ok(errors.some((e) => e.includes("Ticker is required")));
   assert.ok(errors.some((e) => e.includes("Shares must be a number greater than 0")));
   assert.ok(errors.some((e) => e.includes("Cost basis must be a number greater than 0")));
+});
+
+// --- holdings: currency is no longer client-validated, but its replacement (the
+// market -> currency derivation map) must still be locked down (DEEP-006/INC-10,
+// restores the coverage the deleted "every declared currency is accepted" test
+// used to provide, now against the mechanism that actually governs currency) ----
+test("MARKET_CURRENCY: every market maps to a member of CURRENCIES, matching sql/holdings_currency_derivation.sql's case mapping", () => {
+  assert.deepEqual(MARKET_CURRENCY, { US: "USD", TSX: "CAD", NSE: "INR" });
+  for (const market of Object.keys(MARKET_CURRENCY)) {
+    assert.ok(
+      (CURRENCIES as readonly string[]).includes(MARKET_CURRENCY[market as keyof typeof MARKET_CURRENCY]),
+      `MARKET_CURRENCY[${market}] must be one of CURRENCIES`
+    );
+  }
+  // every declared market is covered (configurability: MARKETS drives the map's keys)
+  assert.deepEqual(Object.keys(MARKET_CURRENCY).sort(), [...MARKETS].sort());
+});
+
+// --- tunables: validateTunableValue per-key rules (FR30 sharpened, DEEP-005/INC-10) --
+// scripts/config.py's _TUNABLE_CASTS ten-key contract, mirrored client-side. Happy path/
+// edge case/invalid input per numeric-vs-integer-vs-boolean-vs-string key class.
+
+test("validateTunableValue: all 5 float keys accept an integer, a decimal, and a negative value", () => {
+  for (const key of [
+    "DISCOVERY_GAINER_PCT",
+    "DISCOVERY_LOSER_PCT",
+    "DISCOVERY_VOL_SPIKE",
+    "DISCOVERY_MIN_MARKET_CAP",
+    "DISCOVERY_MIN_MARKET_CAP_INR",
+  ]) {
+    assert.deepEqual(validateTunableValue(key, "5"), [], `${key}: "5"`);
+    assert.deepEqual(validateTunableValue(key, "2.5"), [], `${key}: "2.5"`);
+    assert.deepEqual(validateTunableValue(key, "-5.0"), [], `${key}: "-5.0"`);
+  }
+});
+
+test("validateTunableValue: float keys reject a non-numeric value (e.g. a stray %)", () => {
+  const errors = validateTunableValue("DISCOVERY_GAINER_PCT", "5%");
+  assert.ok(errors.length > 0);
+  assert.ok(errors[0].toLowerCase().includes("numeric"));
+});
+
+test("validateTunableValue: the 2 integer keys accept a whole number but reject a decimal", () => {
+  for (const key of ["DISCOVERY_SHORTLIST_MAX", "DISCOVERY_PUSH_COOLDOWN_DAYS"]) {
+    assert.deepEqual(validateTunableValue(key, "15"), [], `${key}: "15"`);
+    const errors = validateTunableValue(key, "15.5");
+    assert.ok(errors.length > 0, `${key}: "15.5" should be rejected`);
+    assert.ok(errors[0].toLowerCase().includes("integer"));
+  }
+});
+
+test("validateTunableValue: ALERTS_ENABLED accepts only true/false, case-insensitively", () => {
+  assert.deepEqual(validateTunableValue("ALERTS_ENABLED", "true"), []);
+  assert.deepEqual(validateTunableValue("ALERTS_ENABLED", "FALSE"), []);
+  assert.deepEqual(validateTunableValue("ALERTS_ENABLED", "True"), []);
+  // DEEP-005's exact repro strings -- must never silently pass validation
+  for (const bad of ["yes", "tru", "True ", "1", "0", ""]) {
+    const errors = validateTunableValue("ALERTS_ENABLED", bad);
+    assert.ok(errors.length > 0, `ALERTS_ENABLED: ${JSON.stringify(bad)} must be rejected`);
+  }
+});
+
+test("validateTunableValue: GEMINI_MODEL requires non-blank", () => {
+  assert.deepEqual(validateTunableValue("GEMINI_MODEL", "gemini-2.5-pro"), []);
+  assert.ok(validateTunableValue("GEMINI_MODEL", "").length > 0);
+  assert.ok(validateTunableValue("GEMINI_MODEL", "   ").length > 0);
+});
+
+test("validateTunableValue: GEMINI_MODEL_BACKUP accepts blank (DEEP-005's fix -- disables the fallback) and non-blank alike", () => {
+  assert.deepEqual(validateTunableValue("GEMINI_MODEL_BACKUP", ""), []);
+  assert.deepEqual(validateTunableValue("GEMINI_MODEL_BACKUP", "gemini-2.5-flash-lite"), []);
+});
+
+test("validateTunableValue: unknown key is rejected (defense against a future unvalidated key slipping in)", () => {
+  assert.ok(validateTunableValue("NOT_A_REAL_KEY", "anything").length > 0);
 });

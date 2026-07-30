@@ -28,6 +28,8 @@ const THE_10_KEYS = [
   "DISCOVERY_SHORTLIST_MAX", "DISCOVERY_PUSH_COOLDOWN_DAYS",
 ];
 
+const TUNABLES_VALIDATE_SQL = path.join(REPO_ROOT, "sql", "tunables_validate_trigger.sql");
+
 // --- AC1/AC3 (static shape): tunables table RLS + key registry ------------
 
 test("tunables: RLS is enabled on the table", () => {
@@ -113,6 +115,54 @@ test("tunables page: no insert()/delete() call against the tunables table (RLS o
 test("tunables page: reads via .from(\"tunables\").select(\"*\")", () => {
   const src = readFileSync(TUNABLES_PAGE, "utf8");
   assert.match(src, /\.from\("tunables"\)/);
+});
+
+// --- AC1 (static shape, DEEP-005/INC-10): ALERTS_ENABLED is structurally a select, not free text ---
+
+test("tunables page: ALERTS_ENABLED renders a <select> with exactly the true/false options, not a text <input>", () => {
+  const src = readFileSync(TUNABLES_PAGE, "utf8");
+  const branch = src.match(/row\.key === "ALERTS_ENABLED"[\s\S]*?<select[\s\S]*?<\/select>/);
+  assert.ok(branch, "no <select> branch found for ALERTS_ENABLED");
+  const optionValues = [...branch![0].matchAll(/<option value="([^"]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(new Set(optionValues), new Set(["true", "false"]));
+});
+
+test("tunables page: handleUpdate calls validateTunableValue with the row's key (not the old value-only signature)", () => {
+  const src = readFileSync(TUNABLES_PAGE, "utf8");
+  assert.match(src, /validateTunableValue\(key,\s*editValue\)/);
+});
+
+// --- DEEP-005/INC-10: sql/tunables_validate_trigger.sql (server-side mirror) --------
+
+test("tunables_validate_trigger.sql: a CASE branch exists for every one of the 10 curated keys", () => {
+  const sql = readFileSync(TUNABLES_VALIDATE_SQL, "utf8");
+  for (const key of THE_10_KEYS) {
+    assert.match(sql, new RegExp(`'${key}'`), `no validation branch found for ${key}`);
+  }
+});
+
+test("tunables_validate_trigger.sql: trigger name sorts before tunables_stamp_update (fires first, validate-then-stamp)", () => {
+  const sql = readFileSync(TUNABLES_VALIDATE_SQL, "utf8");
+  const triggerMatch = sql.match(/create trigger (\S+)\s+before update on public\.tunables/i);
+  assert.ok(triggerMatch, "new validate trigger not found");
+  const newTriggerName = triggerMatch![1];
+  assert.ok(
+    newTriggerName.toLowerCase() < "tunables_stamp_update",
+    `trigger name '${newTriggerName}' must sort before 'tunables_stamp_update' (Postgres fires same-event ` +
+      `BEFORE triggers in tgname order) so a rejected write never reaches the stamp trigger`
+  );
+});
+
+test("tunables_validate_trigger.sql: does not redefine the tunables table, the stamp trigger, or either RLS policy (strictly additive)", () => {
+  const sql = readFileSync(TUNABLES_VALIDATE_SQL, "utf8");
+  assert.doesNotMatch(sql, /create table/i);
+  assert.doesNotMatch(sql, /create policy/i);
+  assert.doesNotMatch(sql, /drop table/i);
+  assert.doesNotMatch(sql, /drop policy/i);
+  assert.doesNotMatch(sql, /drop trigger/i);
+  // comments may reference the already-live trigger by name (context); only an actual
+  // create/replace/drop statement targeting it would be a redefinition.
+  assert.doesNotMatch(sql, /create (or replace )?trigger tunables_stamp_update/i);
 });
 
 // --- AuthGuard: the new page is reachable and covered by the existing gate -

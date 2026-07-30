@@ -322,6 +322,54 @@ def test_build_position_handles_zero_cost_basis_without_crash():
     assert pos["pl_pct"] is None
 
 
+# --- build_position currency-mismatch guard (FR11/FR29, DEEP-006, INC-10) -------
+# sql/holdings_currency_derivation.sql guarantees holdings.currency agrees with
+# watchlist.market, but not that watchlist.market is itself correct for the ticker's
+# real listing. This is the second, independent Python-layer defense for that residual
+# case -- it operates purely on whatever currency value it is handed at call time, so
+# it also protects a pre-existing holdings row the DB trigger has not yet re-derived
+# (the trigger only fires on INSERT/UPDATE; a row nobody writes to keeps its old value
+# until its next write) -- there is nothing DB-trigger-specific this guard depends on.
+
+def test_build_position_suppresses_pl_pct_on_currency_mismatch(capsys):
+    """A .TO holding whose currency disagrees with the independently-fetched
+    fundamentals currency (the DEEP-006 repro: watchlist.market wrong for this
+    ticker, or a stale pre-trigger row) must not compute a wrong pl_pct."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "USD"}
+    data = {"ticker": "SHOP.TO", "price": 68.0, "fundamentals": {"currency": "CAD"}}
+    pos = state.build_position(holding, data)
+    assert pos["pl_pct"] is None
+    assert pos["currency"] == "USD"  # holding's stored currency is still reported as-is
+    log = capsys.readouterr().out
+    assert "WARNING" in log
+    assert "SHOP.TO" in log
+    assert "USD" in log and "CAD" in log
+
+
+def test_build_position_computes_normally_when_currencies_agree(capsys):
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "CAD"}
+    data = {"ticker": "SHOP.TO", "price": 60.0, "fundamentals": {"currency": "CAD"}}
+    pos = state.build_position(holding, data)
+    assert pos["pl_pct"] == 20.0
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_build_position_missing_fundamentals_currency_is_unknown_not_mismatch(capsys):
+    """A missing (not merely differing) fundamentals currency is "unknown", not
+    "disagrees" -- pl_pct must still compute, matching pre-INC-10 behavior (also
+    covers a pre-existing holdings row the currency-derivation trigger has not
+    reprocessed, and any caller that omits `fundamentals` entirely)."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "USD"}
+    data = {"ticker": "AAPL", "price": 60.0}  # no "fundamentals" key at all
+    pos = state.build_position(holding, data)
+    assert pos["pl_pct"] == 20.0
+    assert "WARNING" not in capsys.readouterr().out
+
+    data_empty_fundamentals = {"ticker": "AAPL", "price": 60.0, "fundamentals": {}}
+    pos2 = state.build_position(holding, data_empty_fundamentals)
+    assert pos2["pl_pct"] == 20.0
+
+
 # --- process_candidate (discovery, FR4 Decision #16: Buy-only push) -----------
 
 def test_discovery_buy_pushes(sb, notifier):
