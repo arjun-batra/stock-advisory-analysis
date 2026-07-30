@@ -1168,3 +1168,302 @@ and re-verified in a single follow-up pass before re-attempting closure.
 **Doc hygiene applied this pass:** no new archival — the only status change (REV-070) stays live under its
 existing ID with narrowed scope, not a full resolution, so it does not move to `docs/archive/
 review-log-archive.md` this round.
+
+---
+
+## Deep review — 2026-07-29 (`/big-guns`, on-demand, whole-system scope, judgment layer only)
+
+**Nature of this section.** Logged by `big-guns`, not `reviewer`. This is **not** a re-run of the 6-pass
+checklist audit (Pass 22/23 is assumed to have run and been satisfied — nothing below contradicts it).
+Scope was the judgment layer only: requirements-vs-design-vs-code coherence, unwritten failure modes,
+silent degradation, and — because this system hands a human BUY/AVOID advice and holds cost-basis data —
+paths that quietly produce a **wrong answer that looks right**. IDs use the `DEEP-NNN` sequence so they
+cannot collide with reviewer's `REV-NNN` sequence. Findings enter the normal triage flow; `big-guns` fixes
+nothing and owns no artifact.
+
+Read order: `idea-brief.md` → `requirements.md` → `design.md` + all eleven `docs/design/*` modules →
+`code-map.md` → `handoff.md` / `test-report.md` → `scripts/`, `admin-portal/`, `sql/`,
+`.github/workflows/`, `prompts/`, `tests/`.
+
+---
+
+### DEEP-001 — `[DESIGN-GAP]` / `[SILENT-DEGRADATION]` — **blocker** — owner: dev (code), tech-lead (NFR2 claim), pm (FR/NFR sign-off)
+
+**A run in which 100% of AI calls failed writes heartbeat `status = "ok"`, so NFR2's monitor stays silent
+and the dashboard shows every ticker as `Hold`.**
+
+Location: `scripts/run_hourly.py:160-162`; `scripts/run_discovery.py:114-116`;
+`scripts/state.py:235-240`; `sql/phase5_monitoring.sql:203-213`; `pages/dashboard.html:192-199`.
+
+Evidence:
+- `state.process_ticker` returns the literal `"no-read"` for every `parse_status in ("failed",
+  "api_error")` row (`state.py:235-240`) — i.e. every fail-safe Hold.
+- `run_hourly.py:160` computes `degraded = outcomes["skip"] + outcomes["error"]`. `"no-read"` is in
+  neither bucket, so `status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"` evaluates to
+  `"ok"` even when **every single ticker** failed the AI call. `run_discovery.py:114` has the identical
+  omission (`skip + error + screens_errored`).
+- `check_pipeline_health()` only raises `degraded` on `wl_status <> 'ok'` (`phase5_monitoring.sql:203`),
+  and the heartbeat's `last_run_at` is fresh, so neither the stale branch nor the degraded branch fires —
+  `_clear_monitor` runs instead. The monitor actively reports **healthy**.
+- The most likely real-world triggers are all in this class and all silent: an expired/revoked/
+  billing-lapsed `GEMINI_API_KEY` (`require_secrets` only checks non-empty, `config.py:452-462`), a Gemini
+  outage that outlives `GEMINI_MAX_RETRIES`, or a bad model string in the FR30 portal (see DEEP-005).
+- Downstream presentation completes the illusion: `dashboard.html:197` special-cases **only**
+  `parse_status === "no_data"`; a `failed`/`api_error` row renders a normal `Hold` verdict pill. A user
+  opening the dashboard sees a full grid of `Hold` and a monitor that has said nothing.
+
+Why this is a blocker and not a minor: `requirements.md` NFR2 states the system "actively alerts the user
+when a scheduled run is missed, fails to trigger, **or completes degraded** — silence from the monitor
+means healthy," and `design.md` §0 load-bearing #5 restates it. A run where no verdict was produced is the
+canonical "completes degraded" case, and it is exactly the case the monitor cannot see. NFR2 is therefore
+**not delivered as specified**, which contradicts pm's Phase-4 "every FR/NFR delivered or deferred"
+confirmation and `design.md` §15's coverage row for NFR2. It also breaks `design.md` §0 load-bearing #8's
+guarantee in spirit: a bug cannot fabricate a *signal*, but it can fabricate a *state of health*.
+
+Suggested fix (small): add `outcomes["no-read"]` to the `degraded` expression in both entry points, and
+give `dashboard.html`/`detail.html` the same "no reading" treatment for `failed`/`api_error` that
+`no_data` already gets. A regression test for "all tickers no-read ⇒ heartbeat `partial`" does not exist
+in `tests/` today (`tests/test_run_orchestration.py:220` covers only the `error` half).
+
+---
+
+### DEEP-002 — `[DESIGN-GAP]` — **major** — owner: dev (code), tech-lead (`data-and-flow.md` §5/§6 contract), pm (FR15 wording)
+
+**`call_log.alerted = true` means "we intended to push", not "a push was delivered" — and a failed push is
+never retried, because `verdict_state` has already been advanced.**
+
+Location: `scripts/notify.py:92-102` and `:105-108`; `scripts/state.py:259-267`;
+`scripts/state.py:102-112`.
+
+Evidence:
+- `NtfyNotifier.push` wraps `requests.post` in a bare `except Exception` that only prints
+  (`notify.py:101-102`), and it never calls `raise_for_status()` — so an ntfy 4xx/5xx (wrong topic, rate
+  limit, outage) is not even logged as an error; it is indistinguishable from success.
+- `state.process_ticker` writes `alerted=True` **before** the push (`state.py:260-261`) and advances
+  `current_verdict` **after** it (`:263-266`) regardless of outcome. The threshold crossing is consumed:
+  the next run sees `verdict == state.current_verdict` and goes quiet forever. Under FR7/FR8's
+  single-rule, no-cooldown, crossings-only design (`design.md` §0 #1/#2), **that signal is permanently
+  lost** — there is no standing-verdict reminder to recover it.
+- The same `alerted=True` is written when the notifier is `DryRunNotifier` (`notify.py:105-108`, chosen
+  whenever `ALERTS_ENABLED` is false or `NTFY_TOPIC` is empty) — so every dry-run change row also claims
+  an alert was sent.
+- FR15 requires the log to record "whether an alert **was sent**", and §2's success criterion is
+  auditable *only* from this log. `discovery`'s 7-day dedup also keys off it
+  (`state.recently_pushed_candidates` filters `alerted=True`, `state.py:109-111`), so an undelivered
+  candidate push suppresses its own re-push for 7 days.
+
+Suggested fix: have `push()` return a delivery boolean (`raise_for_status()` inside), write `alerted` from
+that boolean, and only advance `verdict_state.current_verdict` on a successful delivery so the next cycle
+re-attempts the crossing. If pm prefers not to change behaviour, FR15's wording and
+`data-and-flow.md` §5's `alerted` column description must be corrected to "alert attempted", and the
+success-criterion audit method adjusted accordingly — but the silent-loss half still needs the code fix.
+
+---
+
+### DEEP-003 — `[DESIGN-GAP]` — **major** — owner: dev, tech-lead (§4.4 parse contract)
+
+**`_parse_batch`'s positional fallback can attribute one company's verdict and rationale to a different
+ticker and stamp it `parse_status: "ok"`.**
+
+Location: `scripts/ai_judge.py:201-218` (specifically `:206-208`).
+
+```python
+o = by_ticker.get(t.upper())
+if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
+    o = arr[i]                           # positional fallback (same order requested)
+```
+
+Evidence: the fallback fires precisely when a requested ticker is **absent** from the model's array, which
+by construction means `arr[i]` belongs to some *other* symbol (if it were the same symbol under the same
+spelling, `by_ticker` would already have matched). Concretely, request `[A, B, C]`; the model returns three
+objects `[A, X, B]` (drops `C`, hallucinates `X` — a realistic LLM failure at 12–15 tickers per batch).
+`C` then resolves to `arr[2]`, i.e. **`B`'s verdict, `B`'s confidence and `B`'s rationale**, with
+`parse_status: "ok"`, `confidence` preserved, and no log line recording that a fallback occurred. If that
+verdict differs from `C`'s stored `current_verdict`, `state.process_ticker` fires a real push
+("`C` — Changed to Sell") whose reasoning is about a different company. The one guard that exists for
+fabricated changes (`state.py:235`, the `failed`/`api_error` check) does not apply, because the row is
+marked `ok`.
+
+This directly contradicts `design.md` §0 load-bearing #8 and `ai_judge.py`'s own module docstring ("a
+malformed response can only ever MISS a signal, never fabricate one") — the fallback is the one path that
+can fabricate one. Nothing in `docs/design/components.md` §4.4 documents the positional fallback at all,
+so it has never been assessed against that invariant. No test covers it (`grep positional tests/` → 0).
+
+Suggested fix: accept the positional object only when its own `ticker` normalises to the requested one
+(case-fold, strip the `.TO`/`.NS` suffix — which is the *legitimate* case this fallback exists to serve),
+otherwise emit `_FAIL_SAFE_PARSE`; and print a per-ticker line whenever the fallback is used so it is
+visible in the run log. Also consider that `by_ticker`'s dict comprehension (`:201`) silently keeps the
+**last** of any duplicated ticker in the response.
+
+---
+
+### DEEP-004 — `[REQUIREMENTS-GAP]` / `[DESIGN-GAP]` — **major** — owner: tech-lead (design), pm (FR17 / risk #5 text), dev (fix)
+
+**The documented "market holiday ⇒ no usable data ⇒ skip-with-log, clean no-op" behaviour does not exist.
+On a holiday the system runs a full AI judgment on a stale prior close that the prompt labels as a live
+session, manufactures a volume-spike signal, and can push a real alert.**
+
+Location: `scripts/ingest.py:175-201` (`_session_state`) and `:242-291` (`get_market_data`);
+`scripts/ai_judge.py:104-118` (prompt labels); `sql/phase5_monitoring.sql:332-337` and
+`scripts/config.py:412-418` (weekday+clock-only gates); claims at `requirements.md` FR17 / Decision #8,
+`docs/idea-brief.md` risk #5, `docs/design/non-functional-ops.md` §7.5, `scripts/config.py:391-394`.
+
+Evidence:
+1. Neither gate layer consults a holiday calendar (accepted, documented). So on e.g. Thanksgiving or a
+   Diwali NSE closure, `hourly-watchlist.yml` is dispatched and executes normally.
+2. `yfinance` `history(period='3mo')` on a closed day returns the **previous sessions'** bars, so
+   `h` is non-empty ⇒ `out["has_price"] = True` (`ingest.py:248-254`). The skip-with-log path is never
+   reached. The premise "a closed market surfaces as no usable data" is false.
+3. `_session_state` decides `session_live` from weekday + wall-clock alone (`ingest.py:194`) — it never
+   compares the last bar's date to today. On a holiday it returns `True`. The prompt therefore renders the
+   *previous close* as `"live price (session in progress)"` and the *previous day's* move as
+   `"today so far"` (`ai_judge.py:108-118`).
+4. Worse, `volume_vs_avg` is then divided by the elapsed session fraction (`ingest.py:279-284`). A
+   perfectly normal prior-day ratio of ~1.0 becomes ~1.9x at mid-afternoon and is handed to the model as a
+   pro-rated **volume spike** — a fabricated signal on a day when zero shares traded.
+5. A verdict change computed from that input alerts normally (no guard distinguishes it), and the run
+   writes heartbeat `ok`.
+
+This is the highest-value "quietly wrong answer that looks right" path I found, because it is *scheduled*:
+it recurs on roughly 9 US/TSX and ~15 NSE closures a year, and the alert it produces is
+indistinguishable from a real one.
+
+Suggested fix (cheap and self-contained): in `get_market_data`, compare `h.index[-1].date()` to the
+market's current session date; if the last bar is not today while `_session_state` says live, force
+`session_live=False`, suppress the pro-rating, and append a note ("market appears closed today — judging
+the last settled close"). Optionally skip-with-log to make FR17's text literally true. Either way FR17,
+Decision #8, idea-brief risk #5 and `non-functional-ops.md` §7.5 need their wording corrected — all four
+currently assert a behaviour the code does not have.
+
+---
+
+### DEEP-005 — `[DESIGN-GAP]` — **major** — owner: dev (portal + SQL), tech-lead (FR30 fail-safe posture)
+
+**The FR30 tunables editor validates nothing but emptiness, and the two keys whose casts can never fail
+turn a single operator typo into a silent, system-wide behaviour change.**
+
+Location: `admin-portal/lib/validation.ts:47-58`; `admin-portal/app/(app)/tunables/page.tsx:66-81`;
+`sql/admin_portal_tunables.sql:11-23`; `scripts/config.py:101-144`, `:232-236`, `:204-205`.
+
+Evidence:
+- `validateTunableValue` rejects only a blank string, and `public.tunables.value` is `text not null` with
+  a CHECK on **`key` only** — no per-key type or domain constraint. So any string for any key is accepted
+  by the portal and the database, and the save reports success.
+- Three distinct outcomes, only one of which is the designed fail-loud:
+  - **Numeric keys** (`DISCOVERY_*`): `_tunable(..., float/int)` raises `SystemExit` at *import* time
+    (`config.py:119-124`), which kills **every** entry point — `run_hourly`, `run_discovery`, *and*
+    `publish_prices`. One typo in a web form takes the whole system down, and the operator's only signal
+    is a "watchlist stalled" push 70+ minutes later that says nothing about a tunable. Fail-loud is the
+    design intent (`tunables-fallback.md`), but the portal being unable to prevent it is not.
+  - **`ALERTS_ENABLED`**: cast is `lambda v: str(v).lower() == "true"` (`config.py:234`) — it **cannot
+    fail**. `"yes"`, `"1"`, `"True "`, `"tru"` all resolve to `False`, which silently switches the entire
+    system to `DryRunNotifier` (`notify.py:105-108`). No error, no `TUNABLES_DEGRADED`, no monitor signal,
+    heartbeat `ok` — and (per DEEP-002) `call_log` keeps recording `alerted=true`. For a system whose sole
+    output channel is push, this is total, invisible output loss from a one-character mistake.
+  - **`GEMINI_MODEL` / `_BACKUP`**: cast is `str` — also cannot fail. A misspelled model name makes every
+    Gemini call a FATAL `ProviderError`, i.e. DEEP-001's blind spot, reached from the portal.
+- Compounding presentation gap: the effective value of `ALERTS_ENABLED` is
+  `_alerts_input AND ALERTS_ENABLED_TABLE` (`config.py:235`), but the editor renders only the table value,
+  under a description that calls it "Master switch for real pushes". Nothing in the portal, the dashboard,
+  or `call_log` reports whether pushes are *actually* live right now.
+
+Suggested fix: mirror `config.py`'s ten casts as per-key validators in `validation.ts` (the key set is
+fixed by the DB CHECK, so this is ten lines, not a framework); render `ALERTS_ENABLED` as a
+`true`/`false` select rather than a free-text input; and add a per-key `CHECK` or a validating
+`BEFORE UPDATE` trigger on `public.tunables` so a direct SQL edit is caught too. Consider surfacing the
+AND-gated effective value on the portal.
+
+---
+
+### DEEP-006 — `[DESIGN-GAP]` — **major** — owner: dev (portal + SQL), tech-lead (§7.3 assumption)
+
+**Holdings currency is free-choice, defaults to `USD`, and is never reconciled against the ticker's
+market — so a TSX or NSE position entered at its natural default silently produces a wrong unrealized P&L
+that is fed to the AI as fact (FR11) and rendered on the detail page.**
+
+Location: `admin-portal/app/(app)/holdings/page.tsx:18` (`currency: CURRENCIES[0]` ⇒ `"USD"`) and
+`:233-236`; `admin-portal/lib/validation.ts:60-75`; `sql/schema.sql:65-68`;
+`scripts/state.py:143-154` (`build_position`); `scripts/ai_judge.py:92-97`;
+`docs/design/non-functional-ops.md` §7.3.
+
+Evidence:
+- `validateHoldingsRow` checks only that `currency ∈ {USD, CAD, INR}`; the DB CHECK is the same set. The
+  `holdings.ticker` FK to `watchlist(ticker)` exists, so the ticker's `market` is *known* at write time —
+  and neither layer uses it. The add-form's default is `USD` for every market.
+- `build_position` computes `pl_pct = price / cost_basis - 1` with **no** currency reconciliation, while
+  `data.price` is always in the ticker's native currency (design §7.3: "native per market — no FX
+  conversion"). The design's no-FX rule is an *assumption about the input data* that nothing enforces.
+- The failure is plausible-looking, not absurd: a `.TO` holding whose cost basis was entered in USD 50
+  against a native CAD price of 68 yields `pl_pct = +36%` where the true figure is ~0%. That number goes
+  straight into the prompt as `"Cost basis: 50 USD, Current price: 68, Unrealized P/L: 36%"`
+  (`ai_judge.py:92-97`) — and FR11 plus the in-prompt cost-basis/disposition-effect guard mean the model
+  is explicitly instructed to *weigh* it. The detail page renders the same wrong P&L.
+- Real money, single user, manual entry, no second source to cross-check against: this is precisely the
+  "quietly wrong answer that looks right" class the brief asked me to weight.
+- Note the live watchlist currently has 0 held tickers (`components.md` §4.7 calls the position block
+  "dormant"), so this is latent rather than active — which is also why no test or QA pass has touched it.
+
+Suggested fix: derive the currency from `watchlist.market` instead of asking (US⇒USD, TSX⇒CAD, NSE⇒INR),
+or keep the field but validate it against the joined market in `validation.ts` **and** as a DB CHECK/
+trigger. A defensive `build_position` guard that returns `pl_pct = None` on a currency mismatch with
+`data["fundamentals"]["currency"]` would stop a bad row from reaching the prompt at all.
+
+---
+
+### DEEP-007 — `[REQUIREMENTS-GAP]` — **minor** — owner: pm (FR24 boundary text) or tech-lead (§13.1)
+
+**The kill-switch stops future *dispatches*, not the system. A run already executing when the toggle flips
+completes in full — Yahoo fetches, the batched AI call, real pushes, and a commit to `main` — while the
+portal badge already reads `PAUSED`.**
+
+Location: `sql/scheduler_pgcron.sql:52-58`; `docs/design/operational-controls.md` §13.1;
+`admin-portal/components/KillSwitchToggle.tsx:44-77`; `requirements.md` FR24 / Decision #19.
+
+Evidence: the guard sits at the top of `dispatch_github_workflow`, before the `pg_net` POST — correct and
+exactly as designed. But FR24's promise is absolute in the reader's terms: "while paused, **no** AI calls,
+**no** Yahoo fetches, **no** pushes, and **no** price-snapshot updates occur." No Python-layer check
+exists (deliberately, §13.1), so an in-flight `hourly-watchlist` run — which also holds
+`contents: write` and is the sole writer of `tunables_cache.json` (`hourly-watchlist.yml:45-48`,
+`:113-136`) — keeps going and can still push a commit to `main` after the operator believes the system is
+stopped. `KillSwitchToggle` flips the badge to `PAUSED` the moment the flag is written, with no indication
+that a cycle may still be in flight.
+
+§13.1 documents the *manual-`workflow_dispatch`* bypass as an accepted risk but says nothing about the
+in-flight case, so the one gap an operator is most likely to hit during an actual emergency (pausing
+*because* the current run is doing something wrong) is undocumented. Blast radius is bounded — at most one
+30-minute cycle — hence minor, not major.
+
+Suggested fix: either one sentence in FR24/§13.1 scoping the guarantee to "no new dispatches; a run
+already in flight completes", or the Python-layer `kill_switch_state` read at the top of
+`run_hourly.main()`/`run_discovery.main()`/`publish_prices.main()` that §13.1 already sketches — the
+cheapest version being a check just before `notifier.push`, which is where the irreversible side effect
+is.
+
+---
+
+### Deep-review summary
+
+**New this section: 1 blocker, 5 majors, 1 minor.** Nothing here overlaps a currently-open `REV-` item
+(cross-checked against "Open items after Pass 23"); DEEP-001 is adjacent to REV-042's degraded-branch work
+but is the *Python* side that decides the status those branches read, which REV-042 did not touch.
+
+**Routing:** dev — DEEP-001 (with tech-lead), DEEP-002, DEEP-003, DEEP-005, DEEP-006 (all five need a
+tech-lead design decision recorded first where the contract text changes). pm — DEEP-001's NFR2 delivery
+claim, DEEP-002's FR15 wording, DEEP-004's FR17/Decision #8/risk-#5 text, DEEP-007's FR24 boundary.
+tech-lead — DEEP-003's §4.4 parse contract, DEEP-004's `non-functional-ops.md` §7.5, DEEP-005's FR30
+fail-safe posture, DEEP-006's §7.3 assumption. qa — regression tests for DEEP-001 (all-`no-read` ⇒
+`partial`), DEEP-003 (positional-fallback misattribution) and DEEP-004 (stale-bar-on-a-live-clock), none of
+which exist today.
+
+**Not logged as a finding, recorded for tech-lead's judgement only (a user-approved decision, not a
+defect):** Decision #28/#29's tier-2 `tunables_cache.json` mechanism costs `contents: write` on the
+workflow holding every production secret, a commit step with a bounded push retry, a merged concurrency
+group that serialises the price publisher behind the trading workflow, a validating write-back function,
+and a `TUNABLES_DEGRADED` heartbeat signal. One argument that was **not** on the table when Arjun weighed
+this (Decision #29): Supabase is already a hard dependency of every run — `state.client()`,
+`get_watchlist`, `get_holdings_map` and `write_heartbeat` all require it — so a Supabase outage kills the
+run regardless of the tunables tier, and tier 2 can only rescue the narrow case of that *one table's*
+fetch failing while the rest of Supabase works (which is exactly REV-095, a client-construction bug the
+cache masked for a full day rather than surfaced). Dropping tier 2 and letting a failed fetch fail loud —
+already the double-miss behaviour — would remove all five pieces of machinery above. Worth one paragraph of
+reconsideration at the next config-related change request; not worth reopening at closure.
