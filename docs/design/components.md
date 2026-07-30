@@ -83,6 +83,38 @@ Two data-quality behaviors (v18/v20, feed the prompt correctly):
 §7.5). New listings (<~20 sessions) are *not* skipped — compute what history supports, mark 20d fields
 `n/a (newly listed)`.
 
+**FIX ROUND (DEEP-004, INC-9) — stale-bar / closed-market structural check (FR17, Decision #33).**
+`_session_state()` above decides "is this market live right now" from weekday + wall-clock alone; it has
+no way to know the last bar `get_market_data()` actually received is *today's*. On an undetected holiday
+(no maintained calendar exists, Decision #8) this let a genuinely-stale prior-close bar be judged as a
+live, in-progress session — `session_live=True` fed straight to the prompt, and `volume_vs_avg` pro-rated
+by the elapsed session fraction into a fabricated spike (`non-functional-ops.md` §7.5 for the full defect
+history). **Fix, in `get_market_data()`, immediately after `h` is confirmed non-empty and before anything
+else is computed:**
+```
+live, frac = _session_state(market)              # moved earlier — computed once, reused below
+last_bar_date = h.index[-1].date()                # yfinance's own bar date, exchange-local
+today_market = datetime.now(<market's tz>).date()  # config.MARKET_TZ / config.NSE_MARKET_TZ
+if live and last_bar_date < today_market:
+    out["notes"].append(
+        f"market appears closed today ({today_market}) — latest available bar is from "
+        f"{last_bar_date}; treating as no usable data (FR17/Decision #33)")
+    return out   # has_price stays False: same skip-with-log path as any other no-data day
+```
+This is a single, self-contained check in one function — it fires *before* `price`/`pct_change`/
+`volume_vs_avg` are computed, so the pro-rating math and the prompt's `session_live` labelling never see a
+stale bar at all; **no separate fix is needed in `ai_judge.py`'s prompt-rendering or the pro-rating
+math** — both are downstream of this gate and simply never execute for a stale-bar ticker. FR17's sharpened
+text is explicit that this case takes "the skip-with-log path exactly as it does for any other detected
+non-trading day" — not merely a labelled-live-but-flagged-stale reading — so `has_price` stays `False`,
+the ticker never reaches the AI, and no verdict (real or fail-safe) is produced for it that cycle.
+**Accepted edge case, not mitigated further:** in the first seconds/minutes after a *genuinely* open
+session's start, yfinance's live intraday bar for today may not have posted yet, so this check could
+misfire and skip a ticker for one cycle on a normal trading day. The failure direction is the safe one —
+a missed check (self-corrects next cycle, 30 min later) is a MISS, not a fabrication, consistent with
+`docs/design.md` §0 load-bearing #8 — so no additional open-side grace window is added (mirrors the
+existing `frac < 0.1` "too early" treatment for volume pro-rating, same accepted-risk class).
+
 **REV-043 design call, 2026-07-28 — a narrow price-only path for `publish_prices.py`.**
 `publish_prices.py` (the */30 dashboard-snapshot publisher, `non-functional-ops.md` §8) currently calls
 the same `get_market_data()` every AI-judgment path uses, but only reads four fields
@@ -191,6 +223,46 @@ failure retry once with a terse "reply with ONLY the JSON array"; (3) on second 
 verdict as `Hold` (no alert), move on** — a fail-safe Hold carries `confidence: null`, never fabricated.
 (4) every raw response (incl. failures) is written to `data_snapshot`.
 
+**FIX ROUND (DEEP-003, INC-9) — positional-fallback attribution contract, `_parse_batch` (§4.4a).** When a
+requested ticker is absent from `by_ticker` (the model's response didn't label an object with that
+ticker), `_parse_batch` falls back to the array object at the same index as the request — legitimate only
+when the model followed request order but the object's own `ticker` field is missing/blank (it forgot the
+label, not a different company). As shipped, the fallback accepted **any** dict at that index regardless
+of its own `ticker` field, so a dropped-then-shifted response (`[A,B,C]` requested, model returns
+`[A,X,B]`) could attribute `B`'s verdict/rationale/confidence to `C` and stamp it `parse_status: "ok"` —
+the one path that could **fabricate**, not merely miss, a signal (violating `docs/design.md` §0 #8, which
+this fix restores). **Fix — the positional object is accepted only when it corroborates the ticker being
+resolved:**
+```
+o = by_ticker.get(t.upper())
+used_fallback = False
+if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
+    cand = arr[i]
+    cand_ticker = cand.get("ticker")
+    # Legitimate case: object has no ticker label at all, OR its own ticker
+    # normalizes (case-fold, strip .TO/.NS) to the one we're resolving. A
+    # DIFFERENT normalized ticker at this index means the array is
+    # misaligned — accepting it would misattribute another company's verdict.
+    if not cand_ticker or _normalize_ticker(str(cand_ticker)) == _normalize_ticker(t):
+        o, used_fallback = cand, True
+if used_fallback:
+    print(f"  [ai_judge] positional fallback used for {t} (array index {i} had no "
+          f"matching 'ticker' label)")
+```
+Anything that fails this narrowed check falls through to `_FAIL_SAFE_PARSE` (`parse_status: "failed"`) —
+same fail-safe-to-Hold posture as every other parse failure, so it is caught by `state.py`'s existing
+`parse_status in ("failed","api_error")` guard and can never fire a fabricated alert. `_normalize_ticker`
+is a small helper (`.upper()`, strip a trailing `.TO`/`.NS`) — the same normalization `_market_for`
+(`ingest.py`) already applies, not a new convention.
+**Secondary, same fix commit:** `by_ticker`'s dict comprehension keeps the *last* of any duplicate ticker
+label in the model's response, silently. Log (not reject) a duplicate when building `by_ticker` — a
+one-line print, no behavior change — so a model repeating a ticker is visible in the run log rather than a
+silent data-quality issue.
+**Module docstring correction (dev, same commit):** `ai_judge.py`'s header docstring currently states "a
+malformed response can only ever MISS a signal, never fabricate one" as an unqualified claim; update it to
+name the positional-fallback narrowing above as the mechanism that makes the claim true, rather than
+leaving it as an assertion the code didn't fully honor.
+
 **Confidence (persisted, not yet consumed):** the model's self-rated `high`/`medium`/`low` is validated,
 persisted in `data_snapshot.confidence`, surfaced on the cards, but **read by no gating logic today**
 (known limitation, `frontend.md` §12).
@@ -219,6 +291,40 @@ directly via `send_ntfy`.
   and emitting an operator-visible `[FR18 fallback]` run-log line if it does.
 - Notification copy (titles/body) is owned by the UI handoff (`requirements_docs/
   stock-advisor-ui-handoff-v3-spec.md`, v4) — build to the handoff.
+
+**FIX ROUND (DEEP-002, INC-8) — delivery-confirmed contract (FR34, FR15's `alerted` definition).**
+`Notifier.push()`'s contract is revised so callers can tell attempted from delivered — previously `push()`
+returned nothing, swallowed all exceptions, and never checked the HTTP status, so a failed send was
+indistinguishable from a success at the call site. **New return contract, both implementations:**
+- `NtfyNotifier.push(...) -> bool` — `True` only on a confirmed 2xx (`resp.raise_for_status()` inside the
+  `try`); `False` on any `requests` exception or non-2xx status, logged distinctly
+  (`[notify] ERROR push failed for {ticker}: ...`) rather than the old print-and-swallow.
+- `DryRunNotifier.push(...) -> None` — `None` is a third, explicit state: "deliberately not attempted"
+  (`ALERTS_ENABLED=false` or no topic configured), distinct from both `True` and a real `False` failure.
+  Never conflate `None` with a failure — a dry run is an operator choice, not an outage.
+
+**`state.py` call-site contract (both `process_ticker` and `process_candidate`):** a `log_id` is generated
+client-side (`str(uuid.uuid4())`, `call_log.id` is already `uuid`) **before** `push()` is called, so it can
+be passed into both `push()` (for the tap-through URL) and the subsequent `write_call_log(id=log_id, ...)`
+— this removes the previous ordering assumption that the log row had to exist before the push, which is
+what let `alerted` get written before the outcome was known.
+- `delivered = notifier.push(...)` — `True` / `False` / `None`.
+- `alerted = (delivered is True)` — written to `call_log.alerted`; **only a confirmed 2xx counts** (FR15's
+  redefinition). A dry run writes `alerted=False` — it is honest that nothing was sent, not a claim of
+  delivery it can't back up.
+- **State/cooldown advance:** `delivered is False` (a real, failed attempt) does **not** advance
+  `verdict_state.current_verdict` (watchlist) — the next cycle re-evaluates the same crossing against the
+  still-unadvanced prior verdict and retries automatically (FR34's literal retry contract). `delivered is
+  True` **or** `None` (dry run) *does* advance state — a dry run is a deliberate, expected non-send, not a
+  failure to recover from; **not** advancing on a dry run would let a verdict backlog build up silently
+  while `ALERTS_ENABLED=false` and dump all at once the moment it flips back on, which is worse than the
+  status quo and not what FR34 is for. Discovery has no `verdict_state`/cooldown lifecycle to advance
+  either way, but its 7-day re-push dedup (`recently_pushed_candidates`, keyed on `alerted=True`) is a
+  direct consumer of this same fix: a failed or dry-run candidate push is no longer falsely deduped for a
+  week (Decision #32) — it naturally resurfaces next scan since `alerted` stays `False`.
+- New outcome label for the run log / heartbeat outcomes `Counter`: `"push-failed"` (watchlist) /
+  `"candidate-push-failed"` (discovery) when `delivered is False` — folded into the degraded count, see
+  §4.8 below.
 
 ### 4.7 Detail page — GitHub Pages (FR14, FR2, FR11, FR23, NFR3, Decision #17)
 
@@ -257,3 +363,36 @@ A passive heartbeat no one reads is not a monitor (`docs/design.md` §0, load-be
 **Known limit (`foundations.md` §2 item 6):** the monitor lives in the same Supabase pg_cron it watches —
 it cannot catch a total Supabase/pg_cron outage. An out-of-band uptime ping is the documented, unbuilt
 mitigation.
+
+**FIX ROUND (DEEP-001, INC-8) — heartbeat status must reflect "completes degraded" as NFR2 now defines
+it.** `run_hourly.py`/`run_discovery.py` compute `status` from an `outcomes` `Counter` keyed by what
+happened to each ticker (`skip`, `error`, `no-read`, `cold-start`, `quiet`, `change-alert`, `push-failed`,
+...) and write it to `run_heartbeat.status`; `check_pipeline_health()` (`sql/phase5_monitoring.sql`)
+already alerts on any `status <> 'ok'` — so the SQL side needs **no change**, the bug is entirely in which
+Python outcomes count as "not ok." **As shipped, `degraded = outcomes["skip"] + outcomes["error"]`
+omitted `outcomes["no-read"]`** — every fail-safe Hold from a parse/API failure (`state.py`'s
+`parse_status in ("failed","api_error")` guard) — so a run where **every** ticker's AI call failed (expired
+key, provider outage, bad model string) still wrote `status="ok"`. This is precisely NFR2's sharpened
+"completes degraded" case (`requirements.md` NFR2, Decision #31): "any run in which one or more requested
+tickers failed to produce a valid AI verdict for any reason ... regardless of internal bucket naming."
+**Fix — both entry points, the only line that changes:**
+```
+degraded = outcomes["skip"] + outcomes["error"] + outcomes["no-read"] + outcomes["push-failed"]
+status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
+```
+(`run_discovery.py`'s equivalent line already includes `screens_errored`; add `outcomes["no-read"]` and
+`outcomes["candidate-push-failed"]` to it the same way.) `outcomes["push-failed"]`/`"candidate-push-failed"`
+are the new DEEP-002 outcome labels (above) — folded in here rather than as a separate change, since both
+fixes touch the same formula in the same two files; this is why INC-8 bundles DEEP-001+DEEP-002. No new
+status tier is introduced: an all-`no-read` run already gets the same `"partial"` value — and therefore
+the same `check_pipeline_health()` alert branch — that a partially-skipped/errored run already gets today,
+which satisfies NFR2's "at least the same urgency as a fully skipped/errored run" bar without a new SQL
+branch. **Dashboard/detail-page rendering (`pages/dashboard.html`, `pages/detail.html`):** the detail page
+already special-cases `parse_status in ("failed","api_error")` with a "fail-safe Hold" note
+(`detail.html`'s `failNote`) — no change needed there. `dashboard.html`'s per-row verdict pill only
+special-cased `parse_status === "no_data"` ("no data" pill); a `failed`/`api_error` row rendered a normal
+`Hold` pill, indistinguishable from a real verdict. **Fix:** widen the same check to
+`["no_data","failed","api_error"].includes(row.parse_status)` → render the existing "no reading" pill
+style for all three (label can stay "no data" or become a shared "no reading" string — dev's call, no
+behavior difference); the confidence-pill guard (`row.confidence && ...`) needs no change since
+`confidence` is already `null` on every fail-safe row.
