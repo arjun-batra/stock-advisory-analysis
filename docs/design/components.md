@@ -263,6 +263,91 @@ malformed response can only ever MISS a signal, never fabricate one" as an unqua
 name the positional-fallback narrowing above as the mechanism that makes the claim true, rather than
 leaving it as an assertion the code didn't fully honor.
 
+**BUG-005 refinement (INC-9 fix-cycle-1) — unambiguous-normalization guard.** The DEEP-003 fix above
+legitimizes a normalized-only match ("its own `ticker` field is absent, OR its own ticker normalizes ...
+to the one we're resolving") without qualification. That is itself a hole: `_normalize_ticker` strips a
+trailing `.TO`/`.NS` suffix, so two *different*, real companies cross-listed on two markets — e.g.
+`ABC.TO` and `ABC.NS` — normalize to the identical string `"ABC"`. If a batch requests both and the
+model's response labels one of them (say `ABC.TO`) but not the other, the unqualified corroboration check
+lets `ABC.NS`'s positional fallback accept `ABC.TO`'s own already-consumed labeled object as
+"corroboration": one real company silently inherits a different real company's verdict/rationale under
+`parse_status: "ok"` — the exact DEEP-003 fabrication class (§0 #8), reopened by the mechanism DEEP-003's
+own fix introduced to close it.
+
+**Why this is non-obvious, worth stating explicitly so it isn't optimized away later:** the corroboration
+check reads as safe in isolation — it only accepts a candidate whose own ticker field "agrees with" the
+one being resolved. But "agrees with" is doing normalization-strength work, and normalization is lossy by
+design; that lossiness is the entire point (it's what lets a bare `"ABC"` reply legitimately resolve a
+request for `"ABC.TO"`, §4.4a's own worked case). A future reader who trusts the check's *name*
+("corroborates") rather than its *lossiness* could plausibly conclude the ambiguity guard below is
+redundant belt-and-suspenders and simplify it back out — it is not; it is the only thing standing between
+this branch and a cross-market fabrication.
+
+**Fix — a normalized-only match is accepted only when it is unambiguous within the batch: exactly one of
+the tickers requested this call normalizes to that form.**
+```
+normalized_counts = Counter(_normalize_ticker(x) for x in tickers)   # once per _parse_batch call
+...
+o = by_ticker.get(t.upper())
+used_fallback = False
+if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
+    cand = arr[i]
+    cand_ticker = cand.get("ticker")
+    t_norm = _normalize_ticker(t)
+    unambiguous_normalized_match = (
+        cand_ticker and _normalize_ticker(str(cand_ticker)) == t_norm
+        and normalized_counts[t_norm] == 1
+    )
+    if not cand_ticker or unambiguous_normalized_match:
+        o, used_fallback = cand, True
+```
+Two or more requested tickers colliding on the same normalized base symbol means a normalized-only match
+can't tell which one the candidate actually belongs to, so every one of them must fail safe rather than
+guess — same "never fabricate, only miss" posture as the original misaligned-array case, applied one
+level deeper. The no-`ticker`-field branch is untouched by this guard: it never depended on normalization
+to identify a match in the first place (there is no foreign label to compare against), so it cannot become
+ambiguous the same way.
+
+**Alternative considered and rejected: require an exact (non-normalized) match whenever the candidate
+carries an explicit `ticker` field, reserving normalization for the no-field case only.** Narrower, and it
+would also close the collision — but it breaks the legitimate case §4.4a exists to serve: a model that
+replies with a bare `"ABC"` when asked about `"ABC.TO"` (a label is present, just not exchange-qualified)
+would fail safe under an exact-match rule even in a single-ticker batch with nothing else to collide
+against. The unambiguity guard keeps that legitimate normalized match working whenever it is actually
+safe (nothing else in the batch could be confused for it) and refuses to guess only when it is genuinely
+ambiguous — it targets the failure condition (ambiguity) rather than the mechanism (normalization) that
+only sometimes produces it.
+
+**Second-order judgment, recorded per this fix (not itself a design change; INC-9 stays mid-cycle
+code-only).** Per-batch unambiguity is the right *contract* to specify at the `_parse_batch` boundary — it
+is cheap, local, and correctly scopes the corroboration check to exactly the cases where "normalizes to"
+is trustworthy. But it treats the symptom, not the root cause: `_normalize_ticker`'s suffix-stripping is a
+lossy primitive being reused for identity comparison, and per-batch unambiguity only holds because
+*today's* watchlists don't happen to carry the same base symbol on two markets at once. FR20 groups
+tickers by market but nothing in the requirements prevents a user from watching both `ABC.TO` and `ABC.NS`
+simultaneously (the realistic trigger BUG-005 itself names) — if that ever happens, the guard's designed
+behavior is "both fail safe," which is correct (no fabrication) but is a live MISS on a watchlist entry
+the user genuinely holds, for as long as the collision persists in that batch.
+- **Exchange-qualified matching** (exact match first, suffix-stripped normalization only as fallback) was
+  considered and doesn't structurally close this — it still needs a lossy fallback path for the legitimate
+  bare-`"ABC"` case, and that fallback path is exactly where the ambiguity re-enters. It shrinks the
+  surface (only same-batch, cross-market, one-side-bare replies) without removing it.
+- **Prompt-level fix — require the model to always echo back the caller's exact, exchange-qualified
+  ticker string, never a bare base symbol** is the structurally cleaner option: if `BATCH_SYSTEM_PROMPT`
+  guaranteed that, the entire normalized-match branch (and the ambiguity it creates) becomes dead code —
+  only the no-label positional fallback would remain, and that branch is unaffected by any of this. Not
+  proposed as a change here: it needs a verification pass on how reliably a real model actually honors an
+  echo-back instruction under load before being trusted as the sole guard, not an assumption swapped in for
+  the current defense-in-depth.
+
+**Verdict: closed for the current watchlist shape (no live cross-market same-base-symbol collision on
+today's US/TSX/NSE watchlists), patched rather than structurally closed for the general case.** Keep the
+per-batch unambiguity guard regardless of any future prompt change — defense in depth costs nothing here.
+If a future increment allows or encourages watching the same company across two markets simultaneously,
+revisit the prompt-level echo-back fix rather than trying to harden `_normalize_ticker` further: the
+parser-side primitive has little room left to give without becoming exact-match, which reintroduces the
+exact case the positional-fallback mechanism exists to handle.
+
 **Confidence (persisted, not yet consumed):** the model's self-rated `high`/`medium`/`low` is validated,
 persisted in `data_snapshot.confidence`, surfaced on the cards, but **read by no gating logic today**
 (known limitation, `frontend.md` §12).
