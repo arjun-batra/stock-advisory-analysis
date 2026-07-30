@@ -94,8 +94,11 @@ def test_all_markets_closed_without_force_run_is_a_noop(monkeypatch, wire_main, 
 
     out = capsys.readouterr().out
     assert "All markets closed - no-op, exit." in out
-    # No heartbeat write on a genuine no-op: main() returns before state.client()
-    # or state.write_heartbeat() are ever reached.
+    # No heartbeat write on a genuine no-op: state.client() and checkpoint 1's
+    # is_paused() ARE reached (REV-116 fix, docs/review-log.md Pass 28 -- moved
+    # to the top of main(), ahead of the tunables-cache write and the market
+    # gate) but state.write_heartbeat() is not -- main() returns at the
+    # closed-market check below that, before any heartbeat write.
     assert wire_main.run_heartbeat == {}
 
 

@@ -186,11 +186,14 @@ def test_kill_switch_abort_class_declared_exactly_once_as_baseexception():
 # =============================================================================
 
 def test_checkpoint1_run_hourly_aborts_before_any_named_side_effect(monkeypatch, wire_main):
-    """Checkpoint 1 is placed AFTER `sb = state.client()` / `notifier =
-    notify.get_notifier()` are constructed (operational-controls.md §13.6.2 --
-    the earliest point a pause read is possible), so constructing the
-    notifier object itself is expected; what must never happen is any of the
-    six named functions actually being invoked."""
+    """Checkpoint 1 sits at the very top of main() (REV-116 fix, docs/review-
+    log.md Pass 28), right after `sb = state.client()` -- its own genuine
+    precondition -- and BEFORE `notifier = notify.get_notifier()`, the
+    tunables-cache write, and the market gate; a paused run never reaches
+    `notify.get_notifier()` at all. What must never happen is any of the six
+    named functions actually being invoked -- asserted below via
+    `notifier.calls == []`, which holds trivially true here since the
+    notifier this test wires in is never even constructed by main()."""
     sb = wire_main
     sb.paused = True
     notifier = FakeNotifier()
