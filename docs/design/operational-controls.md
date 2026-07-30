@@ -5,15 +5,23 @@ load-bearing decisions, increment plan, and requirement coverage map — read th
 orientation. Section numbers below (§13–§14) continue the pre-split numbering; §15 (coverage map)
 stays in `docs/design.md` itself, so this file skips it.
 
-**Status: IMPLEMENTED** — covers the 2026-07-26 change request (kill-switch, FR24–FR26; AI provider
-abstraction, FR33). Both increments have shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction)
-were dev-built, qa-tested, and reviewer-cleared with zero blockers through Pass 14
-(`docs/review-log.md`). This file is now as-built documentation for §13–§14, not draft design. Two
-verification items remain open and are tracked in `docs/review-log.md`, not here: INC-3's
-`sql/kill_switch.sql` **is applied and live** in the Supabase project — what's deferred (Arjun's
-instruction, REV-070) is the functional pause/resume verification test (AC1–AC5), to be run as part of a
-final end-to-end pass covering all increments; and INC-4's AC6 (live-Gemini smoke test) is deferred
-pending real credentials (`docs/handoff.md`).
+**Status: §13.1–§13.5 IMPLEMENTED, §14 IMPLEMENTED, §13.6 DRAFT.** §13.1–§13.5 and §14 cover the
+2026-07-26 change request (kill-switch, FR24–FR26; AI provider abstraction, FR33). Both increments have
+shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction) were dev-built, qa-tested, and
+reviewer-cleared with zero blockers through Pass 14 (`docs/review-log.md`). Two verification items remain
+open and are tracked in `docs/review-log.md`, not here: INC-3's `sql/kill_switch.sql` **is applied and
+live** in the Supabase project — what's deferred (Arjun's instruction, REV-070) is the functional
+pause/resume verification test (AC1–AC5), to be run as part of INC-11's live-verification pass; and INC-4's
+AC6 (live-Gemini smoke test) is deferred pending real credentials (`docs/handoff.md`), also part of INC-11.
+
+**§13.6 is new: INC-12 (DEEP-007 resolution, Decisions #37/#38, FR24's four in-flight boundary checkpoints
++ FR35's mid-run-abort classification) — DRAFT, pending user approval (GATE-3-equivalent) before dev
+starts.** This closes the gap DEEP-007 found (`docs/review-log.md`, "Deep review — 2026-07-29"): a run
+already dispatched when the kill switch flips ran to full completion, including a real push and a
+`contents: write` commit, while the portal badge already read PAUSED. Sequenced strictly after INC-8
+(Decision #37) since it needed INC-8's degraded-accounting rewrite to settle what "the run produced real
+work, then stopped" means for NFR2 — INC-8 shipped and is reviewer-cleared (Pass 24), so this is now
+unblocked. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance criteria.
 
 ---
 
@@ -48,14 +56,16 @@ begin
   -- ...existing PAT lookup + pg_net.http_post unchanged below...
 ```
 
-**Accepted risk (new):** a **manual** `workflow_dispatch` — a human clicking "Run workflow" in the
-GitHub UI, or `gh workflow run`, bypassing pg_cron entirely — is **not** blocked by this design. FR24's
-text scopes the guarantee to "no **scheduled** workflow dispatches"; this mirrors the existing
-`FORCE_RUN` manual-override pattern (`components.md` §4.1) that the system already relies on for
-testing/backfill. Only Arjun has write access to trigger `workflow_dispatch` manually, so the exposure
-is low. If this ever needs closing, the fix is a second, Python-layer check at the top of
-`run_hourly.py`/`run_discovery.py`/`publish_prices.py` — deliberately **not** built now, since FR24
-explicitly rejects a Python-layer suppression as the *primary* mechanism.
+**Accepted risk, narrowed by INC-12 (§13.6):** a **manual** `workflow_dispatch` — a human clicking "Run
+workflow" in the GitHub UI, or `gh workflow run`, bypassing pg_cron entirely — is still **not** blocked at
+the dispatch layer described in this section; FR24's dispatch-layer text scopes the guarantee to "no
+**scheduled** workflow dispatches." What changes once §13.6 ships: a manually-triggered run's own `main()`
+now hits FR24 checkpoint 1 (§13.6.2) within a few lines of starting, regardless of how it was invoked, and
+self-aborts if paused — so the residual window this risk leaves shrinks from "the entire run completes" to
+"between manual dispatch and `main()` reaching checkpoint 1" (config/secret loading, sub-second, no
+irreversible action possible in that window). Only Arjun has write access to trigger `workflow_dispatch`
+manually, so the exposure was already low; §13.6 was not built to close this specific risk (it exists to
+satisfy Decision #37's in-flight-run guarantee), but closes most of it as a side effect.
 
 ### 13.2 Data model
 
@@ -202,11 +212,256 @@ adjusted baseline.
 
 | Requirement | Covered by |
 |---|---|
-| FR24 (full-system pause at dispatch layer) | §13.1, §13.2 |
+| FR24 (full-system pause at dispatch layer, **+ in-flight boundary checks, INC-12**) | §13.1, §13.2, §13.6 |
 | FR25 (monitor pause-awareness) | §13.4 |
 | FR26 (audit every toggle) | §13.2, §13.3 |
-| NFR2 (extended: pause-aware dead-man monitor) | §13.4 |
-| NFR7 (RLS scopes access to what each surface needs, incl. these two new tables) | §13.2 (REV-033 fix) |
+| FR35 (mid-run pause-abort classification, INC-12) | §13.6.3 |
+| NFR2 (extended: pause-aware dead-man monitor) | §13.4, §13.6.4 |
+| NFR7 (RLS scopes access to what each surface needs, incl. these two new tables) | §13.2 (REV-033 fix), §13.6.5 |
+
+---
+
+### 13.6 In-flight boundary checks — FR24 checkpoints 1–4, FR35 causal-tie classification (INC-12)
+
+**Status: DRAFT, pending user approval.** Resolves DEEP-007 (`docs/review-log.md`) per Decision #37: §13.1's
+dispatch-layer guard only stops *future* dispatches — a run already executing when the flag flips ran to
+completion (real Yahoo fetches, a real AI call, a real push, a real commit to `main`) while the portal
+badge already read PAUSED. Arjun chose option (b): add Python-layer checks so an in-flight run stops itself
+at four defined boundaries, each immediately before an irreversible action, rather than rescoping FR24's
+wording down to match the weaker dispatch-only guarantee. Decision #38/FR35 then closes the follow-on gap
+this creates: a run that aborts at checkpoint 2 or 3 has, unlike a checkpoint-1 abort, already produced
+real logged per-ticker work — a new run shape distinct from both "never started" (FR25) and "completed
+degraded" (NFR2/Decision #31), so it needs its own non-alerting classification, made causally strict enough
+that a genuine crash can never be misreported as a deliberate pause.
+
+#### 13.6.1 Mechanism — `state.is_paused()`
+
+```python
+def is_paused(sb) -> bool:
+    """FR24: reads kill_switch_state.paused directly, via the same SUPABASE_SECRET_KEY
+    service credential every script already authenticates with (bypasses RLS -- no new
+    SQL object, grant, or secret, per Decision #37). Called at each of FR24's four
+    in-flight boundary checkpoints, immediately before the irreversible action it guards."""
+    rows = sb.table("kill_switch_state").select("paused").eq("id", True).limit(1).execute().data
+    return bool(rows and rows[0]["paused"])
+```
+
+One Supabase SELECT per checkpoint invocation (a single-row, indexed-PK read on `kill_switch_state`) — the
+same table §13.2 already defines, no new table needed for the read itself. Negligible against NFR1's cost
+cap: at most ~4 extra reads per `hourly-watchlist`/`daily-discovery` run (checkpoint 1 once, checkpoint 2
+once per open market-group — normally 1, at most 2 on the never-overlapping-in-practice double-open edge
+case §4.1 already documents — and checkpoint 3 once per verdict crossing that actually requires a push,
+typically zero or a handful per cycle), plus one in `publish_prices.py`.
+
+#### 13.6.2 The four checkpoints — placement and control flow
+
+**Checkpoint 1 — entry to `main()` (`run_hourly.py`, `run_discovery.py` only; FR24's text does not name
+this checkpoint for `publish_prices.py`, see checkpoint 4 below).** Placed immediately after `sb =
+state.client()` / `notifier = notify.get_notifier()` are constructed (the earliest point a pause read is
+possible) and before any Yahoo fetch or AI call — `state.get_watchlist(sb)` in `run_hourly.py`,
+`prefilter.find_candidates(...)` in `run_discovery.py` (a live Yahoo screener call, §4.3). A bare
+early-return, no exception:
+```python
+if state.is_paused(sb):
+    print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
+          "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
+    return
+```
+Writes **no** `run_heartbeat` row and **no** `kill_switch_abort_log` row (§13.6.3 explains why the latter
+is checkpoint-2/3-only) — this mirrors both FR25's existing text ("structurally indistinguishable from one
+the `pg_cron` dispatch layer never dispatched at all") and this codebase's own pre-existing precedent: the
+"all markets closed" early return a few lines below this checkpoint already skips the heartbeat write for
+exactly the same reason.
+
+**Checkpoint 2 — immediately before the batched AI call ("ai_call").** In `run_hourly.py::_process_group`,
+placed *after* Phase 1 ingest completes (a Yahoo fetch is not itself irreversible, and checkpoint 1 already
+covers "no Yahoo fetch if paused at entry" — a fetch that happens after entry but before this checkpoint is
+accepted, bounded residual work, same class as any already-started irreversible action) and immediately
+before `ai_judge.judge_batch(...)`. In `run_discovery.py::main`, placed the same way, after Phase 1 ingest
+and immediately before its own `judge_batch(...)` call. Raises rather than returns, since this call sits
+inside a function nested below `main()`:
+```python
+if state.is_paused(sb):
+    raise state.KillSwitchAbort("ai_call")
+```
+
+**Checkpoint 3 — immediately before the push ("push").** Inside `state.process_ticker` and
+`state.process_candidate`, in the one branch each function has that is about to call `notifier.push(...)` —
+i.e. only when a real verdict crossing (or, for discovery, a push-eligible Buy) has been detected, not on
+every ticker. Placed *after* every read-only computation in that branch (state lookup, snapshot assembly)
+and *before* `log_id`/`write_call_log`/`verdict_state` are touched:
+```python
+if is_paused(sb):
+    raise KillSwitchAbort("push")
+```
+Because nothing has been written yet for this ticker's crossing when the check fires, aborting here needs
+no special "treat like a push failure" branch — the crossing is left exactly as pending as if this cycle
+had never reached it, and the next cycle's `process_ticker`/`process_candidate` re-evaluates it against the
+still-unadvanced `verdict_state` and retries automatically, per FR34's existing mechanism (FR35's own text:
+"No new catch-up or resume logic should be built for this case").
+
+**Checkpoint 4 — immediately before `publish_prices.py`'s commit-triggering write.** FR24's text names this
+checkpoint only for `publish_prices.py`, and does not name a checkpoint-1-style entry check for it — Yahoo
+fetches in this script are not gated by any checkpoint, only the commit is. Since the git commit itself is
+a separate shell step in `publish-prices.yml`, not something Python controls, the Python-layer guard is
+placed immediately before the file write the commit step's `git diff --cached` depends on:
+```python
+if state.is_paused(sb):
+    print("[kill-switch] paused -- skipping prices.json write (FR24 checkpoint 4); "
+          "no commit will be made, previously published snapshot remains current. "
+          "No run_heartbeat row written this cycle.")
+    return
+```
+Skipping the write leaves `pages/prices.json` byte-identical to what's already committed, so the workflow's
+existing `git diff --cached --quiet` guard finds nothing changed and makes no commit — "the previously
+published snapshot remains current," FR24's own text. Bare early return, same as checkpoint 1: **no**
+`kill_switch_abort_log` row (out of scope for FR35 per its amended text — "an abort there discards no
+per-ticker logged work... already fully covered by FR25's absence treatment") and **no** `run_heartbeat`
+row.
+
+**Exception hierarchy — deliberate.** `KillSwitchAbort` (new, `scripts/state.py`) subclasses `BaseException`,
+**not** `Exception`:
+```python
+class KillSwitchAbort(BaseException):
+    """Raised only by checkpoint 2 ('ai_call') and checkpoint 3 ('push') when is_paused()
+    observes paused=true immediately before the irreversible action each guards. A
+    BaseException, not an Exception: every per-ticker/per-group processing loop in
+    run_hourly.py/run_discovery.py already wraps its own work in `except Exception` so one
+    bad ticker can't take down the run -- a plain Exception subclass raised from inside
+    that loop would be silently caught by that guard and counted as outcomes["error"],
+    which is exactly the "genuine failure misreported" case FR35's causal-tie requirement
+    exists to prevent. Caught exactly once, by a try/except wrapping each entry point's
+    group-processing loop in main()."""
+    def __init__(self, checkpoint: str):
+        self.checkpoint = checkpoint   # 'ai_call' | 'push'
+        super().__init__(f"kill-switch paused, aborting at checkpoint={checkpoint}")
+```
+`main()` (both `run_hourly.py` and `run_discovery.py`) wraps its group-processing loop:
+```python
+try:
+    for s in run_sessions:
+        _process_group(sb, notifier, rows, holdings, s["models"], now, outcomes)
+except state.KillSwitchAbort as abort:
+    real_rows = sum(outcomes[k] for k in
+                     ("cold-start", "quiet", "change-alert", "push-failed", "no-read"))
+    state.write_kill_switch_abort(sb, workflow="hourly-watchlist",
+                                   checkpoint=abort.checkpoint, real_rows_this_cycle=real_rows)
+    print(f"[kill-switch] paused -- aborted at checkpoint={abort.checkpoint} after "
+          f"{dict(outcomes)}. No run_heartbeat row written this cycle (FR35 expected-quiet).")
+    return
+
+degraded = outcomes["skip"] + outcomes["error"] + outcomes["no-read"] + outcomes["push-failed"]
+status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"
+state.write_heartbeat(sb, "hourly-watchlist", status)
+```
+`run_discovery.py`'s equivalent wraps its checkpoint-2 check + `judge_batch(...)` + Phase-3 push loop the
+same way, using its own `outcomes` keys (`candidate-logged`, `candidate-pushed`, `candidate-push-failed`,
+`no-read`) for `real_rows_this_cycle` and its own `heartbeat_key` (`daily-discovery` / `daily-discovery-in`)
+for `workflow`.
+
+#### 13.6.3 FR35 causal-tie classification — `kill_switch_abort_log`
+
+**Resolves pm's constraint 1.** FR35 requires the classification be "causally tied to the checkpoint's flag
+read, never inferred" — checkable by qa "against the specific checkpoint-and-flag-read event," not against
+downstream symptoms an unrelated crash could also produce. Mechanism chosen: a **dedicated, append-only
+table**, `kill_switch_abort_log` (§13.6.5), written by `state.write_kill_switch_abort()` **only** inside the
+`except state.KillSwitchAbort` branch shown above — i.e. only as a direct, synchronous consequence of a
+checkpoint's own `is_paused(sb)` call returning `True`. The row's mere existence *is* the causal tie: no
+other code path in the repo ever inserts into this table (grep-verifiable, AC in `increment-plan.md`), so a
+row naming `workflow='hourly-watchlist', checkpoint='ai_call'` at a given timestamp means, and can only
+mean, that specific checkpoint's flag read fired for that run. This is strictly stronger than the two
+inference patterns FR35 explicitly rejects (an outcome count short of the full ticker list; a heartbeat that
+was never written) — both of those are also produced by a genuine unhandled exception, which is exactly why
+FR35 forbids inferring pause from them; this table is written by nothing else, ever.
+
+**A pause never suppresses a real degraded signal in the same run (FR35's second bullet) — verified by
+construction, not by a special case.** `real_rows` (the count fed into `real_rows_this_cycle`) is computed
+from `outcomes` *before* the abort, so any ticker that failed for a real reason earlier in the same run
+(counted in `outcomes["no-read"]`/`outcomes["error"]`/`outcomes["skip"]`) is already reflected in
+`call_log`'s real rows for that cycle regardless of the abort — nothing about writing to
+`kill_switch_abort_log` deletes, retracts, or reclassifies those rows (FR35's third bullet, "no special-case
+handling needed or permitted"). Because the run writes **no** `run_heartbeat` row on an abort (§13.6.4), the
+NFR2-relevant question is never "does this cycle's heartbeat status get overridden to non-alerting" — there
+is no heartbeat row for this cycle to override. A prior cycle's real degraded heartbeat (from an earlier,
+completed run) is untouched by any of this and continues to alert exactly as NFR2 already requires.
+
+**The checkpoint-2-with-zero-prior-rows sub-case.** FR35's own text scopes itself to a run that "has already
+written at least one real (non-skip) `call_log` row" before the abort. In the common single-open-market-group
+case, checkpoint 2 fires before that group's *only* batched AI call — meaning **zero** real rows exist yet
+for the cycle, a case FR35's literal precondition doesn't cover (it reads closer to FR25's "no ticker-level
+work exists" framing, just discovered one step later in the pipeline than checkpoint 1). This design
+deliberately uses the **same** mechanism (no heartbeat row + a `kill_switch_abort_log` row) for both the
+zero-row and the ≥1-row sub-cases, rather than branching on the row count to decide whether to write the
+abort-log row at all: NFR2's required *behavior* (no alert) is identical either way, since both leave no new
+`run_heartbeat` row and both are covered by §13.4's blanket pause-suppression while still paused and its
+resume-baseline guard afterward. Branching only for classification purposes, with no behavioral difference
+downstream, would add a second code path to test and maintain for no observable benefit — `real_rows_this_
+cycle` simply records `0` in that sub-case, which is itself useful diagnostic information (distinguishes "no
+group had even started its AI call yet" from "later groups/tickers were cut off"), not a gap.
+
+#### 13.6.4 NFR2 interaction — no heartbeat row, no SQL change
+
+**Resolves pm's constraint 2.** `check_pipeline_health()` (§13.4, `sql/phase5_monitoring.sql`) already
+alerts on any `run_heartbeat.status <> 'ok'`. A third status value for "paused mid-run" would require a
+matching SQL change teaching that function to treat it as non-alerting — extra SQL surface, and a status
+column whose only two live values today (`ok`/`partial`) are both already alerting-significant, now needing
+a third value future maintainers must remember to special-case correctly forever.
+
+**Decision: write no `run_heartbeat` row at all for a checkpoint-2/3/4 abort — the same treatment
+checkpoint 1's abort already gets today.** Zero SQL changes to `check_pipeline_health()`. This works for
+exactly the reason FR25/§13.4 already established for checkpoint 1: while `kill_switch_state.paused = true`,
+`check_pipeline_health()`'s own first action is `if v_paused then return` — **no alert evaluation happens at
+all**, regardless of what any workflow's heartbeat does or doesn't say, so an abort that happens while still
+paused is fully covered the instant it happens, with no dependency on the heartbeat row's absence. The
+heartbeat's absence only matters for what happens **after** resume: §13.4's `resume_baseline` refinement
+(`GREATEST(last_run_at, resume_baseline)`) already resets every staleness comparison's clock to the moment of
+resume, specifically so a system paused for N cycles doesn't false-alarm on staleness the instant it's
+unpaused — an aborted cycle that wrote no new heartbeat simply leaves `last_run_at` at its last **real**
+completed-run value, which is exactly the value that mechanism was already built to tolerate. No new
+resume-baseline logic, no new staleness branch, no new alerting path: the existing §13.4 mechanism, built for
+checkpoint 1's case, already covers checkpoints 2–4 for free once they follow the same "write nothing to
+`run_heartbeat`" convention.
+
+**Why not the status quo's alternative (write `status='partial'` and rely on a human recognizing the pattern
+from `kill_switch_abort_log`)?** Rejected: `check_pipeline_health()` alerts on `status <> 'ok'`
+unconditionally today, with no existing hook to consult a second table before deciding — building that hook
+*is* the SQL change this decision avoids. Writing no row sidesteps the question entirely rather than
+answering it with new SQL.
+
+#### 13.6.5 Data model
+
+```sql
+create table public.kill_switch_abort_log (       -- append-only, never updated/deleted
+  id                    uuid primary key default gen_random_uuid(),
+  workflow              text not null,             -- 'hourly-watchlist' | 'daily-discovery' | 'daily-discovery-in'
+  checkpoint            text not null check (checkpoint in ('ai_call', 'push')),
+  aborted_at            timestamptz not null default now(),
+  real_rows_this_cycle  integer not null default 0  -- informational only, see §13.6.3; NOT a gating condition
+);
+alter table public.kill_switch_abort_log enable row level security;
+alter table public.kill_switch_abort_log force row level security;
+revoke insert, update, delete on public.kill_switch_abort_log from public, anon, authenticated;
+-- Same two-layer deny-all posture as kill_switch_audit (§13.2, REV-033): the REVOKE blocks
+-- anon/authenticated regardless of any policy added later by mistake; RLS+FORCE with zero
+-- policies denies every role except one with BYPASSRLS (Supabase's postgres role, and therefore
+-- the SUPABASE_SECRET_KEY service connection every script already authenticates with) -- no new
+-- grant, policy, or secret needed to write this table, per Decision #37's own text. No SELECT
+-- policy for anon/authenticated is added by this increment -- nothing reads this table yet; a
+-- future admin-portal observability view would add one additively, the same pattern INC-7 used
+-- for kill_switch_state's first SELECT policy (§13.3), not a redesign.
+```
+`checkpoint`'s two values match `KillSwitchAbort.checkpoint`'s two values exactly (`'ai_call'`, `'push'`) —
+checkpoint 1 and checkpoint 4 never write this table (§13.6.2), so no `'entry'`/`'commit'` value is needed.
+
+#### 13.6.6 Requirement coverage
+
+| Requirement | Covered by |
+|---|---|
+| FR24 (in-flight boundary checkpoints 1–4) | §13.6.2 |
+| FR35 (mid-run pause-abort classification, causal tie, no-suppression, no new resume logic) | §13.6.3 |
+| NFR2 (no false alert on a boundary-triggered abort) | §13.6.4 |
+| NFR1 (cost — negligible: one small table, ~4 extra single-row reads per run) | §13.6.1 |
+| NFR7 (RLS on the new table) | §13.6.5 |
 
 ---
 

@@ -16,9 +16,11 @@ the `§16.4` pointer below is a cross-reference only, not a status claim about t
 `docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (see
 `docs/design.md`'s increment plan and coverage map, `docs/review-log.md`).
 
-**2026-07-30 addendum (STALE, pending dev):** §16.3's "holdings-currency derivation" content below is new
-design for **INC-10** (DEEP-006, `docs/design/increment-plan.md`) — not yet implemented; the rest of this
-page describes INC-5/INC-7 as already shipped.
+**2026-07-30 addendum:** §16.3's "holdings-currency derivation" content below was new design for **INC-10**
+(DEEP-006, `docs/design/increment-plan.md`) — **now IMPLEMENTED**, dev-built across two fix cycles
+(REV-112/REV-113 found and fixed), qa-tested (PASS), reviewer Pass 27 verdict CLEAR, zero blockers/majors
+(`docs/review-log.md`). The rest of this page (INC-5/INC-7) was already shipped; all of §16.1–§16.3,
+§16.5–§16.8 now describe live, reviewer-cleared behavior.
 
 **New trust boundary — read this file in full before changing any of it.** Every other surface in this
 system is either read-only-and-public (dashboard, detail page) or has no human-authenticated caller at

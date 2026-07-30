@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — approved by the user (GATE 3-equivalent, 2026-07-30); INC-8 IMPLEMENTED (reviewer-CLEAR Pass 24); INC-9–INC-11 approved-and-not-yet-built
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) DRAFT, pending user approval
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -31,15 +31,18 @@ IMPLEMENTED.
 section logged DEEP-001 through DEEP-007 (one blocker, five majors, one minor). The user approved fixing
 all six blocker/major findings before `v0.1.0` and running the three deferred live checks
 (`requirements.md` Decision #36); pm sharpened NFR2/FR11/FR15/FR17/FR29/FR30 and added FR34 to make each
-fix self-verifiable (Decisions #31–#35). **`DEEP-007` is explicitly excluded** — an unresolved user
-trade-off, routed back to the user separately by pm; no increment below touches FR24/§13.1. Four new
-increments, **approved by the user (GATE-3-equivalent) on 2026-07-30. INC-8 is now IMPLEMENTED** —
-dev-built, qa-tested (PASS, zero bugs, `docs/test-report.md`), reviewer Pass 24 verdict CLEAR, zero
-blockers/majors (`docs/review-log.md`). **INC-9, INC-10, and INC-11 are approved and not yet built**:
-**INC-8** (DEEP-001+002 — NFR2 heartbeat accounting + FR34 delivery-confirmed alerting), **INC-9**
-(DEEP-003+004 — the parse-attribution contract + the FR17 stale-bar/holiday check), **INC-10** (DEEP-005+006
-— FR30 tunables write-time validation + FR29 holdings-currency derivation), **INC-11** (Decision #36's
-three live-verification checks, no dev code). Sequencing (`big-guns`'s own recommendation, no deviation):
+fix self-verifiable (Decisions #31–#35). **`DEEP-007` was excluded from this round** — an unresolved user
+trade-off at the time, routed back to the user separately by pm; resolved 2026-07-30 (Decision #37) and now
+built as **INC-12**, below. Four new increments were **approved by the user (GATE-3-equivalent) on
+2026-07-30. INC-8, INC-9, and INC-10 are now IMPLEMENTED** — INC-8: dev-built, qa-tested (PASS, zero bugs,
+`docs/test-report.md`), reviewer Pass 24 verdict CLEAR, zero blockers/majors (`docs/review-log.md`); INC-9:
+dev-built, qa-tested (PASS, 244/0), reviewer Pass 25 verdict CLEAR, zero blockers/majors; INC-10: dev-built,
+qa-tested (PASS across two fix cycles), reviewer Pass 27 verdict CLEAR, zero blockers/majors (both fix-cycle
+findings, REV-112/REV-113, independently re-verified RESOLVED). **INC-11 is approved and not yet
+executed**: **INC-8** (DEEP-001+002 — NFR2 heartbeat accounting + FR34 delivery-confirmed alerting),
+**INC-9** (DEEP-003+004 — the parse-attribution contract + the FR17 stale-bar/holiday check), **INC-10**
+(DEEP-005+006 — FR30 tunables write-time validation + FR29 holdings-currency derivation), **INC-11**
+(Decision #36's three live-verification checks, no dev code). Sequencing (`big-guns`'s own recommendation, no deviation):
 INC-8's two findings share the same two entry points (`run_hourly.py`/`run_discovery.py`) and the same
 `outcomes`/degraded formula, so fixing them separately would touch that formula twice; INC-9's two findings
 are both judgment-input-path integrity fixes (`ai_judge.py`/`ingest.py`), independent of the portal and of
@@ -379,7 +382,7 @@ bug is entirely in which Python outcomes count as "not ok" (`components.md` §4.
    dedupes an undelivered candidate (Decision #32).
 8. Full existing test suite passes; `git diff` confirms no file outside the list above changed.
 
-### INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — **APPROVED, not yet built** (GATE-3-equivalent, user approval 2026-07-30; build in progress, result not yet known)
+### INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — **IMPLEMENTED, reviewer Pass 25 CLEAR** (dev-built across two fix cycles — BUG-005/BUG-006 found and fixed — qa-tested PASS 244/0, `docs/test-report.md`; reviewer Pass 25 verdict CLEAR, zero blockers/majors; BUG-007 accepted as a documented, non-blocking limitation, `docs/review-log.md`)
 **Design:** `docs/design/components.md` §4.2 (ingestion), §4.4/§4.4a (parse & retry); `docs/design/
 non-functional-ops.md` §7.5 (delisting/holidays). **Files:** `scripts/ai_judge.py` (`_parse_batch`, new
 `_normalize_ticker` helper, module docstring), `scripts/ingest.py` (`get_market_data`).
@@ -405,7 +408,7 @@ non-functional-ops.md` §7.5 (delisting/holidays). **Files:** `scripts/ai_judge.
 6. Full existing test suite passes; `git diff` confirms no file outside `scripts/ai_judge.py` and
    `scripts/ingest.py` changed.
 
-### INC-10 — Portal write-time validation + holdings-currency derivation (FR30, FR11, FR29; DEEP-005+DEEP-006) — **APPROVED, not yet built** (GATE-3-equivalent, user approval 2026-07-30)
+### INC-10 — Portal write-time validation + holdings-currency derivation (FR30, FR11, FR29; DEEP-005+DEEP-006) — **IMPLEMENTED, reviewer Pass 27 CLEAR** (dev-built across two fix cycles — REV-112/REV-113 found and fixed — qa-tested PASS, `docs/test-report.md`; reviewer Pass 27 verdict CLEAR, zero blockers/majors, `docs/review-log.md`)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4 (tunables validation); `docs/design/admin-portal.md`
 §16.3 (holdings currency); `docs/design/non-functional-ops.md` §7.3 (currency enforcement). **Files:** new
 `sql/tunables_validate_trigger.sql`, new `sql/holdings_currency_derivation.sql`; `admin-portal/lib/
@@ -482,3 +485,75 @@ dependency on INC-8/9/10 at all and may run earlier if the user wants results so
    complete; **if INC-4 AC6 remains blocked on the credential at the time `v0.1.0` is otherwise ready to
    tag, that is a decision for pm/the user (per Decision #36's own text), not a decision this design makes
    silently** — routed back at closure if it comes to that, not resolved here.
+
+---
+
+## 2026-07-30 — INC-12 (DEEP-007 resolution, Decisions #37/#38) — DRAFT, pending user approval
+
+### INC-12 — Kill-switch in-flight boundary checks + mid-run-abort classification (FR24, FR35) — **DRAFT, pending user approval (GATE-3-equivalent) before dev starts**
+**Sequencing (Decision #37, binding):** strictly after INC-8 — designing the abort-accounting contract
+before INC-8 settled what "the run produced real work, then stopped" means for NFR2/Decision #31 would have
+meant guessing at a shape INC-8 might change out from under it. INC-8, INC-9, and INC-10 are all IMPLEMENTED
+and reviewer-CLEAR (Passes 24/25/27) — INC-12 is now unblocked. Independent of INC-9/INC-10 otherwise (no
+shared files).
+**Design:** `docs/design/operational-controls.md` §13.6 (all five subsections — mechanism, the four
+checkpoints, FR35's causal-tie classification, the NFR2/no-heartbeat-row decision, and the new table's
+schema). **Files:** new `sql/kill_switch_abort_log.sql` (`kill_switch_abort_log` table, RLS+FORCE+REVOKE,
+mirrors `kill_switch_audit`'s pattern); `scripts/state.py` (new `is_paused()`, new `KillSwitchAbort`
+exception, new `write_kill_switch_abort()`, one checkpoint-3 call site each in `process_ticker` and
+`process_candidate`); `scripts/run_hourly.py` (checkpoint 1 in `main()`, checkpoint 2 in `_process_group`,
+a `try/except KillSwitchAbort` wrapping `main()`'s group-processing loop); `scripts/run_discovery.py` (same
+shape — checkpoint 1 in `main()`, checkpoint 2 before its `judge_batch(...)` call, the same
+`try/except KillSwitchAbort` wrapper); `scripts/publish_prices.py` (checkpoint 4 only, before the
+`pages/prices.json` write). **No config-schema change** — no new tunable; `kill_switch_state`'s existing
+schema is read, not extended.
+**No user-visible behavior change beyond what Decision #37 already approved** — a paused run now visibly
+stops mid-flight (fewer/partial per-cycle results) instead of completing silently to the badge's
+disagreement; this is the literal guarantee Decision #37 chose, not a new trade-off. **Cost impact:
+negligible** — one small append-only table, at most ~4 extra single-row Supabase reads per run
+(§13.6.1) — well inside NFR1's existing cap, not requiring a fresh cost re-approval. Flagged to the user for
+awareness (not re-approval) alongside this design: a future increment could surface `kill_switch_abort_log`
+in the admin portal's track-record view for operator visibility; not built here (FR31 already bars new
+analytics beyond what's logged, and no requirement asks for portal exposure of this table).
+**Acceptance criteria (dev self-verifiable):**
+1. `grep -n "def is_paused" scripts/state.py` exists; a qa test mocks the Supabase client's
+   `kill_switch_state` read to return `paused=True`/`False` in turn and asserts `is_paused()` returns the
+   matching bool in both cases.
+2. Call-site count, confirmed by grep: exactly two `state.is_paused(sb)`/`is_paused(sb)` calls in
+   `scripts/run_hourly.py` (checkpoint 1 in `main()`, checkpoint 2 in `_process_group`); exactly two in
+   `scripts/run_discovery.py` (checkpoint 1, checkpoint 2); exactly two in `scripts/state.py` (checkpoint 3
+   in `process_ticker` and `process_candidate`, each immediately before its own `notifier.push(...)` call);
+   exactly one in `scripts/publish_prices.py` (checkpoint 4). `grep -n "class KillSwitchAbort" scripts/
+   state.py` shows it subclasses `BaseException`, not `Exception`.
+3. A qa test mocks `is_paused()` to return `True` before any ticker-level work and asserts
+   `run_hourly.main()` / `run_discovery.main()` / `publish_prices.main()` each return having called none of
+   `ingest.get_market_data`/`prefilter.find_candidates`/`ai_judge.judge_batch`/`notifier.push`/
+   `state.write_heartbeat`/`state.write_kill_switch_abort` — checkpoint 1/4's abort is a bare, side-effect-free
+   early return.
+4. A qa test drives Phase 1 ingest to completion (non-empty `items`) then flips the mocked `is_paused()` to
+   `True` at checkpoint 2 and asserts: `ai_judge.judge_batch` is never called, `state.write_heartbeat` is
+   never called, `state.write_kill_switch_abort` is called exactly once with `checkpoint="ai_call"` and the
+   correct `workflow` name.
+5. A qa test processes at least one ticker to a real outcome (e.g. `quiet`, producing a genuine `call_log`
+   row) so `real_rows_this_cycle` will be nonzero, then flips the mocked `is_paused()` to `True`
+   immediately before the next ticker's verdict-crossing push, and asserts: `notifier.push` is never called
+   for that ticker, no `write_call_log`/`verdict_state` write happens for it (the crossing stays exactly as
+   pending as before this cycle touched it), `state.write_kill_switch_abort` is called once with
+   `checkpoint="push"` and `real_rows_this_cycle` equal to the count of tickers already given a real outcome
+   this cycle, and `state.write_heartbeat` is never called.
+6. Re-running the same qa harness on the same fixture data with `is_paused()` now returning `False`
+   throughout successfully pushes and advances `verdict_state` for the ticker AC5 left pending — proves
+   FR35's "no new resume logic needed, the next cycle retries automatically" claim holds with zero
+   additional code.
+7. A qa test constructs a batch where checkpoint 3 fires partway through `_process_group`'s Phase 3 loop
+   and asserts the loop's pre-existing `except Exception` guard around each ticker's processing does
+   **not** catch it — it must propagate out of `_process_group` uncounted in `outcomes["error"]`, proving
+   the `BaseException` choice is load-bearing, not cosmetic.
+8. Live SQL (folded into INC-11's live-verification pass, not a merge blocker for this increment): `select
+   relrowsecurity, relforcerowsecurity from pg_class where relname='kill_switch_abort_log'` shows both
+   `true`; a direct REST call with the anon key returns zero rows or a permissions error (same proof
+   pattern as INC-3 AC5). Pausing mid-run against a real dispatched run produces exactly one
+   `kill_switch_abort_log` row with the correct `checkpoint`, and `check_pipeline_health()` raises no alert
+   for that cycle, both while still paused (§13.4's blanket suppression) and after resuming (the existing
+   `resume_baseline` guard).
+9. Full existing test suite passes; `git diff` confirms no file outside the list above changed.

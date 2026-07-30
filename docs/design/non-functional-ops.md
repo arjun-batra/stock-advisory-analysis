@@ -32,9 +32,14 @@ Section numbers below (§7–§9) are unchanged from the pre-split monolithic `d
   `state.build_position`: if `holdings.currency` and the independently-fetched
   `data["fundamentals"]["currency"]` (Yahoo's own currency for the ticker) ever disagree — e.g. a
   `watchlist.market` that doesn't actually match the ticker's real listing — `pl_pct` is suppressed
-  (`None`) rather than computed from mismatched currencies, per FR11's explicit requirement. Full mechanism:
-  `admin-portal.md` §16.3, `components.md` §4.4/§4.7 (consumers unaffected — they already just render
-  whatever `position.currency`/`pl_pct` holds).
+  (`None`) rather than computed from mismatched currencies, per FR11's explicit requirement. **One layer
+  further, added in INC-10 fix-cycle-2 (REV-113):** `build_position`'s mismatch flag alone left the raw,
+  unlabeled `cost_basis`/`price` figures still rendered next to each other in the AI prompt with no
+  guardrail against the model computing its own ratio from them — `ai_judge._ticker_block`
+  (`ai_judge.py:101-116`) now withholds both raw figures on a mismatch too, replacing them with an
+  omission sentence naming both currencies, rather than relying on the model reliably obeying a
+  don't-compute instruction. Full mechanism: `admin-portal.md` §16.3, `components.md` §4.4/§4.7 (detail-page
+  consumer unaffected — it already just renders whatever `position.currency`/`pl_pct` holds).
 - **7.4 Concurrency:** `concurrency: { group: hourly-watchlist, cancel-in-progress: false }` serializes
   overlapping runs so two runs never double-write `verdict_state` for a ticker. **DRAFT (INC-6, Decision
   #29/REV-040):** this group is renamed `repo-commit` and shared with `publish-prices.yml`'s own group —
@@ -65,32 +70,32 @@ Section numbers below (§7–§9) are unchanged from the pre-split monolithic `d
   hourly-watchlist.yml   # workflow_dispatch only; concurrency group
                          #   (former shadow steps removed 2026-07-16 — see docs/design.md's
                          #    "Retired: shadow-pilot tracks" note)
-                         #   DRAFT (INC-6, tunables-workflow-writeback.md): gains a JOB-scoped
-                         #   `permissions: contents: write` (this workflow has NONE today) + a new
-                         #   "Commit tunables cache if changed" step with a bounded push retry
-                         #   (REV-040b); its `concurrency.group` renames to `repo-commit`, shared with
+                         #   IMPLEMENTED (INC-6, tunables-workflow-writeback.md, reviewer-CLEAR Pass 19):
+                         #   a JOB-scoped `permissions: contents: write` (this workflow had NONE
+                         #   before) + a "Commit tunables cache if changed" step with a bounded push
+                         #   retry (REV-040b); its `concurrency.group` is `repo-commit`, shared with
                          #   publish-prices.yml (REV-040a). Sole writer of tunables_cache.json.
-  daily-discovery.yml    # workflow_dispatch only; concurrency group — DRAFT: no changes for INC-6 at
-                         #   all; reads tunables_cache.json read-only via config.py's fallback chain,
-                         #   same as every script, no permissions change needed for a read.
+  daily-discovery.yml    # workflow_dispatch only; concurrency group — no changes for INC-6; reads
+                         #   tunables_cache.json read-only via config.py's fallback chain, same as
+                         #   every script, no permissions change needed for a read.
   publish-prices.yml     # writes pages/prices.json (CORS fallback, frontend.md §11); already has
-                         #   `permissions: contents: write` and a commit-on-change pattern — DRAFT
-                         #   (INC-6): its `concurrency.group` renames to `repo-commit` (REV-040a,
-                         #   shared with hourly-watchlist.yml) and nothing else — remains a read-only
-                         #   tunables-cache consumer, gains no commit step of its own.
+                         #   `permissions: contents: write` and a commit-on-change pattern —
+                         #   IMPLEMENTED (INC-6): its `concurrency.group` is `repo-commit` (REV-040a,
+                         #   shared with hourly-watchlist.yml) and nothing else changed — remains a
+                         #   read-only tunables-cache consumer, has no commit step of its own.
 scripts/
   config.py              # market hours/gates, model Variables, discovery gates — all tunables
                          #   (shadow vars removed 2026-07-16 — see "Retired: shadow-pilot tracks")
-                         #   DRAFT (INC-6): gains the two-tier tunables fallback chain (Supabase table
+                         #   IMPLEMENTED (INC-6): the two-tier tunables fallback chain (Supabase table
                          #   -> repo-root tunables_cache.json, fails loud via SystemExit if both tiers
                          #   miss a key — full mechanism in docs/design/tunables-fallback.md §16.4, not
                          #   restated here) and write_tunables_cache_if_fetched() — the first
                          #   module-level network call and first local-file write this file has ever had.
   ingest.py              # yfinance wrapper; market-agnostic; headline filter; session-aware price/vol.
-                         #   DRAFT (REV-043, live-system fix not gated on any increment): gains a narrow
+                         #   IMPLEMENTED (REV-043, live-system fix not gated on any increment): a narrow
                          #   get_price_only(ticker) for publish_prices.py — see components.md §4.2.
-                         #   FIX ROUND (DEEP-004, INC-9): get_market_data() gains the stale-bar/
-                         #   closed-market structural check — see components.md §4.2.
+                         #   IMPLEMENTED (DEEP-004, INC-9, reviewer-CLEAR Pass 25): get_market_data()
+                         #   gains the stale-bar/closed-market structural check — see components.md §4.2.
   prefilter.py           # Yahoo live screener + quality gates + signals + funnel; region-aware
   ai_provider.py         # IMPLEMENTED (INC-4, 2026-07-28, FR33): AIProvider interface + GeminiProvider
                          #   (operational-controls.md §14); the sole owner of google.genai imports and
@@ -98,30 +103,40 @@ scripts/
   ai_judge.py            # provider-neutral judge_batch(models=..., provider=None) — talks only to
                          #   AIProvider/ProviderResult/ProviderError (ai_provider.py), no Gemini-SDK
                          #   coupling since INC-4; BATCH_SYSTEM_PROMPT; schema + confidence
-                         #   FIX ROUND (DEEP-003, INC-9): _parse_batch's positional fallback narrowed to
-                         #   ticker-corroborated matches only — see components.md §4.4.
+                         #   IMPLEMENTED (DEEP-003, INC-9, reviewer-CLEAR Pass 25): _parse_batch's
+                         #   positional fallback narrowed to ticker-corroborated, unambiguous matches
+                         #   only — see components.md §4.4.
   state.py               # Supabase read/write; single-rule change machine; _snapshot()
-                         #   FIX ROUND (DEEP-002, INC-8): process_ticker/process_candidate gate
+                         #   IMPLEMENTED (DEEP-002, INC-8): process_ticker/process_candidate gate
                          #   alerted/verdict-state-advance on notifier.push()'s delivery result — see
-                         #   components.md §4.6. FIX ROUND (DEEP-006, INC-10): build_position() suppresses
-                         #   pl_pct on a currency mismatch — see §7.3 above.
+                         #   components.md §4.6. IMPLEMENTED (DEEP-006, INC-10, reviewer-CLEAR Pass 27):
+                         #   build_position() suppresses pl_pct on a currency mismatch — see §7.3 above.
+                         #   DRAFT (INC-12, pending user approval): gains is_paused(), KillSwitchAbort,
+                         #   write_kill_switch_abort() and a checkpoint-3 call in process_ticker/
+                         #   process_candidate — see operational-controls.md §13.6.
   notify.py              # ntfy dispatch (provider-agnostic); per-market topic + timestamp
                          #   FIX ROUND (DEEP-002, INC-8): push() returns True|False|None (delivered/
                          #   failed/dry-run) instead of nothing — see components.md §4.6.
   textutil.py            # shared clip()
   run_hourly.py          # hourly watchlist orchestrator (per-market gate) — thin entry point.
-                         #   DRAFT (INC-6): gains one line, config.write_tunables_cache_if_fetched(),
+                         #   IMPLEMENTED (INC-6): gains config.write_tunables_cache_if_fetched(),
                          #   called early in main(); status computation gains `or
                          #   config.TUNABLES_DEGRADED` (REV-045) — the only entry point that writes back.
-                         #   FIX ROUND (DEEP-001+002, INC-8): degraded formula gains outcomes["no-read"]
-                         #   + outcomes["push-failed"] — see components.md §4.8.
-  run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point. DRAFT: no
-                         #   change for INC-6 except the same `or config.TUNABLES_DEGRADED` (REV-045).
-                         #   FIX ROUND (DEEP-001+002, INC-8): same degraded-formula fix as run_hourly.py.
-  publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point. DRAFT: no
-                         #   change for INC-6 except the same `or config.TUNABLES_DEGRADED` (REV-045);
-                         #   REV-043 (live-system, independent of INC-6): switches to
-                         #   ingest.get_price_only() instead of get_market_data().
+                         #   IMPLEMENTED (DEEP-001+002, INC-8): degraded formula gains outcomes["no-read"]
+                         #   + outcomes["push-failed"] — see components.md §4.8. DRAFT (INC-12, pending
+                         #   user approval): gains checkpoint 1 (entry) + checkpoint 2 (before
+                         #   judge_batch) — see operational-controls.md §13.6.2.
+  run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point. IMPLEMENTED
+                         #   (INC-6): the same `or config.TUNABLES_DEGRADED` (REV-045).
+                         #   IMPLEMENTED (DEEP-001+002, INC-8): same degraded-formula fix as run_hourly.py.
+                         #   DRAFT (INC-12, pending user approval): same checkpoint 1/2 shape as
+                         #   run_hourly.py — see operational-controls.md §13.6.2.
+  publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point.
+                         #   IMPLEMENTED (INC-6): the same `or config.TUNABLES_DEGRADED` (REV-045);
+                         #   IMPLEMENTED (REV-043, live-system, independent of INC-6): switches to
+                         #   ingest.get_price_only() instead of get_market_data(). DRAFT (INC-12,
+                         #   pending user approval): gains checkpoint 4, immediately before the
+                         #   prices.json write — see operational-controls.md §13.6.2.
 sql/
   scheduler_pgcron.sql, schema.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
                          #   schema.sql added 2026-07-28 (REV-035) — captures the 5 core tables +
@@ -138,19 +153,25 @@ sql/
                          #   define the function and must NOT be applied; kept only as non-applyable
                          #   historical markers (git history has the original bodies).
   kill_switch.sql, admin_portal_rls.sql, admin_portal_tunables.sql,
-  kill_switch_portal_grant.sql                        # DRAFT, 2026-07-26/27 CR, INC-3/5/6/7
-  tunables_validate_trigger.sql        # FIX ROUND (DEEP-005, INC-10, new file): BEFORE UPDATE trigger
-                                        #   mirroring config.py's per-key tunable cast/domain contract —
-                                        #   see admin-portal-tunables.md §16.4.
-  holdings_currency_derivation.sql     # FIX ROUND (DEEP-006, INC-10, new file): BEFORE INSERT/UPDATE
-                                        #   trigger deriving holdings.currency from watchlist.market —
-                                        #   see admin-portal.md §16.3.
+  kill_switch_portal_grant.sql                        # IMPLEMENTED, 2026-07-26/27 CR, INC-3/5/6/7 —
+                                                       # applied and live, see docs/runbook.md §2.3/§2.4.
+  tunables_validate_trigger.sql        # IMPLEMENTED (DEEP-005, INC-10, reviewer-CLEAR Pass 27):
+                                        #   BEFORE UPDATE trigger mirroring config.py's per-key tunable
+                                        #   cast/domain contract — see admin-portal-tunables.md §16.4.
+  holdings_currency_derivation.sql     # IMPLEMENTED (DEEP-006, INC-10, reviewer-CLEAR Pass 27):
+                                        #   BEFORE INSERT/UPDATE trigger deriving holdings.currency
+                                        #   from watchlist.market — see admin-portal.md §16.3.
+  admin_portal_tunables_alerts_enabled_description_fix.sql   # IMPLEMENTED (INC-10 fix-cycle-2, REV-112,
+                                        #   reviewer-CLEAR Pass 27): one-column, one-row corrective
+                                        #   UPDATE, additive/idempotent — see admin-portal-tunables.md §16.4.
+  kill_switch_abort_log.sql            # DRAFT (INC-12, pending user approval): new append-only table,
+                                        #   FR35's causal-tie record — see operational-controls.md §13.6.5.
 pages/
   detail.html, dashboard.html, prices.json   # FIX ROUND (DEEP-001, INC-8): dashboard.html's per-row
                                               #   verdict pill widens its "no reading" special-case from
                                               #   parse_status=="no_data" to also cover "failed"/
                                               #   "api_error" — see components.md §4.8.
-tunables_cache.json      # DRAFT (INC-6): repo-ROOT last-known-good cache for the 10 FR30 curated
+tunables_cache.json      # IMPLEMENTED (INC-6): repo-ROOT last-known-good cache for the 10 FR30 curated
                          #   tunables (REV-046 — deliberately NOT inside a config/ subdirectory, which
                          #   would collide with the scripts/config.py module name); seeded at cutover
                          #   with the same 10 values as the tunables table's seed migration; written
@@ -161,10 +182,9 @@ tunables_cache.json      # DRAFT (INC-6): repo-ROOT last-known-good cache for th
 > see `operational-controls.md` §14) has shipped and is listed in the repo map above under `scripts/`.
 > This stub is retained only as a pointer to §14, so this section's history stays legible.
 >
-> **DRAFT additions (2026-07-26/27 CR, not yet implemented):** a new top-level `admin-portal/` directory
-> (INC-5/6/7 — Next.js app deployed to Vercel, **no server-only secrets or API proxy routes**, see
-> `admin-portal.md` §16.8, revised 2026-07-27/Decision #27). Does not exist in the repo yet; listed here in
-> advance so this section stays the accurate map once it ships. `config.py` also gains `_fetch_tunables()` /
+> **IMPLEMENTED (INC-5/6/7, all reviewer-CLEAR Passes 17/19/20):** the top-level `admin-portal/`
+> directory (Next.js app deployed to Vercel, **no server-only secrets or API proxy routes**, see
+> `admin-portal.md` §16.8) has shipped and is live. `config.py` also has `_fetch_tunables()` /
 > `_tunable()` (INC-6, `docs/design/tunables-fallback.md` §16.4) — the first module-level network call this
 > file has ever made, an explicit timeout (`TUNABLES_FETCH_TIMEOUT_MS`) and a deterministic offline test
 > seam (`SKIP_TUNABLES_FETCH`), and a **fail-loud `SystemExit`** on a double-miss rather than hanging or

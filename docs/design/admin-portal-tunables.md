@@ -7,18 +7,19 @@ index, module map, §0 load-bearing decisions, increment plan, and requirement c
 section depends on directly. Section number (§16.4) is unchanged from before the split — it's still part
 of §16 (Admin portal architecture), just in its own file now.
 
-**Status: IMPLEMENTED** — dev-built, qa-tested (PASS — `docs/test-report.md`; BUG-003 found and fixed),
-reviewer Pass 18 verdict **NOT CLEAR pending REV-086 fix in progress** (a minor `[SECURITY]` gap on the
-`tunables` table's TRUNCATE grant, being fixed by dev in parallel; `docs/review-log.md`) — not yet
-reviewer-clear. Covers FR30, refined since the 2026-07-26 CR (Decision #27, 2026-07-27, supersedes
+**Status: IMPLEMENTED, reviewer Pass 19 CLEAR** — dev-built, qa-tested (PASS — `docs/test-report.md`;
+BUG-003 found and fixed), reviewer Pass 19 verdict CLEAR — REV-086/087/088/089 all RESOLVED, zero blockers
+(`docs/review-log.md`). Covers FR30, refined since the 2026-07-26 CR (Decision #27, 2026-07-27, supersedes
 #24; Decision #28, 2026-07-27, refines #27) and once more on 2026-07-28 (tech-lead correction, no new
 Decision # — see fallback-chain section below: a permanent third fallback tier had been added during
 design elaboration beyond what Decision #28 / FR30 actually specify; Arjun's review caught it and it's
 removed here). Builds in **INC-6**, which depends on INC-5's `admin_allowlist`/`is_admin()` already
 existing.
 
-**2026-07-30 addendum (STALE, pending dev):** the "write-time validation" subsection below is new design
-for **INC-10** (DEEP-005, `docs/design/increment-plan.md`) — not yet implemented; everything else on this
+**2026-07-30 addendum:** the "write-time validation" subsection below was new design for **INC-10**
+(DEEP-005, `docs/design/increment-plan.md`) — **now IMPLEMENTED**, dev-built across two fix cycles
+(REV-112/REV-113 found and fixed), qa-tested (PASS), reviewer Pass 27 verdict CLEAR, zero blockers/majors
+(`docs/review-log.md`). Everything else on this
 page describes INC-6 as already shipped.
 
 ---
