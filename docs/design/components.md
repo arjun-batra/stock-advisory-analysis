@@ -284,9 +284,16 @@ redundant belt-and-suspenders and simplify it back out — it is not; it is the 
 this branch and a cross-market fabrication.
 
 **Fix — a normalized-only match is accepted only when it is unambiguous within the batch: exactly one of
-the tickers requested this call normalizes to that form.**
+the DISTINCT tickers requested this call normalizes to that form.**
 ```
-normalized_counts = Counter(_normalize_ticker(x) for x in tickers)   # once per _parse_batch call
+distinct_requested = {x.upper() for x in tickers}                          # dedup requested tickers
+normalized_counts = Counter(_normalize_ticker(x) for x in distinct_requested)  # first -- a ticker
+                                                                             # requested twice in one
+                                                                             # batch is a duplicate
+                                                                             # REQUEST, not a second,
+                                                                             # distinct ticker colliding,
+                                                                             # and must not count against
+                                                                             # itself (BUG-006)
 ...
 o = by_ticker.get(t.upper())
 used_fallback = False
@@ -301,7 +308,13 @@ if o is None and len(arr) == len(tickers) and isinstance(arr[i], dict):
     if not cand_ticker or unambiguous_normalized_match:
         o, used_fallback = cand, True
 ```
-Two or more requested tickers colliding on the same normalized base symbol means a normalized-only match
+*(Pseudocode-currency note: this block mirrors the shipped `_parse_batch` and has twice run a fix cycle
+behind it — first the ambiguity guard itself, then this dedup — because the fix landed in code before this
+doc was updated. `scripts/ai_judge.py`'s `_parse_batch` function and its own docstring are the source of
+truth if the two ever appear to disagree; this block is refreshed at each fix cycle's close, not guaranteed
+byte-current mid-cycle.)*
+
+Two or more requested DISTINCT tickers colliding on the same normalized base symbol means a normalized-only match
 can't tell which one the candidate actually belongs to, so every one of them must fail safe rather than
 guess — same "never fabricate, only miss" posture as the original misaligned-array case, applied one
 level deeper. The no-`ticker`-field branch is untouched by this guard: it never depended on normalization
@@ -347,6 +360,68 @@ If a future increment allows or encourages watching the same company across two 
 revisit the prompt-level echo-back fix rather than trying to harden `_normalize_ticker` further: the
 parser-side primitive has little room left to give without becoming exact-match, which reintroduces the
 exact case the positional-fallback mechanism exists to handle.
+
+**BUG-006 fix (INC-9 fix-cycle-2) — duplicate-requested-ticker overwrite guard, and its accepted residual
+(BUG-007).** `out` is keyed by ticker string. If the same ticker string is requested twice in one
+`_parse_batch` call (distinct from the BUG-005 cross-market collision above — this is one ticker appearing
+twice in `tickers`, not two different tickers colliding on a normalized form), the two occurrences resolve
+independently and both write into `out[ticker]`; the later write always wins. Two overwrite directions
+follow, guarded asymmetrically and deliberately:
+- **`failed`-over-`ok` (guarded).** A later fail-safe must never silently discard an earlier real verdict —
+  that would destroy an available, legitimate answer for no reason. Guarded explicitly: `if
+  result["parse_status"]=="failed" and out.get(t,{}).get("parse_status")=="ok": continue` (skip the write,
+  log it as keeping the earlier resolved verdict).
+- **`ok`-over-`ok` (unguarded — accepted limitation, BUG-007, qa's test-report.md).** If both occurrences
+  resolve legitimately but to *different* verdicts (e.g. Buy then Sell), the guard above does not fire —
+  both are `"ok"` — so the later write silently overwrites the earlier with no log trace distinguishing it
+  from an ordinary single resolution (only the two routine "positional fallback used" lines appear).
+  **Accepted for now, not fixed:** both outcomes are equally legitimate AI resolutions, not a fabrication
+  and not a fail-safe miss — this is a determinism/observability gap, not a violation of the "never
+  fabricate, only miss" invariant (`docs/design.md` §0 #8). A real fix means changing `_parse_batch`'s
+  ticker-keyed return contract (`{ticker: result}`, which cannot hold two results for one requested ticker)
+  to something positional or request-index-keyed, rippling through `judge_batch`'s `_enrich` and every
+  caller's per-ticker lookup (`run_hourly.py`/`run_discovery.py`'s `verdicts.get(ticker)`, `state.py`'s
+  downstream consumption) — a design-level contract change, not a bug-cycle patch, and disproportionate to
+  a minor, narrow defect. Regression-locked:
+  `tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere`.
+
+**Why only one overwrite direction is guarded (the asymmetry is intentional, not an oversight).** The
+guarded direction prevents a strictly worse outcome — a real verdict silently replaced by a placeholder
+that carries no information (a Hold with `confidence: null` and a fail-safe rationale). The unguarded
+`ok`-over-`ok` direction has no such asymmetry: both candidates are genuine AI verdicts, so there is no
+principled way to prefer one over the other without the contract change described above — guarding it
+would require solving BUG-007 properly, not adding a second special case.
+
+**Tech-lead recommendation on the root cause — record for the next person, not adopted this cycle.**
+Verified against the current call paths (`scripts/prefilter.py::find_candidates`, `scripts/run_discovery.py`,
+`scripts/run_hourly.py`) rather than asserted: **`_parse_batch`'s ticker-keyed return contract should stay
+as-is; the right fix, if this is ever pursued, is guaranteeing duplicate-free input at the boundary that
+builds a batch, not restructuring the parser's return shape.** Reasoning:
+- The ticker-keyed contract (`{ticker: result}`) is the right shape for the overwhelmingly common case —
+  every caller (`run_hourly.py`/`run_discovery.py`'s `verdicts.get(ticker)`, `_enrich`'s per-value stamping)
+  does a simple keyed lookup; moving to positional/request-index keys would ripple through every one of
+  those call sites and every test fixture that mocks `judge_batch`, to defend against an input shape
+  (`tickers` containing a duplicate) that a well-formed caller should never produce in the first place.
+- **`watchlist.ticker` cannot produce a duplicate** — it is a DB primary key (confirmed, `data-and-flow.md`
+  §5), so `run_hourly.py`'s batches are structurally duplicate-free.
+- **Discovery's candidate batches are also duplicate-free today, but incidentally rather than by a stated
+  contract.** `prefilter.find_candidates()` builds its shortlist through a `seen: dict[str, dict]` keyed on
+  the uppercased symbol (`prefilter.py` lines 223-228), deduplicating across every screener query (gainers/
+  losers/actives/regional) within that one call, before quality gates, signals, or ranking ever run; and
+  `run_discovery.py` calls `find_candidates()` exactly once per region per run and feeds its output straight
+  into one `judge_batch()` call. So today's only duplicate-prone source is, in practice, already
+  duplicate-free by construction. It is not, however, an *enforced* invariant — nothing tests or asserts at
+  the `find_candidates()`/`judge_batch()` boundary that the returned list is duplicate-free, so a future
+  change to candidate sourcing (e.g. a new query added outside the `seen` loop, or a second `find_candidates`
+  call merged into one batch) could silently reintroduce the precondition BUG-006/BUG-007 guard against,
+  with no test to catch the regression.
+- **Verdict: this is a closed non-issue for the live call paths today, and a cheap, narrow action item — not
+  the parser contract — closes the remaining gap.** Recommend a lightweight regression test (qa's, not a
+  design change) asserting `find_candidates()`'s returned candidate list never contains a duplicate ticker,
+  making the currently-incidental guarantee an explicit, tested contract of the sourcing boundary. `out`'s
+  ticker-keyed shape and BUG-006's guard/BUG-007's documented gap stand as defense-in-depth for a
+  precondition violation that should never reach `_parse_batch` in the first place, same posture as
+  `_parse_batch`'s other fail-safe branches — not evidence the contract itself needs to change.
 
 **Confidence (persisted, not yet consumed):** the model's self-rated `high`/`medium`/`low` is validated,
 persisted in `data_snapshot.confidence`, surfaced on the cards, but **read by no gating logic today**
