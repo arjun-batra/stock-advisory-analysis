@@ -16,6 +16,10 @@ the `§16.4` pointer below is a cross-reference only, not a status claim about t
 `docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (see
 `docs/design.md`'s increment plan and coverage map, `docs/review-log.md`).
 
+**2026-07-30 addendum (STALE, pending dev):** §16.3's "holdings-currency derivation" content below is new
+design for **INC-10** (DEEP-006, `docs/design/increment-plan.md`) — not yet implemented; the rest of this
+page describes INC-5/INC-7 as already shipped.
+
 **New trust boundary — read this file in full before changing any of it.** Every other surface in this
 system is either read-only-and-public (dashboard, detail page) or has no human-authenticated caller at
 all (the workflows use the Supabase secret key server-side). This is the **first** write-capable,
@@ -121,6 +125,56 @@ create policy "admin_write_holdings" on public.holdings
 (USD/CAD/INR — matches the ticker's market). The portal's forms mirror these columns and their existing
 CHECK constraints 1:1 (see `sql/schema.sql`, REV-035, for the exact constraints); no new validation rules
 invented beyond what the DB already enforces.
+
+**FIX ROUND (DEEP-006, INC-10) — `holdings.currency` is derived, not admin-entered (FR11/FR29, Decision
+#35).** As shipped, the holdings add/edit form offered a free-choice `currency` select (default `USD` for
+every market, `admin-portal/lib/validation.ts`'s `validateHoldingsRow`), never reconciled against the held
+ticker's own `watchlist.market` (reachable via the existing FK) — a TSX/NSE position entered at its natural
+default silently produced a wrong unrealized P&L, fed to the AI as fact (FR11) and rendered on the detail
+page (latent only because the live watchlist holds zero positions today). **Fix, same-currency by
+construction, not by admin cooperation:**
+- **UI:** the holdings form drops the `currency` input entirely; it instead shows a **read-only** derived
+  label next to the ticker/market picker (e.g. "Currency: CAD (from TSX)"), sourced from the selected
+  ticker's `watchlist.market` — not submitted in the write payload at all.
+- **`validation.ts`:** `HoldingsInput` drops `currency`; `validateHoldingsRow` no longer checks it (nothing
+  left for the client to validate — the server derives it unconditionally, see below).
+- **`sql/holdings_currency_derivation.sql` (new file):** a `BEFORE INSERT OR UPDATE` trigger on `holdings`
+  that looks up `watchlist.market` for `new.ticker` (guaranteed to exist by the pre-existing FK) and sets
+  `new.currency` to the mapped value (US⇒USD, TSX⇒CAD, NSE⇒INR) — **unconditionally overwriting whatever
+  was submitted**, so this holds for the portal, a direct SQL edit, and any future write path alike, not
+  just the one UI that currently exists:
+  ```sql
+  create or replace function public._derive_holdings_currency() returns trigger
+  language plpgsql security definer set search_path = '' as $$
+  declare v_market text; v_currency text;
+  begin
+    select market into v_market from public.watchlist where ticker = new.ticker;
+    if v_market is null then
+      raise exception 'holdings.ticker % has no matching watchlist row', new.ticker;
+    end if;
+    v_currency := case v_market when 'US' then 'USD' when 'TSX' then 'CAD' when 'NSE' then 'INR' end;
+    if v_currency is null then
+      raise exception 'watchlist.market % for ticker % has no known currency mapping', v_market, new.ticker;
+    end if;
+    new.currency := v_currency;
+    return new;
+  end; $$;
+
+  create trigger holdings_derive_currency
+    before insert or update on public.holdings
+    for each row execute function public._derive_holdings_currency();
+  ```
+- **Defense-in-depth, `scripts/state.build_position` (`components.md` §4.5 consumer):** the trigger above
+  guarantees `holdings.currency` always agrees with `watchlist.market` — but not that `watchlist.market`
+  itself is correct for the ticker's actual listing (a separate, narrower residual risk, out of DEEP-006's
+  scope). As a second, independent layer reusing data already fetched, `build_position` now compares
+  `holding["currency"]` to the ticker's own `data["fundamentals"]["currency"]` (Yahoo's independently-
+  fetched value) and returns `pl_pct=None` with a logged warning on a mismatch, rather than computing a
+  gain/loss figure from currencies that disagree (FR11's explicit requirement) — see `non-functional-ops.md`
+  §7.3.
+- **No RLS change needed:** the existing `admin_write_holdings` policy (`for all to authenticated using
+  (is_admin())`) is unaffected — the trigger runs regardless of who or what wrote the row, same as
+  `_stamp_tunable_update()` already does for `tunables`.
 
 ### 16.4 Tunables editor (FR30)
 

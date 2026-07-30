@@ -17,6 +17,10 @@ design elaboration beyond what Decision #28 / FR30 actually specify; Arjun's rev
 removed here). Builds in **INC-6**, which depends on INC-5's `admin_allowlist`/`is_admin()` already
 existing.
 
+**2026-07-30 addendum (STALE, pending dev):** the "write-time validation" subsection below is new design
+for **INC-10** (DEEP-005, `docs/design/increment-plan.md`) — not yet implemented; everything else on this
+page describes INC-6 as already shipped.
+
 ---
 
 ### 16.4 Tunables editor (FR30) — REVISED 2026-07-27, Decisions #27 (supersedes #24) and #28 (refines
@@ -122,6 +126,45 @@ just renders whatever `value` currently holds.
 DB columns, seeded once) — the tunables screen is a straight read/render/write against
 `public.tunables`, using the same browser-side Supabase client + RLS pattern as watchlist/holdings
 (`admin-portal.md` §16.3). **No Next.js API route, no server-only secret, for this feature at all.**
+
+**FIX ROUND (DEEP-005, INC-10) — write-time validation mirroring `scripts/config.py`'s cast contract (FR30
+sharpened, Decision #34).** As shipped, `validateTunableValue` (`admin-portal/lib/validation.ts`) rejected
+only a blank string, and the DB `CHECK` on `tunables` constrains `key` only, not `value` — so any string
+for any key saved successfully. Three of the ten curated keys' `config.py` casts (`_TUNABLE_CASTS`,
+`non-functional-ops.md` §9) **can never raise**: `str` (`GEMINI_MODEL`/`_BACKUP`) and the hand-rolled
+`lambda v: str(v).lower() == "true"` (`ALERTS_ENABLED`) — so a typo like `ALERTS_ENABLED="tru"` silently
+resolves to `False` (all real pushes go dark, no error, no monitor signal, `TUNABLES_DEGRADED` stays
+unset) while a typo in any of the seven numeric keys instead takes down **every** scheduled entry point at
+once via `SystemExit` at import time. FR30 (sharpened) requires the same type/domain contract
+`scripts/config.py` applies to be enforced **before** the write is accepted, portal and database alike.
+**Fix — the same ten-key contract enforced in two independent places, both mirroring `_TUNABLE_CASTS`
+directly (no new framework, ten keys, ten rules):**
+- **Portal (`validation.ts`):** `validateTunableValue(key, value)` becomes key-aware (was value-only):
+  the five `DISCOVERY_{GAINER,LOSER}_PCT`/`VOL_SPIKE`/`MIN_MARKET_CAP{,_INR}` keys require
+  `/^-?\d+(\.\d+)?$/` (mirrors `float()`); `DISCOVERY_SHORTLIST_MAX`/`DISCOVERY_PUSH_COOLDOWN_DAYS` require
+  `/^-?\d+$/` (mirrors `int()`, no decimal point); `ALERTS_ENABLED` requires exactly `"true"`/`"false"`
+  (case-insensitive) and the portal renders it as a **`true`/`false` select, not free text** (structurally
+  prevents the typo class, not just catches it after the fact); `GEMINI_MODEL` requires non-blank (`str`
+  cast can't fail, but an empty primary model is still nonsensical); `GEMINI_MODEL_BACKUP` **allows blank**
+  (this is how an operator disables the fallback, `config.py`'s own documented behavior — the shipped
+  `validateTunableValue` incorrectly required non-blank for every key, which meant the portal could not
+  actually express a supported `config.py` state; fixed in the same pass).
+- **Database (`sql/tunables_validate_trigger.sql`, new file):** a `BEFORE UPDATE` trigger,
+  `_validate_tunable_update()`, applying the identical per-key rules above (regex/membership checks in
+  `plpgsql`) and `raise exception` on a bad value — so a direct SQL edit is caught exactly like a portal
+  edit, closing the gap the client-side check alone can't. Ordered to run before `_stamp_tunable_update()`
+  (trigger names `tunables_1_validate` / `tunables_2_stamp`, Postgres fires same-event `BEFORE` triggers
+  in name order) so a rejected update never reaches the stamp trigger or the row.
+- **Effective-value visibility (the "is alerting actually live" compounding gap):** `ALERTS_ENABLED`'s
+  *effective* value is `_alerts_input AND ALERTS_ENABLED_TABLE` (`config.py`) — the workflow-input half is
+  not something the portal can observe (it lives in GitHub Actions, not Supabase), so no new portal widget
+  is built to show it. Instead: (1) the seeded `description` for this row is corrected to state the
+  AND-gate plainly ("...also requires the workflow's `alerts_enabled` input to be true — true on every
+  scheduled run by default, false only during a deliberate manual dry-run test"); (2) DEEP-002/INC-8's fix
+  (`components.md` §4.6) already makes `call_log.alerted` an honest, per-row signal of whether a push was
+  actually confirmed-delivered — visible today on the INC-7 track-record view (FR31) with **no new schema
+  or UI**. A run of "change" rows with `alerted=false` is the live signal that pushes aren't really going
+  out; reusing an already-fixed, already-visible field is preferred here over building a second indicator.
 
 **Runtime fallback chain, cache file, timeout, and workflow write-back:** moved to
 `docs/design/tunables-fallback.md` (2026-07-28, doc hygiene — this file plus that content together

@@ -21,15 +21,40 @@ Section numbers below (§7–§9) are unchanged from the pre-split monolithic `d
   2026-07-28: retitled from "NFR3" — NFR3 is the Disclaimer requirement; NFR7, added by pm the same day,
   is this system's dedicated core-security-posture ID. `sql/schema.sql`, REV-035, is this posture captured
   in version control).
-- **7.3 Currency:** native per market — USD (US), CAD (TSX), INR (NSE) — no FX conversion.
+- **7.3 Currency:** native per market — USD (US), CAD (TSX), INR (NSE) — no FX conversion. **Enforced, not
+  assumed, as of the DEEP-006/INC-10 fix (FR11/FR29, Decision #35):** this used to be an assumption about
+  the input data that nothing checked — the admin portal's `holdings.currency` was a free-choice field
+  (defaulting to USD for every market) never reconciled against the held ticker's own `watchlist.market`.
+  Two independent layers now hold the invariant: (1) a `holdings` `BEFORE INSERT/UPDATE` trigger derives
+  `currency` from the row's `watchlist.market` (US⇒USD, TSX⇒CAD, NSE⇒INR) and **overwrites whatever was
+  submitted** — same-currency-by-construction, not by client cooperation — covering the portal, a direct
+  SQL edit, and any future write path alike (`admin-portal.md` §16.3). (2) defense-in-depth in
+  `state.build_position`: if `holdings.currency` and the independently-fetched
+  `data["fundamentals"]["currency"]` (Yahoo's own currency for the ticker) ever disagree — e.g. a
+  `watchlist.market` that doesn't actually match the ticker's real listing — `pl_pct` is suppressed
+  (`None`) rather than computed from mismatched currencies, per FR11's explicit requirement. Full mechanism:
+  `admin-portal.md` §16.3, `components.md` §4.4/§4.7 (consumers unaffected — they already just render
+  whatever `position.currency`/`pl_pct` holds).
 - **7.4 Concurrency:** `concurrency: { group: hourly-watchlist, cancel-in-progress: false }` serializes
   overlapping runs so two runs never double-write `verdict_state` for a ticker. **DRAFT (INC-6, Decision
   #29/REV-040):** this group is renamed `repo-commit` and shared with `publish-prices.yml`'s own group —
   the serialization guarantee above is preserved (see `docs/design/tunables-workflow-writeback.md` for
   why), a second workflow is just added to the same queue.
-- **7.5 Delisting / halts / new listings (FR17):** no-data ticker → skip-with-log, never fatal for
-  others. New listings return valid price but short history → compute what history supports, mark 20d
-  fields `n/a (newly listed)`, let the AI judge the rest.
+- **7.5 Delisting / halts / new listings / closed-market days (FR17, Decision #8):** no-data ticker →
+  skip-with-log, never fatal for others. New listings return valid price but short history → compute what
+  history supports, mark 20d fields `n/a (newly listed)`, let the AI judge the rest.
+  **Closed-market (holiday) detection, DEEP-004/INC-9, Decision #33 — the documented "holiday ⇒ no usable
+  data ⇒ skip-with-log" behavior did not previously exist in code:** neither the SQL dispatch gate nor
+  `config.is_market_open()`/`is_nse_open()` consult a holiday calendar (accepted — Decision #8, no
+  maintained-calendar burden), so on an actual holiday the workflow still dispatches; `yfinance` then
+  returns the *prior* session's bar, which `_session_state()`'s weekday/clock-only check read as a live,
+  in-progress session — pro-rating a stale, zero-trading day's volume into a fabricated "spike" that could
+  fire a real, wrong alert. **Fix:** `get_market_data()` now compares the last available bar's date to
+  today's date in the market's own local calendar; when they disagree while `_session_state()` says "live,"
+  the ticker takes the same skip-with-log path as any other no-data day — full mechanism and code shape in
+  `components.md` §4.2. This is the structural check FR17's sharpened text requires precisely because no
+  maintained holiday calendar exists (Decision #8): a closed market must be detected from the data itself.
+  Same posture across US, TSX, and NSE (Decision #33 — no market gets special-cased).
 
 ---
 
@@ -64,6 +89,8 @@ scripts/
   ingest.py              # yfinance wrapper; market-agnostic; headline filter; session-aware price/vol.
                          #   DRAFT (REV-043, live-system fix not gated on any increment): gains a narrow
                          #   get_price_only(ticker) for publish_prices.py — see components.md §4.2.
+                         #   FIX ROUND (DEEP-004, INC-9): get_market_data() gains the stale-bar/
+                         #   closed-market structural check — see components.md §4.2.
   prefilter.py           # Yahoo live screener + quality gates + signals + funnel; region-aware
   ai_provider.py         # IMPLEMENTED (INC-4, 2026-07-28, FR33): AIProvider interface + GeminiProvider
                          #   (operational-controls.md §14); the sole owner of google.genai imports and
@@ -71,15 +98,26 @@ scripts/
   ai_judge.py            # provider-neutral judge_batch(models=..., provider=None) — talks only to
                          #   AIProvider/ProviderResult/ProviderError (ai_provider.py), no Gemini-SDK
                          #   coupling since INC-4; BATCH_SYSTEM_PROMPT; schema + confidence
+                         #   FIX ROUND (DEEP-003, INC-9): _parse_batch's positional fallback narrowed to
+                         #   ticker-corroborated matches only — see components.md §4.4.
   state.py               # Supabase read/write; single-rule change machine; _snapshot()
+                         #   FIX ROUND (DEEP-002, INC-8): process_ticker/process_candidate gate
+                         #   alerted/verdict-state-advance on notifier.push()'s delivery result — see
+                         #   components.md §4.6. FIX ROUND (DEEP-006, INC-10): build_position() suppresses
+                         #   pl_pct on a currency mismatch — see §7.3 above.
   notify.py              # ntfy dispatch (provider-agnostic); per-market topic + timestamp
+                         #   FIX ROUND (DEEP-002, INC-8): push() returns True|False|None (delivered/
+                         #   failed/dry-run) instead of nothing — see components.md §4.6.
   textutil.py            # shared clip()
   run_hourly.py          # hourly watchlist orchestrator (per-market gate) — thin entry point.
                          #   DRAFT (INC-6): gains one line, config.write_tunables_cache_if_fetched(),
                          #   called early in main(); status computation gains `or
                          #   config.TUNABLES_DEGRADED` (REV-045) — the only entry point that writes back.
+                         #   FIX ROUND (DEEP-001+002, INC-8): degraded formula gains outcomes["no-read"]
+                         #   + outcomes["push-failed"] — see components.md §4.8.
   run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point. DRAFT: no
                          #   change for INC-6 except the same `or config.TUNABLES_DEGRADED` (REV-045).
+                         #   FIX ROUND (DEEP-001+002, INC-8): same degraded-formula fix as run_hourly.py.
   publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point. DRAFT: no
                          #   change for INC-6 except the same `or config.TUNABLES_DEGRADED` (REV-045);
                          #   REV-043 (live-system, independent of INC-6): switches to
@@ -101,8 +139,17 @@ sql/
                          #   historical markers (git history has the original bodies).
   kill_switch.sql, admin_portal_rls.sql, admin_portal_tunables.sql,
   kill_switch_portal_grant.sql                        # DRAFT, 2026-07-26/27 CR, INC-3/5/6/7
+  tunables_validate_trigger.sql        # FIX ROUND (DEEP-005, INC-10, new file): BEFORE UPDATE trigger
+                                        #   mirroring config.py's per-key tunable cast/domain contract —
+                                        #   see admin-portal-tunables.md §16.4.
+  holdings_currency_derivation.sql     # FIX ROUND (DEEP-006, INC-10, new file): BEFORE INSERT/UPDATE
+                                        #   trigger deriving holdings.currency from watchlist.market —
+                                        #   see admin-portal.md §16.3.
 pages/
-  detail.html, dashboard.html, prices.json
+  detail.html, dashboard.html, prices.json   # FIX ROUND (DEEP-001, INC-8): dashboard.html's per-row
+                                              #   verdict pill widens its "no reading" special-case from
+                                              #   parse_status=="no_data" to also cover "failed"/
+                                              #   "api_error" — see components.md §4.8.
 tunables_cache.json      # DRAFT (INC-6): repo-ROOT last-known-good cache for the 10 FR30 curated
                          #   tunables (REV-046 — deliberately NOT inside a config/ subdirectory, which
                          #   would collide with the scripts/config.py module name); seeded at cutover

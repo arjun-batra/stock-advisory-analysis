@@ -13,7 +13,7 @@ Section numbers below (§5–§6) are unchanged from the pre-split monolithic `d
 | `watchlist` | ticker, market (US/TSX/NSE), type, status (held/watch-only), date_added | Ticker list (FR1, FR3); `market` CHECK admits NSE |
 | `holdings` | ticker, shares, cost_basis, currency | Position data (FR2, FR11); `currency`∈{USD,CAD,INR}; `shares>0`/`cost_basis>0` CHECK guards |
 | `verdict_state` | ticker, current_verdict, last_checked_at | Change-detection for the single rule (FR7/FR8); shrunk to 3 cols when cooldown/reminder retired |
-| `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp (UTC), label (watchlist/new-candidate), alert_type (change/null), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source (FR14) |
+| `call_log` | id (**uuid**), ticker, verdict, rationale, timestamp (UTC), label (watchlist/new-candidate), alert_type (change/null), alerted (bool), data_snapshot (jsonb) | Track record (FR15); detail-page source (FR14). **`alerted` means confirmed-delivered, not attempted (FR15/FR34, DEEP-002, INC-8)** — see §6 below. `id` may now be client-generated (`uuid.uuid4()`) on a push-carrying insert so the same id can be handed to `notifier.push()` before the row is written, rather than DB-defaulted; both are valid, `id` has no server-side identity requirement beyond uniqueness. |
 | `monitor_alerts` | check_name (PK), last_state, last_alerted_at, updated_at | Dead-man monitor dedup (NFR2) |
 | `run_heartbeat` | workflow_name, last_run_at, status | Per-workflow heartbeat (NFR2). Keys: `hourly-watchlist` (shared across sessions), `daily-discovery` (NA), `daily-discovery-in` (NSE), `publish-prices` |
 
@@ -103,18 +103,25 @@ for each ticker in (watchlist filtered to the currently-open market):
         write_call_log(ticker, new_verdict, alert_type=NULL, alerted=False)
         continue
 
-    # change -> immediate alert, no cooldown (FR7)
-    write_call_log(ticker, new_verdict, alert_type="change", alerted=True)
-    send_push(ticker, new_verdict, rationale, kind="change")   # "Changed to X", topic per market
-    state.current_verdict = new_verdict
-    state.last_checked_at = now
+    # change -> immediate alert, no cooldown (FR7); delivery-gated state advance (FR34, DEEP-002, INC-8)
+    log_id = uuid4()
+    delivered = send_push(ticker, new_verdict, rationale, kind="change", log_id=log_id)  # True|False|None
+    write_call_log(id=log_id, ticker, new_verdict, alert_type="change", alerted=(delivered is True))
+    if delivered is False:                        # real, confirmed failure -> crossing stays pending
+        state.last_checked_at = now                #   (verdict_state.current_verdict NOT advanced)
+        return "push-failed"                        # next cycle retries the same crossing automatically
+    state.current_verdict = new_verdict            # delivered=True (real success) or None (dry run):
+    state.last_checked_at = now                    #   crossing is consumed either way
 ```
 
 Consequences (stated plainly): a change **to Hold** still alerts (a weakening Buy is a signal); there is
 **no frequency cap** (choppy day pushes every flip — accepted, `foundations.md` §2 item 4); **every check
 logs** (FR15), including no-change and cold-start rows with `alerted=false`. A standing actionable verdict
 at cold start is **silent until it crosses** (`docs/design.md` §0, load-bearing #2) — this is why NSE
-go-live did not dump 10 alerts.
+go-live did not dump 10 alerts. **A failed (not dry-run) push leaves the crossing unconsumed** (FR34) — the
+next 30-min cycle re-evaluates the same new AI verdict against the still-unadvanced `current_verdict` and
+retries the push; this is not a new cooldown/reminder mechanism, it is the existing single-rule comparison
+simply not having been told the first attempt succeeded. Full mechanism: `components.md` §4.6.
 
 Daily discovery (`run_discovery.py`) runs the sourcing/prefilter (`components.md` §4.3) → one batched AI
 call → logs every candidate as `label='new-candidate'`, `alert_type=null`, pushing only `Buy` not flagged

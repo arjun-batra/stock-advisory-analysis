@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED (INC-5 backfill + INC-6 merged to main), INC-7 reviewer-CLEAR Pass 20
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8–INC-11 DRAFT, pending user approval (GATE 3-equivalent)
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -26,6 +26,31 @@ kill-switch UI) is IMPLEMENTED and reviewer-clear** — dev-built, qa-tested (PA
 doc-hygiene minors, REV-093/094, both closed by tech-lead's design-doc update; `docs/review-log.md`).
 This was the last increment in the approved build order — all seven increments (INC-3–INC-7) are now
 IMPLEMENTED.
+
+**2026-07-30 — `/big-guns` deep-review fix round.** `docs/review-log.md`'s "Deep review — 2026-07-29"
+section logged DEEP-001 through DEEP-007 (one blocker, five majors, one minor). The user approved fixing
+all six blocker/major findings before `v0.1.0` and running the three deferred live checks
+(`requirements.md` Decision #36); pm sharpened NFR2/FR11/FR15/FR17/FR29/FR30 and added FR34 to make each
+fix self-verifiable (Decisions #31–#35). **`DEEP-007` is explicitly excluded** — an unresolved user
+trade-off, routed back to the user separately by pm; no increment below touches FR24/§13.1. Four new
+increments, **DRAFT, pending the user's GATE-3-equivalent approval of this plan before dev starts**:
+**INC-8** (DEEP-001+002 — NFR2 heartbeat accounting + FR34 delivery-confirmed alerting), **INC-9**
+(DEEP-003+004 — the parse-attribution contract + the FR17 stale-bar/holiday check), **INC-10** (DEEP-005+006
+— FR30 tunables write-time validation + FR29 holdings-currency derivation), **INC-11** (Decision #36's
+three live-verification checks, no dev code). Sequencing (`big-guns`'s own recommendation, no deviation):
+INC-8's two findings share the same two entry points (`run_hourly.py`/`run_discovery.py`) and the same
+`outcomes`/degraded formula, so fixing them separately would touch that formula twice; INC-9's two findings
+are both judgment-input-path integrity fixes (`ai_judge.py`/`ingest.py`), independent of the portal and of
+INC-8; INC-10's two findings are both admin-portal write-validation fixes sharing `admin-portal/lib/
+validation.ts`. INC-11 runs last since none of its three checks need to precede any code fix, and running
+it last means the final pre-`v0.1.0` live verification exercises the fixed code (in particular, INC-4 AC6's
+live-Gemini smoke test benefits from running after INC-9's parse-contract fix is merged). **No increment
+starts before the previous one passes QA** (unchanged non-negotiable) — INC-8 → INC-9 → INC-10 → INC-11 in
+that order; none of INC-8/9/10 has a code dependency on another, so this is a hygiene/traceability
+sequencing choice, not a technical blocking dependency (documented per-increment below where it matters,
+e.g. INC-11's live checks against INC-3/INC-7's already-shipped SQL have no dependency on INC-8/9/10 at
+all and could in principle run earlier if the user wants results sooner — noted in INC-11, not re-ordered
+here, since keeping the fix round as one contiguous unit is simpler to track against Decision #36).
 
 Split out of `docs/design.md` (2026-07-28, doc hygiene — `design.md` exceeded the ~400-line module-split
 guidance once the Pass-11 review fixes landed). See `docs/design.md` for the index, module map, §0
@@ -308,3 +333,150 @@ layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
    INC-3's verification method) — proves the UI is wired to the real flag.
 4. All INC-5/INC-6 acceptance criteria still hold (full portal regression: auth gate, allowlist, RLS,
    no client-exposed secrets).
+
+---
+
+## 2026-07-30 fix round — INC-8 through INC-11 (DRAFT, pending user GATE-3-equivalent approval)
+
+### INC-8 — Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34; DEEP-001+DEEP-002) — **DRAFT**
+**Design:** `docs/design/components.md` §4.6 (alerting), §4.8 (reliability/heartbeat); `docs/design/
+data-and-flow.md` §6 (core flow pseudocode). **Files:** `scripts/state.py` (`process_ticker`,
+`process_candidate`, `write_call_log`, `build_position` untouched here — DEEP-006 touches
+`build_position`, INC-10), `scripts/notify.py` (`push()` return contract), `scripts/run_hourly.py` and
+`scripts/run_discovery.py` (degraded formula, one line each), `pages/dashboard.html` (verdict-pill
+special-case). **No SQL changes** — `check_pipeline_health()` already alerts on any `status <> 'ok'`; the
+bug is entirely in which Python outcomes count as "not ok" (`components.md` §4.8).
+**Depends on:** nothing outside this increment. **No config-schema change** — no new tunable.
+**Acceptance criteria (dev self-verifiable):**
+1. A qa test that drives every ticker in a batch to `parse_status="failed"` (mock the provider) and runs
+   `run_hourly.main()`/`run_discovery.main()` asserts `run_heartbeat.status == "partial"` — the exact case
+   DEEP-001 found reading `"ok"`. Same assertion for a mixed batch (some `no-read`, some `quiet`).
+2. `grep -n 'outcomes\["no-read"\]' scripts/run_hourly.py scripts/run_discovery.py` and `grep -n
+   'outcomes\["push-failed"\]\|outcomes\["candidate-push-failed"\]'` both return a match in the `degraded =
+   ...` line of each file — confirms the formula change actually landed, not just a test.
+3. `pages/dashboard.html`'s verdict-pill logic special-cases `parse_status` for all three of
+   `"no_data"`/`"failed"`/`"api_error"` (grep the updated condition) — a synthetic `call_log` row with
+   `parse_status="failed"` renders the "no reading" pill, not a `Hold` pill, in a manual/qa browser check.
+   `pages/detail.html` needs no change (confirm via `git diff` showing zero changes to that file).
+4. `NtfyNotifier.push()` returns `True` only on a response where `raise_for_status()` doesn't raise;
+   returns `False` (not an exception propagating up) on any `requests` exception or non-2xx, logged via a
+   distinct `[notify] ERROR push failed for {ticker}: ...` line. `DryRunNotifier.push()` returns `None`
+   unconditionally. A qa test mocks `requests.post` to return a 500 and asserts `push()` returns `False`
+   without raising.
+5. On a simulated push failure (mock `notifier.push` to return `False`) for a watchlist ticker crossing a
+   verdict: `call_log.alerted == False`, `verdict_state.current_verdict` is **unchanged** (still the OLD
+   verdict), and a second call to `process_ticker` with the same new AI verdict on the next cycle fires
+   `notifier.push` **again** for the same crossing (FR34's retry contract) — a qa test asserts all three in
+   one flow (fail once, succeed on retry, confirm state now advances).
+6. On a simulated dry run (`DryRunNotifier`) for a verdict crossing: `call_log.alerted == False` (honest —
+   nothing was sent) but `verdict_state.current_verdict` **does** advance (no backlog buildup) — a qa test
+   asserts both in the same assertion block, since these are the two halves of the same design decision
+   (`components.md` §4.6) and a test asserting only one could pass on a regression that breaks the other.
+7. Discovery: a candidate pushed via `DryRunNotifier` or a failed real push has `alerted=False`, and
+   `state.recently_pushed_candidates()` does **not** include it — confirms the 7-day cooldown no longer
+   dedupes an undelivered candidate (Decision #32).
+8. Full existing test suite passes; `git diff` confirms no file outside the list above changed.
+
+### INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — **DRAFT**
+**Design:** `docs/design/components.md` §4.2 (ingestion), §4.4/§4.4a (parse & retry); `docs/design/
+non-functional-ops.md` §7.5 (delisting/holidays). **Files:** `scripts/ai_judge.py` (`_parse_batch`, new
+`_normalize_ticker` helper, module docstring), `scripts/ingest.py` (`get_market_data`).
+**Depends on:** nothing outside this increment; independent of INC-8. **No config-schema change.**
+**Acceptance criteria:**
+1. A qa test feeds `_parse_batch` a response array shorter than the requested list with a shifted/dropped
+   ticker (the exact `[A,X,B]` requested-`[A,B,C]` scenario from DEEP-003's evidence) and asserts `C`
+   resolves to `parse_status="failed"` (fail-safe Hold), **not** `B`'s verdict/rationale under `parse_status
+   ="ok"`. A second test confirms the *legitimate* fallback case still works: a same-order response missing
+   only the `ticker` label on one object still resolves that ticker with `parse_status="ok"`.
+2. `grep -n "positional fallback used for" scripts/ai_judge.py` — the new log line exists and fires only
+   on the legitimate path (confirm via the qa test's captured stdout).
+3. `ai_judge.py`'s module docstring no longer makes the unqualified "can only ever MISS a signal" claim
+   without naming the mechanism that makes it true (manual read, one paragraph).
+4. A qa test constructs a `yfinance`-shaped history whose last bar's date is 3 days before "today" (frozen
+   clock) during nominal market hours, calls `ingest.get_market_data(ticker)`, and asserts `has_price ==
+   False` and a note naming the stale-bar reason — the exact DEEP-004 scenario (holiday, stale prior-close
+   bar, `_session_state` says live). A second test with the last bar dated *today* is unaffected (`has_price
+   == True`, normal pro-rating still applies when genuinely live).
+5. `grep -n "last_bar_date" scripts/ingest.py` shows the comparison happens before `pct_change`/
+   `volume_vs_avg` are computed — confirms the pro-rating math is structurally unreachable for a stale bar,
+   not just skipped by a late-added guard (manual code read, one function).
+6. Full existing test suite passes; `git diff` confirms no file outside `scripts/ai_judge.py` and
+   `scripts/ingest.py` changed.
+
+### INC-10 — Portal write-time validation + holdings-currency derivation (FR30, FR11, FR29; DEEP-005+DEEP-006) — **DRAFT**
+**Design:** `docs/design/admin-portal-tunables.md` §16.4 (tunables validation); `docs/design/admin-portal.md`
+§16.3 (holdings currency); `docs/design/non-functional-ops.md` §7.3 (currency enforcement). **Files:** new
+`sql/tunables_validate_trigger.sql`, new `sql/holdings_currency_derivation.sql`; `admin-portal/lib/
+validation.ts` (`validateTunableValue` becomes key-aware; `validateHoldingsRow` drops `currency`);
+`admin-portal/app/(app)/tunables/page.tsx` (`ALERTS_ENABLED` renders as a `true`/`false` select, not free
+text; per-key error surfacing); `admin-portal/app/(app)/holdings/page.tsx` (currency input removed, replaced
+with a read-only derived label); `scripts/state.py` (`build_position` mismatch guard — the one line this
+increment shares with INC-8's file, but a different function; no merge conflict risk since INC-8 doesn't
+touch `build_position`); one seed-data correction (`ALERTS_ENABLED`'s `description` row).
+**Depends on:** INC-5's `is_admin()` (already shipped) for both new triggers' `security definer` posture
+convention — no new authorization mechanism. Independent of INC-8/INC-9.
+**Acceptance criteria:**
+1. Portal: attempting to save `ALERTS_ENABLED` with anything other than `true`/`false` is impossible via
+   the UI (it's a select, not a text input — confirm via the rendered form) and, separately, submitting a
+   malformed value for each of the 7 numeric curated keys via a direct API/RPC call (bypassing the select)
+   is rejected client-side with `validateTunableValue`'s error message before any write attempt.
+2. `GEMINI_MODEL_BACKUP` accepts and saves a blank value via the portal (confirms the fix to the
+   shipped-but-wrong "value required" check that blocked disabling the fallback) — a qa test asserts an
+   empty-string save succeeds.
+3. Direct SQL: `update public.tunables set value='5%' where key='DISCOVERY_GAINER_PCT'` (run as an
+   `authenticated`+`is_admin()` session, or as owner for the qa harness) raises an exception naming the key
+   and the expected format — proves the DB trigger, not just the client, enforces the contract. Same test
+   for `update ... set value='tru' where key='ALERTS_ENABLED'` — rejected. A **valid** edit to each of the
+   10 keys still succeeds (regression: the trigger must not reject good values).
+4. `select tgname from pg_trigger where tgrelid = 'public.tunables'::regclass order by tgname` shows the
+   validate trigger firing before the stamp trigger (name ordering) — confirm via a qa test that a rejected
+   update never touches `updated_at`/`updated_by` (no partial side effect from a failed write).
+5. Holdings: the portal's add/edit form has no currency input; adding a TSX-market holding via the portal
+   and then querying `select currency from holdings where ticker=...` directly shows `CAD`, not the old
+   `USD` default — confirmed for one holding per market (US/TSX/NSE, 3 total).
+6. A direct SQL `insert into holdings (ticker, shares, cost_basis, currency) values (<TSX ticker>, 10, 100,
+   'USD')` (bypassing the portal entirely) still lands with `currency='CAD'` after insert — proves the
+   trigger overrides even a client that tries to set it explicitly, not just a client that omits it.
+7. `state.build_position()`: a qa test constructs a holding whose `currency` disagrees with
+   `data["fundamentals"]["currency"]` (simulate the residual "watchlist.market wrong for this ticker" case)
+   and asserts `pl_pct is None` with a logged warning — the case the DB trigger alone can't catch.
+8. Full existing test suite (Python + `tests/admin_portal/*.test.ts`) passes; `git diff` confirms no file
+   outside the list above changed.
+
+### INC-11 — Live-verification pass (Decision #36; no dev code) — **DRAFT**
+**Design:** n/a — this increment executes acceptance criteria already defined for INC-3, INC-4, and INC-7
+above; it does not add or change design. **Files:** none in `scripts/`/`admin-portal/`/`sql/` — only
+`docs/handoff.md` (dated evidence block, same pattern as the INC-5/INC-3 live-evidence records already in
+that file) and `docs/test-report.md` (per-AC status flip from "deferred" to "PASS"/dated). **Depends on:**
+INC-8/INC-9/INC-10 merged (so the checks below exercise the fixed code, per the sequencing note above) —
+this is a scheduling preference, not a technical blocker; INC-3 AC3 and INC-7 AC2/AC3 have no code
+dependency on INC-8/9/10 at all and may run earlier if the user wants results sooner.
+**No dev build-plan step** — qa and release execute; dev has nothing to implement.
+**Three checkable work items, separable — each can merge/close independently of the other two:**
+1. **INC-3 AC3** (`increment-plan.md` above) — kill-switch resume-baseline / no-false-alarm test against
+   the live Supabase project. **Not externally blocked** — the project and SQL are already live; this is
+   pure execution. Owner: qa+release.
+2. **INC-4 AC6** (`increment-plan.md` above) — live-Gemini smoke test. **Blocked on a real `GEMINI_API_KEY`
+   in the execution environment** (none present as of the last check, `test-report.md`) — release obtains
+   one (a $0–15/mo-cap-compatible key, NFR1) before this item can run; until then it stays "deferred,"
+   correctly distinct from "delivered," per Decision #36. Owner: release (credential) then qa (execution).
+3. **INC-7 AC2/AC3** (`increment-plan.md` above) — admin-portal kill-switch RPC round-trip and live
+   dispatch-suppression proof. **Step 0, before AC2/AC3:** confirm `sql/kill_switch_portal_grant.sql` is
+   actually applied to the live project (`select * from pg_policies where tablename='kill_switch_state'`
+   and `select proname from pg_proc where proname='set_kill_switch'` — the same query pattern
+   `docs/handoff.md`'s existing live-evidence blocks already use). `docs/design.md`'s FR31/FR32 coverage row
+   states this SQL is already live and confirmed against production; if Step 0 confirms that, proceed
+   directly to AC2/AC3 with no additional prerequisite work. If Step 0 finds it is **not** live (design.md
+   stale on this point), apply the migration first, per the runbook's admin-portal deploy section, then
+   proceed. Owner: release (Step 0 + apply if needed) then qa (AC2/AC3 execution).
+**Acceptance criteria (dev self-verifiable is n/a here — these are qa/release-self-verifiable):**
+1. All three items above produce a dated, attributed evidence block in `docs/handoff.md` (same format as
+   the existing INC-3/INC-5 live-evidence records) — raw query/command + result, not a paraphrase.
+2. `docs/test-report.md`'s per-AC table flips INC-3 AC3, INC-4 AC6, and INC-7 AC2/AC3 from "deferred" to a
+   dated PASS (or a filed bug if one is found — routed through the normal qa→dev fix-cycle, not silently
+   re-deferred).
+3. pm's Phase-4 "every FR/NFR delivered or deferred" confirmation can then mark FR24–FR26, FR33, and
+   FR31/FR32 as **delivered** (not merely "deferred, pending live execution") for exactly the two items that
+   complete; **if INC-4 AC6 remains blocked on the credential at the time `v0.1.0` is otherwise ready to
+   tag, that is a decision for pm/the user (per Decision #36's own text), not a decision this design makes
+   silently** — routed back at closure if it comes to that, not resolved here.

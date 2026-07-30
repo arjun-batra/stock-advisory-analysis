@@ -37,6 +37,22 @@ questions remain** as of Decision #29 — see
 Split into per-module files under `docs/design/` (2026-07-25, REV-024) — **this file is a thin index;
 read the module file(s) your increment actually touches, not the whole tree.**
 
+**2026-07-30 — `/big-guns` deep-review fix round (DEEP-001–006), change request per `requirements.md`
+Decisions #31–#36.** `requirements.md`'s NFR2, FR11, FR15, FR17, FR29, FR30 were sharpened and FR34 added
+to make the blocker/major findings self-verifiably fixable; this design responds with four new increments
+on top of the already-shipped INC-3–INC-7 baseline (which stays IMPLEMENTED — none of these fixes touch a
+public interface or data-model column that already-shipped code depends on): **INC-8 (DEEP-001+002,
+NFR2/FR15/FR34), INC-9 (DEEP-003+004, no requirements face + FR17), INC-10 (DEEP-005+006, FR30/FR11/FR29),
+INC-11 (Decision #36's three live-verification checks)** — full detail, file lists, and dev-self-verifiable
+acceptance criteria in `docs/design/increment-plan.md`. Sequencing (001+002, then 003+004, then 005+006)
+follows `big-guns`'s own recommendation: 001+002 share the same two entry-point files and the same
+`outcomes`/degraded formula; 003+004 are both judgment-input-path integrity fixes independent of the
+portal; 005+006 are both admin-portal write-validation fixes sharing `validation.ts`. **`DEEP-007`
+(kill-switch in-flight-run boundary) is deliberately excluded from this round** — it hinges on an
+unresolved user trade-off (abort an in-flight run vs. rescope FR24's wording) that pm has routed to the
+user separately; §13.1 and FR24 are untouched by this pass and no increment here depends on it. No new
+config-schema surface: none of INC-8–INC-10 add a tunable — see `non-functional-ops.md` §9 (unchanged).
+
 **Provenance:** Originally produced during the 2026-07-12 multi-agent-template adoption pass by condensing
 the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into this
 template's format. It is **reverse documentation of a shipped system**, not forward design work. `SD.md`
@@ -55,15 +71,15 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | File | Covers | Sections |
 |---|---|---|
 | `docs/design.md` (this file) | Load-bearing decisions, retired-work pointer, requirement coverage map | §0, §15 |
-| `docs/design/increment-plan.md` **(INC-3–INC-7 all IMPLEMENTED; INC-6 reviewer-CLEAR Pass 19, INC-7 reviewer-CLEAR Pass 20)** | The project plan: INC-3 through INC-7, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
+| `docs/design/increment-plan.md` **(INC-3–INC-7 all IMPLEMENTED; INC-8–INC-11 STALE, DRAFT — 2026-07-30 fix round, pending dev)** | The project plan: INC-3 through INC-11, design pointers, file lists, dev-self-verifiable acceptance criteria. Split out of `design.md` 2026-07-28. | n/a (project plan, not a numbered design section) |
 | `docs/design/foundations.md` | Purpose, confirmed architecture choices, accepted risks, high-level architecture diagram | §1–§3 |
-| `docs/design/components.md` | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
-| `docs/design/data-and-flow.md` | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
-| `docs/design/non-functional-ops.md` | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
+| `docs/design/components.md` **(STALE fix-round additions in §4.2/§4.4/§4.6/§4.8, INC-9/INC-8, pending dev)** | Scheduler, data ingestion, discovery prefilter, AI judgment layer, state/persistence, alerting, detail page, reliability monitor | §4 (4.1–4.8) |
+| `docs/design/data-and-flow.md` **(STALE fix-round additions in §5/§6, INC-8, pending dev)** | Data model (Supabase schema, `data_snapshot` jsonb contract), core single-rule change-detection flow | §5–§6 |
+| `docs/design/non-functional-ops.md` **(STALE fix-round additions in §7.3/§7.5/§8, INC-9/INC-10, pending dev)** | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(IMPLEMENTED, INC-3/INC-4)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
-| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
-| `docs/design/admin-portal-tunables.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
+| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20; §16.3 has a STALE fix-round addition, INC-10, pending dev)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory | §16 (16.1–16.3, 16.5–16.9) |
+| `docs/design/admin-portal-tunables.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; has a STALE fix-round addition, INC-10, pending dev)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
 | `docs/design/tunables-fallback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
 | `docs/design/tunables-workflow-writeback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |
 
@@ -111,7 +127,12 @@ intent from `SD.md §0`:
    ownership burden. Don't reintroduce one.
 8. **AI fails safe to Hold (`components.md` §4.4, FR9).** A parse/API failure logs a fail-safe Hold, and
    the change detector's cold-start/no-change guard stops it from being read as a real change — so a bug
-   can only ever *miss* a signal, never *fabricate* one. Keep that guard.
+   can only ever *miss* a signal, never *fabricate* one. Keep that guard. **This invariant had one real
+   exception, closed by the DEEP-003/INC-9 fix (`components.md` §4.4a):** `_parse_batch`'s positional
+   fallback previously accepted any array object at a requested ticker's index even when that object's own
+   `ticker` field named a *different* company, which could attribute one ticker's verdict/rationale to
+   another and stamp it `parse_status: "ok"` — a fabrication, not a miss. The fallback is now accepted only
+   when the object corroborates (or omits) its own ticker; anything else fails safe. Keep this guard too.
 9. **Market-close dispatch boundary is close + 5 min (SQL) / close + `RUNTIME_CLOSE_GRACE_MIN` (Python),
    not exact close (`components.md` §4.1).** The two layers carry different close bounds **on purpose** —
    the SQL gate (16:05 ET / 15:35 IST) absorbs pg_cron sub-second jitter; the Python gate (16:00 +
@@ -184,30 +205,31 @@ INC-3–INC-7.**
 | Requirement | Where satisfied |
 |---|---|
 | FR1, FR3 | `components.md` §4.2, `data-and-flow.md` §5 `watchlist` |
-| FR2, FR11 | `components.md` §4.4 (prompt, held block), §4.7 (detail position block); `data-and-flow.md` §5 `holdings`/`position` |
+| FR2, FR11 | `components.md` §4.4 (prompt, held block), §4.7 (detail position block); `data-and-flow.md` §5 `holdings`/`position`. **FR11 sharpened (Decision #35, DEEP-006, INC-10, STALE pending merge):** same-currency requirement now enforced, not assumed — `admin-portal.md` §16.3 (derivation trigger), `non-functional-ops.md` §7.3 (`build_position` mismatch guard). |
 | FR4, FR5 | `components.md` §4.3 prefilter + signals + Buy-only push; `data-and-flow.md` §6 discovery flow |
 | FR6 | `components.md` §4.1 scheduler; `data-and-flow.md` §6 30-min cadence |
 | FR7, FR8 | §0 #1/#2 (this file); `data-and-flow.md` §6 single-rule change detector |
 | FR9, FR10 | `components.md` §4.4 AI judgment (no fixed rules/style); §0 #8 fail-safe (this file) |
 | FR12, FR13, FR14 | `components.md` §4.6 ntfy, §4.7 detail page |
-| FR15, FR16 | `data-and-flow.md` §5 `call_log`, §6 (every check logged, incl. no-change/cold-start/skip) |
-| FR17 | `components.md` §4.1 gates; `non-functional-ops.md` §7.5 skip-with-log |
+| FR15, FR16 | `data-and-flow.md` §5 `call_log`, §6 (every check logged, incl. no-change/cold-start/skip). **FR15's `alerted` field redefined (Decision #32, DEEP-002, INC-8, STALE pending merge):** confirmed-delivered, not attempted — `components.md` §4.6, `data-and-flow.md` §6. |
+| FR17 | `components.md` §4.1 gates; `non-functional-ops.md` §7.5 skip-with-log. **Sharpened (Decision #33, DEEP-004, INC-9, STALE pending merge):** structural stale-bar/closed-market check — `components.md` §4.2, `non-functional-ops.md` §7.5. |
+| FR34 (alert delivery/retry semantics, Decision #32) | **STALE — design pending merge, INC-8.** `components.md` §4.6, `data-and-flow.md` §6. |
 | FR18 | `components.md` §4.6 per-market topic routing |
 | FR19–FR22 | `frontend.md` §10 dashboard, §11 CORS/prices.json |
 | FR23 | `components.md` §4.6 (notifications), §4.7 (detail page); `frontend.md` §10 (dashboard, client dual-tz); `data-and-flow.md` §5 UTC contract |
 | NFR1 | `components.md` §4.4 batched call; `non-functional-ops.md` §7.1 cost |
-| NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor |
+| NFR2 | `components.md` §4.1 gate authority, §4.8 dead-man monitor. **"Completes degraded" sharpened (Decision #31, DEEP-001, INC-8, STALE pending merge):** heartbeat degraded formula must count fail-safe-Hold outcomes — `components.md` §4.8. |
 | NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
 | NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |
 | FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
-| FR24, FR25, FR26 (kill-switch, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §13. INC-3: dev-built, qa-tested, reviewer-cleared zero blockers through Pass 14. `sql/kill_switch.sql` is applied and live in the Supabase project. AC1 (objects exist), AC2 (pause suppresses dispatch before any `pg_net` call), AC4 (audit trail), and AC5 (RLS enabled on both tables) are independently verified via a dated live-evidence run (`docs/handoff.md`), corroborated by qa (`docs/test-report.md` §7) and reviewer (Pass 22/23, review-log.md REV-070). Only **AC3** (resume-baseline / no-false-alarm test under synthetic staleness) remains deferred — owner qa+release, to be run as a follow-up live pass. |
-| FR27, FR28, FR29 (admin portal foundation, 2026-07-26 CR), NFR5, NFR6 | **IMPLEMENTED** — `admin-portal.md` §16.1–§16.3, §16.7–§16.8. INC-5: dev-built, live-deployed, qa-tested with a PASS verdict. Reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/review-log.md`); FR27–FR29/NFR5–6 are reviewer-clear. |
-| FR30 (admin portal — tunables editor, 2026-07-26 CR) | **IMPLEMENTED** — `admin-portal-tunables.md`, `tunables-fallback.md`, `tunables-workflow-writeback.md` (§16.4). INC-6: dev-built, qa-tested (PASS — BUG-003 found and fixed), reviewer Pass 19 verdict CLEAR — REV-086/087/088/089 all RESOLVED, zero blockers (`docs/review-log.md`). |
-| FR31, FR32 (admin portal — track-record view & kill-switch UI, 2026-07-26 CR) | **IMPLEMENTED** — `admin-portal.md` §16.5–§16.6. INC-7: dev-built, qa-tested (PASS — zero bugs, `docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (`docs/review-log.md`). `sql/kill_switch_portal_grant.sql` is applied and live in the Supabase project (`admin_read_kill_switch` policy and the `is_admin()`-gated `set_kill_switch()` confirmed against production). What remains deferred is INC-7's own live round-trip — a portal-triggered toggle producing a `kill_switch_audit` row with `source='admin-portal'` and suppressing dispatch (AC2/AC3 per the Increment Plan's INC-7 criteria) — no dated live-evidence block for this specific path exists yet (`docs/test-report.md`'s Phase-4 pass). |
-| FR33 (AI provider abstraction, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §14. INC-4: dev-built, qa-tested (5 of 6 AC), reviewer-cleared zero blockers through Pass 14. AC6 (live-Gemini smoke test) is deferred, not failed — no `GEMINI_API_KEY` was available in the build environment; needs a follow-up run with real credentials before AC6 is marked PASS (`docs/handoff.md`). |
+| FR24, FR25, FR26 (kill-switch, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §13. INC-3: dev-built, qa-tested, reviewer-cleared zero blockers through Pass 14. `sql/kill_switch.sql` is applied and live in the Supabase project. AC1 (objects exist), AC2 (pause suppresses dispatch before any `pg_net` call), AC4 (audit trail), and AC5 (RLS enabled on both tables) are independently verified via a dated live-evidence run (`docs/handoff.md`), corroborated by qa (`docs/test-report.md` §7) and reviewer (Pass 22/23, review-log.md REV-070). Only **AC3** (resume-baseline / no-false-alarm test under synthetic staleness) remains deferred — owner qa+release, tracked as one of INC-11's three live-verification work items (Decision #36) rather than left informally deferred. |
+| FR27, FR28, FR29 (admin portal foundation, 2026-07-26 CR), NFR5, NFR6 | **IMPLEMENTED** — `admin-portal.md` §16.1–§16.3, §16.7–§16.8. INC-5: dev-built, live-deployed, qa-tested with a PASS verdict. Reviewer Pass 17 verdict is CLEAR — REV-081/082/083 all RESOLVED, zero blockers (`docs/review-log.md`); FR27–FR29/NFR5–6 are reviewer-clear. **FR29 sharpened (Decision #35, DEEP-006, INC-10, STALE pending merge):** currency derivation trigger — `admin-portal.md` §16.3. |
+| FR30 (admin portal — tunables editor, 2026-07-26 CR) | **IMPLEMENTED** — `admin-portal-tunables.md`, `tunables-fallback.md`, `tunables-workflow-writeback.md` (§16.4). INC-6: dev-built, qa-tested (PASS — BUG-003 found and fixed), reviewer Pass 19 verdict CLEAR — REV-086/087/088/089 all RESOLVED, zero blockers (`docs/review-log.md`). **Sharpened (Decision #34, DEEP-005, INC-10, STALE pending merge):** write-time validation mirroring `config.py`'s cast contract — `admin-portal-tunables.md` §16.4. |
+| FR31, FR32 (admin portal — track-record view & kill-switch UI, 2026-07-26 CR) | **IMPLEMENTED** — `admin-portal.md` §16.5–§16.6. INC-7: dev-built, qa-tested (PASS — zero bugs, `docs/test-report.md`), reviewer Pass 20 verdict CLEAR — zero blockers, zero majors (`docs/review-log.md`). `sql/kill_switch_portal_grant.sql` is applied and live in the Supabase project (`admin_read_kill_switch` policy and the `is_admin()`-gated `set_kill_switch()` confirmed against production). What remains deferred is INC-7's own live round-trip — a portal-triggered toggle producing a `kill_switch_audit` row with `source='admin-portal'` and suppressing dispatch (AC2/AC3 per the Increment Plan's INC-7 criteria) — no dated live-evidence block for this specific path exists yet (`docs/test-report.md`'s Phase-4 pass) — tracked as one of INC-11's three live-verification work items (Decision #36). |
+| FR33 (AI provider abstraction, 2026-07-26 CR) | **IMPLEMENTED** — `operational-controls.md` §14. INC-4: dev-built, qa-tested (5 of 6 AC), reviewer-cleared zero blockers through Pass 14. AC6 (live-Gemini smoke test) is deferred, not failed — no `GEMINI_API_KEY` was available in the build environment; needs a follow-up run with real credentials before AC6 is marked PASS (`docs/handoff.md`) — tracked as one of INC-11's three live-verification work items (Decision #36), scheduled after INC-9 merges so it exercises the current judgment path. |
 
 **Coverage:** FR1–FR23, NFR1–NFR4, and NFR7 (core, live) are covered as-built across the module files
 above — NFR7 added 2026-07-28 (pm, REV-058) to give the system's pre-existing security posture its own
