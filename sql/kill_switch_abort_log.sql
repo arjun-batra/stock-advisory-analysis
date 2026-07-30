@@ -36,15 +36,21 @@ create table if not exists public.kill_switch_abort_log (   -- append-only, neve
 
 alter table public.kill_switch_abort_log enable row level security;
 alter table public.kill_switch_abort_log force row level security;
-revoke insert, update, delete on public.kill_switch_abort_log from public, anon, authenticated;
--- Same two-layer deny-all posture as kill_switch_audit (sql/kill_switch.sql, REV-033): the REVOKE blocks
--- anon/authenticated regardless of any policy added later by mistake; RLS+FORCE with zero policies denies
--- every role except one with BYPASSRLS (Supabase's `postgres` role, and therefore the
--- SUPABASE_SECRET_KEY service connection every script already authenticates with) — no new grant, policy,
--- or secret needed to write this table, per Decision #37's own text. No SELECT policy for anon/
--- authenticated is added by this increment — nothing reads this table yet; a future admin-portal
--- observability view would add one additively, the same pattern INC-7 used for kill_switch_state's first
--- SELECT policy, not a redesign.
+revoke insert, update, delete, truncate on public.kill_switch_abort_log from public, anon, authenticated;
+-- Same two-layer deny-all posture as kill_switch_audit (sql/kill_switch.sql, REV-033) and
+-- admin_allowlist (sql/admin_portal_rls.sql, REV-081) — the REVOKE blocks anon/authenticated regardless of
+-- any policy added later by mistake; RLS+FORCE with zero policies denies every role except one with
+-- BYPASSRLS (Supabase's `postgres` role, and therefore the SUPABASE_SECRET_KEY service connection every
+-- script already authenticates with) — no new grant, policy, or secret needed to write this table, per
+-- Decision #37's own text. REV-117 fix (Pass 28, docs/review-log.md): the REVOKE must name `truncate`
+-- explicitly — RLS never governs TRUNCATE in Postgres (it's gated purely by the table privilege, which
+-- Supabase's default public-schema grants leave live for anon/authenticated), the same gap class already
+-- closed for admin_allowlist (REV-081), tunables (REV-086), kill_switch_state/kill_switch_audit
+-- (kill_switch_portal_grant.sql), and six more tables (schema_truncate_grant_closure.sql, REV-099) — this
+-- table has no legitimate write path at all, same as admin_allowlist, so it gets the identical four-verb
+-- shape. No SELECT policy for anon/authenticated is added by this increment — nothing reads this table
+-- yet; a future admin-portal observability view would add one additively, the same pattern INC-7 used for
+-- kill_switch_state's first SELECT policy, not a redesign.
 
 -- `checkpoint`'s two values match `state.KillSwitchAbort.checkpoint`'s two values exactly ('ai_call',
 -- 'push') — checkpoint 1 (main() entry) and checkpoint 4 (publish_prices.py's commit) never write this

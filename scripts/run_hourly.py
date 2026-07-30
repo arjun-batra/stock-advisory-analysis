@@ -107,10 +107,34 @@ def _process_group(sb, notifier, rows, holdings, models, now, outcomes) -> None:
 
 
 def main() -> None:
+    # FR24 checkpoint 1 -- moved here (REV-116 fix, docs/review-log.md Pass 28)
+    # to the earliest point a pause read is possible: right after the two
+    # secrets state.client() itself needs (SUPABASE_URL/SUPABASE_SECRET_KEY --
+    # GEMINI_API_KEY isn't a precondition for this check and stays validated
+    # later, right before it's actually needed for the AI call). This now
+    # runs BEFORE the tunables-cache write a few lines down (`config`'s own
+    # write-back-if-fetched function), which is a real `contents: write`
+    # commit path -- it writes tunables_cache.json, which the surrounding
+    # GitHub Actions workflow step commits to main -- and was previously
+    # main()'s first statement: reachable, unconditionally, even while paused
+    # (DEEP-007 residual, docs/review-log.md). No run_heartbeat row, no
+    # kill_switch_abort_log row: bare early return, same as before
+    # (operational-controls.md §13.6.2 -- tech-lead correction to the
+    # checkpoint-1 placement text and §13.1's "no irreversible action
+    # possible in that window" claim is pending, per REV-116).
+    config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")
+    sb = state.client()
+    if state.is_paused(sb):
+        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch, AI "
+              "call, or tunables-cache write (FR24 checkpoint 1). No run_heartbeat "
+              "row written this cycle.")
+        return
+
     # Refreshes tunables_cache.json from this run's live tunables fetch (if any),
-    # BEFORE the market gate below, so the cache stays current on every dispatch
-    # regardless of whether the gate goes on to skip work (FR30, Decision #28/#29
-    # -- hourly-watchlist.yml is the sole writer, see config.write_tunables_cache_if_fetched).
+    # BEFORE the market gate below, so the cache stays current on every
+    # non-paused dispatch regardless of whether the gate goes on to skip work
+    # (FR30, Decision #28/#29 -- hourly-watchlist.yml is the sole writer, see
+    # config.write_tunables_cache_if_fetched).
     config.write_tunables_cache_if_fetched()
 
     now = datetime.now(timezone.utc)
@@ -148,19 +172,11 @@ def main() -> None:
               "(test/backfill). NOTE: with ALERTS_ENABLED=true this sends REAL pushes - "
               "set it false for a silent test.")
 
-    config.require_secrets()
-    sb = state.client()
+    # GEMINI_API_KEY is only needed once we're actually about to do AI work --
+    # SUPABASE_URL/SUPABASE_SECRET_KEY were already validated above, before
+    # checkpoint 1, since state.client() needs them.
+    config.require_secrets("GEMINI_API_KEY")
     notifier = notify.get_notifier()
-
-    # FR24 checkpoint 1 -- earliest point a pause read is possible, before any
-    # Yahoo fetch or AI call. Bare early return: no run_heartbeat row, no
-    # kill_switch_abort_log row (operational-controls.md §13.6.2 -- mirrors the
-    # "all markets closed" early return above, which already skips the
-    # heartbeat write for the same reason).
-    if state.is_paused(sb):
-        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
-              "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
-        return
 
     watchlist = state.get_watchlist(sb)
     holdings = state.get_holdings_map(sb)
