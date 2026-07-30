@@ -1171,6 +1171,296 @@ review-log-archive.md` this round.
 
 ---
 
+## Pass 24 — 2026-07-30 (INC-8 diff-scoped audit — degraded-run visibility + delivery-confirmed alerting;
+NFR2, FR15, FR34; closes DEEP-001+DEEP-002) — CLEAR
+
+**Scope.** Diff-scoped per `git diff --name-only 087f5dd..HEAD` on branch `claude/big-guns-qv3kjt`
+(`087f5dd` = last commit before dev started INC-8; `feaf58b` = dev's production-code commit; `dc05f37` =
+qa's tests/report commit) — the last reviewer clearance was Pass 20. Files read in full or by targeted
+grep: `docs/design/increment-plan.md` `### INC-8` (8 ACs), `docs/design/components.md` §4.6/§4.8 (incl.
+the "FIX ROUND (DEEP-001/DEEP-002, INC-8)" blocks), `docs/design/data-and-flow.md` §5 (`call_log`/
+`alerted` contract) + §6 (core-flow pseudocode), `docs/requirements.md` NFR2/FR15/FR34 + Decisions
+#31/#32, `docs/review-log.md`'s own DEEP-001/DEEP-002 entries below, `docs/handoff.md`'s INC-8 section
+(in full), `docs/test-report.md`'s INC-8 section (in full), `scripts/state.py` (in full),
+`scripts/notify.py` (in full), `scripts/run_hourly.py` (in full), `scripts/run_discovery.py` (in full),
+`pages/dashboard.html` (grepped for the widened pill condition), `tests/test_state.py` (`FakeNotifier` +
+all new INC-8 functions, `:130-524`), `tests/test_notify.py` (the two fixed assertions + new AC4 tests),
+`tests/test_run_orchestration.py` (new AC1 tests, `:301-375`), `tests/test_dashboard_pill_logic.py` (new
+file, in full), `docs/design.md` (INC-8's status-marker lines), `docs/code-map.md` (spot-check —
+unaffected), `scripts/ai_judge.py` (grepped to confirm INC-9's DEEP-003 fix, described in `components.md`
+as design-only, is genuinely not yet implemented — confirms no scope bleed from a later increment).
+
+**Method caveat (standing, unchanged since Pass 2).** No shell/execute tool bound to this session — `git
+diff`/`pytest` were not independently re-run. AC8's "diff is scoped to exactly five files" and the
+"229/229, then 57 passed 6 pre-existing failures" test counts are corroborated (dev's and qa's
+independently-run figures agree, and every file each claims was touched was opened directly and its
+content matches the claimed change), not re-executed — same evidentiary posture this log has applied to
+every other live/tooling-gated claim since Pass 2 (REV-070, REV-081's live half, REV-095's construction
+proof, REV-099's live grants).
+
+### Check 1 — Does the fix actually close DEEP-001, or does it move the blind spot?
+
+**Closes it — verified by enumerating every outcome value both entry points can produce, not by trusting
+the two DEEP-001 named.** `state.process_ticker` returns exactly five values: `"no-read"` (fail-safe,
+`state.py:261`), `"cold-start"` (`:271`), `"quiet"` (`:278`), `"push-failed"` (`:297`), `"change-alert"`
+(`:306`). `state.process_candidate` returns exactly four: `"no-read"` (`:145`), `"candidate-logged"`
+(`:151`), `"candidate-push-failed"` (`:158`), `"candidate-pushed"` (`:159`). `run_hourly.py`'s
+`_process_group` also independently contributes `"skip"` (`:70`, ingest no-data) and `"error"` (`:76`/
+`:97`, an uncaught exception per ticker); `run_discovery.py` contributes the same `"skip"`/`"error"` pair
+plus the separately-tracked `screens_errored` counter. That is the complete outcome universe — nine
+distinct labels across both files. The new formulas
+(`run_hourly.py:166`: `outcomes["skip"] + outcomes["error"] + outcomes["no-read"] + outcomes["push-failed"]`;
+`run_discovery.py:118`: `outcomes["skip"] + outcomes["error"] + screens_errored + outcomes["no-read"] +
+outcomes["candidate-push-failed"]`) now cover every outcome that means "no verdict was produced or no
+delivery was confirmed" — `"no-read"`/`"candidate-push-failed"` were DEEP-001's/DEEP-002's own named gaps,
+already closed; `"skip"`/`"error"`/`screens_errored` were already covered pre-fix. The remaining
+uncounted labels (`"cold-start"`, `"quiet"`, `"change-alert"`, `"candidate-logged"`, `"candidate-pushed"`)
+are all outcomes where a valid verdict **was** produced (a real AI read, successfully or not-yet-crossed) —
+correctly excluded from degraded. **No outcome value meaning "produced no verdict" is left uncounted.**
+Traced one level deeper than the formula itself: `ai.get("parse_status")` — the only gate that can produce
+`"no-read"` — is fed only `"ok"`/`"failed"`/`"api_error"` by `ai_judge.judge_batch`/`missing_verdict`
+(confirmed by grep: `ai_judge.py:28,38-43,214-217,310-313` — the fourth value, `"no_data"`, is written only
+by `state.log_skip` for an **ingestion**-stage skip, which never reaches `process_ticker`/`process_candidate`
+at all and is already counted via `outcomes["skip"]`). Verdict: DEEP-001 is genuinely closed, not moved.
+
+### Check 2 — Does delivery-gating introduce a new failure mode under repeated/persistent push failure?
+
+**No unbounded growth, no silent re-alert flood — the behavior is FR34's own explicit design, and its
+consequences are bounded by pre-existing mechanisms, not new ones.** Traced the persistent-failure case by
+hand rather than trusting the single-retry test: if `notifier.push()` fails **every** cycle (e.g. a
+revoked ntfy topic), `verdict_state.current_verdict` never advances and `process_ticker` re-attempts the
+push every 30-min cycle indefinitely — this is FR34's literal text ("the next check cycle re-evaluates the
+same crossing... and retries the alert automatically"), not a side effect. Three things stop this from
+being a new class of problem: (1) `call_log` grows one row per cycle regardless of outcome — that is
+FR15's pre-existing "every check logs" design, not new load introduced by this fix. (2) The run's
+heartbeat stays `"partial"` every cycle the failure persists (`outcomes["push-failed"]` feeds `degraded`),
+which is the **correct** signal — a persistently broken push channel should read as degraded forever until
+fixed, matching NFR2's "silence means healthy" framing. (3) `check_pipeline_health()`'s own
+`monitor_alerts` dedup (`components.md` §4.8, unaffected by this diff) alerts once on the state-change into
+"bad" and re-alerts only per its existing cooldown while bad — so a persistent failure does not flood the
+operator's phone; it produces one initial page and periodic reminders, the same as any other persistent
+degraded-run cause already handled pre-INC-8. Discovery's dedup (Decision #32) is not at risk of unbounded
+growth either: an undelivered candidate is not deduped for 7 days (the fix), but it only resurfaces at all
+if the daily prefilter independently re-selects it that day — nothing about repeated push failure grows
+any stored set or replays old candidates. **No leak, no runaway alert loop, no dedup-defeating interaction
+found.** One calibration note, not a finding: the qa suite tests a single fail-then-succeed cycle
+(`test_failed_push_leaves_state_pending_then_retries_and_succeeds`) but not an explicit N-consecutive-
+failure loop; not logged as a gap since the code path is identical on every cycle (no counter, no backoff,
+no accumulating state to diverge from a 1-failure test) and the three points above were verified by
+independent code reading, not by trusting that single test's shape.
+
+### Check 3 — Is the fail-safe guard genuinely intact?
+
+**Yes, independently verified against the diff, not against dev's/qa's claim of it.** `state.py:256`,
+`if ai.get("parse_status") in ("failed", "api_error"):`, is the first branch inside `process_ticker`,
+executed **before** the cold-start/no-change/change branches — a fail-safe Hold can never reach the
+delivery-gating logic this increment added, and the diff touches nothing above line 280 in that function
+except comment/docstring text. Confirmed the guard's outcome path independently: it writes
+`alerted=False` (`:258`), touches only `last_checked_at` on an existing state row (`:260`), and returns
+`"no-read"` (`:261`) without ever constructing a `log_id` or calling `notifier.push` — the delivery
+machinery this increment added is entirely downstream of and gated by this check, not interleaved with it.
+qa's own new tests exercise this by **behavior**, not by re-reading the diff: both
+`test_ai_failure_fail_safe_guard_is_untouched_by_delivery_gating` and its `api_error` sibling
+(`tests/test_state.py:363-392`) wire in a `FakeNotifier(returns=True)` — a notifier that *would* succeed if
+called — specifically to prove the guard fires before `push()` is ever invoked (`notifier.calls == []`),
+which is a stronger proof than asserting the outcome label alone. `process_candidate`'s equivalent guard
+(`state.py:142`, same `parse_status in ("failed","api_error")` check, same position — first branch, before
+`do_push` is computed) was read directly and confirmed identically unchanged in shape and position. This
+is the single highest-stakes line in the increment and it independently re-verifies clean.
+
+### Check 4 — `alerted` semantics consistency across every writer and reader
+
+**Consistent everywhere checked.** Grepped every `alerted` occurrence in `scripts/`, `pages/`, and
+`admin-portal/` (four files total: `scripts/state.py`, `scripts/run_discovery.py` — a comment only —
+`pages/dashboard.html`, `admin-portal/app/(app)/track-record/page.tsx`). **Writers** — all five
+`write_call_log` call sites in `state.py` were read directly: `log_skip` (`:99-101`, `alerted=False`, no
+push attempted — correct), `process_ticker`'s no-read/cold-start/quiet branches (`:257-278`,
+`alerted=False`, no push attempted — correct), `process_ticker`'s change branch (`:287-288`,
+`alerted=(delivered is True)` — correct per FR34/FR15), `process_candidate`'s no-read/not-do_push branches
+(`:143-151`, `alerted=False` — correct), `process_candidate`'s push branch (`:155-156`,
+`alerted=(delivered is True)` — correct). The dry-run path is not a separate writer — `DryRunNotifier.push`
+returns `None` (`notify.py:90`), which both call sites correctly fold into `alerted=(delivered is True)` →
+`False`, matching `components.md` §4.6's "a dry run writes `alerted=False` — honest that nothing was sent."
+No other production file writes to `call_log.alerted`. **Readers:** `dashboard.html:129,141` reads
+`LATEST`/`alerted` only in a comment describing the view as "any alerted value" (informational, not an
+interpretive claim); the verdict-pill logic itself keys off `parse_status`, not `alerted`, so it has no
+stale-semantics exposure. `admin-portal/.../track-record/page.tsx:212` renders the raw column value as
+"yes"/"no" under an "Alerted" header — a pass-through of whatever the column now means, not a baked-in
+interpretation; FR31 explicitly bars new analytics/aggregation here, so this is correctly minimal and
+requires no change. Discovery's dedup reader, `state.recently_pushed_candidates` (`:118-121`), filters
+`.eq("alerted", True)` — already read in Check 2/DEEP-002 evidence — correctly now means "confirmed
+delivered." **No reader found still interpreting `alerted` under the old "attempted" semantics.**
+
+### Check 5 — AC3's browser-check substitution
+
+**Adequate as a merge-time substitute, but the AC's own browser requirement is still genuinely open — I
+am logging it, not silently accepting it as equivalent.** `tests/test_dashboard_pill_logic.py` extracts the
+real `botBlock()` function verbatim out of the current `pages/dashboard.html` (brace-matched, not a fixed
+line slice — re-derives itself if the function moves) and executes it under real Node against synthetic
+rows covering all three no-reading `parse_status` values plus a genuine `"ok"` regression guard the other
+direction. This is materially stronger than dev's own uncommitted scratch script and stronger than a
+source-text grep (it would catch a typo in the array literal a grep would miss), and it is real JS runtime
+execution, not a re-implementation of the logic under test. What it does **not** cover, and what the AC's
+own text explicitly asks for ("a manual/qa browser check"): actual DOM construction, CSS rendering, and
+whatever the surrounding page chrome does with the returned HTML string once inserted — Node executing an
+extracted function is not the same guarantee as a rendered page in a browser, even though the specific
+logic under test (a pure string-returning function reading only primitives passed to it) is about as
+low-risk a case for that gap as this codebase has. qa's own report (`test-report.md:104-106`, `:152-155`)
+states this limitation plainly and does not claim a false PASS on it — consistent with this project's
+established posture on environment-blocked checks (INC-4's AC6, REV-070's AC3). **My independent call:**
+this is not a blocker for INC-8 — the substitution is well-engineered and the residual risk is narrow and
+low-probability — but it should not be allowed to quietly become "done" by omission. Logged below as
+REV-107 so it is carried to Phase-4 closure rather than dropped, per the task's own framing of this choice.
+
+---
+
+### NEW FINDINGS — Pass 24
+
+**REV-107 — `[TEST-GAP]` — minor — AC3's "manual/qa browser check" half remains genuinely unperformed; not
+a blocker, but must not be silently dropped before closure.** Location:
+`docs/design/increment-plan.md` INC-8 AC3; `tests/test_dashboard_pill_logic.py` (the substitute coverage);
+`docs/test-report.md:104-106,152-155` (qa's own honest framing of the gap). Description: see Check 5 above
+— the Node-executed extraction of the real `botBlock()` is strong, real coverage of the JS logic itself,
+but it is not a rendered-DOM/browser observation, which is what the AC's own text asks for and what every
+other environment-blocked live check in this project (INC-4 AC6, REV-070's AC3) is tracked against rather
+than quietly treated as equivalent. No regression risk identified beyond the inherent gap between
+"function returns the right HTML string" and "browser renders that string as expected" — narrow, but real.
+Owner: **qa** (run the browser check when browser-automation tooling or a manual pass is available) —
+carry to Phase-4 closure's live-verification sweep alongside REV-070's AC3 and INC-4's AC6, same
+evidentiary class, same non-blocking posture.
+
+**REV-108 — `[DESIGN-GAP]` — minor — INC-8's design-doc status markers are still "STALE pending merge/dev"
+now that this pass clears the increment.** Location: `docs/design.md:44-54` (module-index intro), `:74`
+(`increment-plan.md`'s index row), `:76-77` (`components.md`/`data-and-flow.md` index rows), `:214,216,221`
+(FR15/FR34/NFR2 coverage-map rows) — all currently read "STALE, pending dev" / "STALE pending merge."
+Description: this is not a defect — the design docs were correctly marked stale while INC-8 was
+unreviewed, and tech-lead could not have written "Pass 24 CLEAR" before this pass ran. It is the same
+propagation pattern this log has flagged repeatedly before merge events (REV-073, REV-079, REV-084,
+REV-090, REV-093/094): a status marker accurate at write-time, due for a follow-up edit the moment the
+next event (this clearance) lands, and nobody owns that edit unless it is logged. Owner: **tech-lead** —
+one batched edit across the five locations above, flipping INC-8's marker to IMPLEMENTED/reviewer-CLEAR
+Pass 24 and citing REV-107 as the one residual (browser check) still open, mirroring how INC-3's/INC-4's
+own status notes carry their residuals inline rather than overclaiming. Not a merge blocker.
+
+---
+
+### Traceability audit (Pass 1/2) — NFR2, FR15, FR34
+
+| Link | Location | Status |
+|---|---|---|
+| Requirement | `requirements.md` NFR2 (`:300-311`, Decision #31), FR15 (`:185-190`, Decision #32), FR34 (`:127-136`) | present, all three sharpened with self-verifiable text per this fix round |
+| Design | `components.md` §4.6/§4.8 FIX ROUND blocks; `data-and-flow.md` §5 (`alerted` redefinition) + §6 (delivery-gated pseudocode) | present, code matches verbatim (Checks 1/3/4 above) |
+| Implementation | `scripts/state.py`, `scripts/notify.py`, `scripts/run_hourly.py`, `scripts/run_discovery.py`, `pages/dashboard.html` | present, independently re-derived, not accepted on account |
+| Tests | `tests/test_state.py` (9 new fns), `tests/test_notify.py` (2 new + 2 fixed), `tests/test_run_orchestration.py` (3 new), `tests/test_dashboard_pill_logic.py` (new file, 6 fns/8 cases) | present — real entry points/functions driven, not reimplemented logic |
+
+**No `[SCOPE-CREEP]` found (Pass 2).** Every change in the five-file diff maps to an explicit design
+instruction (Checks 1/3/4 traced each back to `components.md`'s literal fix blocks); the one behavioral
+addition beyond the two DEEP findings' literal text — `write_call_log`'s optional `id` kwarg — is itself
+design-specified (`components.md` §4.6's log-id-before-push ordering fix) and is backward-compatible
+(confirmed: every pre-existing call site that omits `id` is unaffected, `grep write_call_log\(` across the
+repo). Old-contract test failures (8 of 207) were correctly diagnosed by both dev and independently
+re-verified by qa as pre-existing tests encoding the *old* buggy behavior, not new defects — qa's fix was
+confined to `tests/` (its own owned artifact) and did not touch production code.
+
+**Hardcoding/leanness/security (Passes 3–5), diff-scoped — clean.** No new literal in the five files that
+should be a config-schema tunable (`NO_READING` array values are status-enum members, not tunables; the
+new `[notify] ERROR push failed for {ticker}: ...` log-line format matches the file's existing log-line
+convention). No dead code, no narration-only comments beyond this codebase's established rationale-comment
+convention (consistent with Pass 15's calibration note on the same house style). No new trust boundary,
+no committed secret, no change to what `notify.py`'s HTTP call sends or where `state.py`'s DB writes go.
+Calibration-only, not logged: `process_ticker`'s and `process_candidate`'s delivery-gating blocks
+(`state.py:285-297` vs `:153-159`) share a similar three-line shape (`delivered = ...push()`;
+`write_call_log(..., alerted=(delivered is True))`; `if delivered is False: return "...-failed"`) — this
+is real but minor duplication across two functions with genuinely different downstream semantics (one
+advances `verdict_state`, the other has no such lifecycle); not logged as `[STRUCTURE]` since it predates
+this fix in shape (the pre-INC-8 code already called `push()` then `write_call_log()` in both places) and
+extracting it would save only a few lines at the cost of a shared helper spanning two different state
+machines.
+
+**Structure (Pass 6), diff-scoped — clean.** No dependency-direction violation, no import bypassing a
+public interface, no circular import, no oversized function introduced (`process_ticker` grew by ~15
+lines, still well within this codebase's established function-size norms), no dumping-ground module. Diff
+touches no file `docs/code-map.md` describes incorrectly — its module-level descriptions of
+`state.py`/`notify.py`/`run_hourly.py`/`run_discovery.py` remain accurate at the level of detail that file
+operates at.
+
+---
+
+### Open items after Pass 24
+
+**Blockers: 0. Majors: 0** (none carried into this diff's scope — the pre-existing majors list, unchanged
+since Pass 23, is 0). **New minors this pass: 2** (REV-107 — qa, carried to closure; REV-108 — tech-lead,
+one batched status-marker edit). **DEEP-001 and DEEP-002 — RESOLVED as of this pass (2026-07-30),
+independently verified against current code and test behavior, not accepted on dev's/qa's account** — see
+Checks 1–4 above for the full evidence trail on each. Both are removed from the open-findings list below;
+their full original text stays in place above (under "Deep review — 2026-07-29") per this log's own
+convention of preserving a finding's original text until its section is archived, with the resolution
+recorded here rather than by editing the original entry.
+
+**Carried, unchanged from Pass 23 (none of these files were touched by INC-8's diff) — 14 IDs:** REV-063
+residual + REV-071 (dev), REV-065 (tech-lead), REV-066 + REV-052 (tech-lead + pm), REV-067 (tech-lead),
+REV-068 (pm), REV-072 (tech-lead), REV-048 (qa), REV-049(b) (release), REV-080 (qa), REV-079 (tech-lead),
+REV-097 (dev or pm), REV-100 (dev), REV-101 (tech-lead/dev), REV-102 (tech-lead) — plus REV-103/104/105
+(release, one `docs/runbook.md` edit), REV-106 (dev, one SQL-header line), and REV-070's AC3 residual
+(qa+release), INC-4's AC6 (release then qa). None of these files intersect INC-8's five-file diff, so none
+were re-touched or re-verified this pass; they stand exactly as recorded at Pass 23's close.
+
+**Resolved this pass: 2** (DEEP-001, DEEP-002).
+
+**Routing (new items only):**
+- **qa** — REV-107 (AC3 browser check, carry to Phase-4 closure).
+- **tech-lead** — REV-108 (five status-marker locations in `docs/design.md`, one batched edit).
+
+None of the above halts the pipeline. **INC-9 may proceed** per `CLAUDE.md`'s "no increment starts before
+the previous one passes QA" — INC-8 has now passed both qa and reviewer with zero blockers/majors.
+
+---
+
+### Pass 24 summary
+
+**New findings by tag — 2, both minor:** `[TEST-GAP]` 1 (REV-107), `[DESIGN-GAP]` 1 (REV-108). No new
+blockers, no new majors. Pass 2 clean — no `[SCOPE-CREEP]`. Pass 3 clean — no `[HARDCODED]`. Pass 4 clean
+— no `[BLOAT]` (one calibration-only observation, not logged). Pass 5 clean — no `[SECURITY]`. Pass 6
+clean — no `[STRUCTURE]` violation, `code-map.md` still accurate at its level of detail.
+
+**Resolved this pass: 2** (DEEP-001 blocker, DEEP-002 major — both independently re-verified against
+current code and test behavior, per Checks 1–4 above).
+
+**Open blocker count: 0. Open major count: 0.**
+
+### Verdict — Pass 24 / INC-8
+
+**CLEAR.** DEEP-001 is genuinely closed, not moved: every one of the nine possible outcome labels across
+both entry points was enumerated and checked against the new `degraded` formulas, not just the two DEEP-001
+itself named — no outcome meaning "produced no verdict" is left uncounted. DEEP-002 is genuinely closed:
+`alerted` now means confirmed-delivered everywhere it is written, and no reader (dashboard, track-record
+portal, discovery dedup) still assumes the old "attempted" semantics. The fail-safe guard
+(`parse_status in ("failed","api_error")`) was independently re-verified as the first branch in both
+`process_ticker` and `process_candidate`, structurally unreachable by the new delivery-gating logic added
+below it, and proven by behavior (a notifier that *would* succeed is never called) rather than by trusting
+the diff's shape. Repeated/persistent push failure was traced by hand and introduces no unbounded growth,
+no alert flood, and no dedup-defeating interaction — its consequences are exactly FR34's documented retry
+contract plus this project's pre-existing heartbeat/monitor-dedup machinery, both unmodified by this diff.
+AC3's browser-check substitution is well-engineered and adequate to merge on, but its residual gap against
+the AC's literal text is logged (REV-107), not silently absorbed. Two non-blocking minors surfaced
+(REV-107, REV-108), neither holds up INC-9.
+
+**What CLEAR does and does not mean here.** It means the five-file production diff and its four new/
+extended test files were independently read and traced against current file content — not accepted on
+dev's self-verification or qa's PASS verdict — for exactly the five things this task named: the degraded-
+formula completeness, the repeated-failure interaction, the fail-safe guard, the `alerted` semantics
+consistency, and the AC3 substitution's adequacy. It does **not** mean AC3's literal browser check has been
+performed (REV-107, carried to closure) or that `docs/design.md`'s status markers have been flipped
+(REV-108, tech-lead's routine follow-up). Neither is a blocker under `CLAUDE.md`'s gate text.
+
+**Doc hygiene applied this pass.** No RESOLVED carried-forward items to move to the archive this round —
+DEEP-001/DEEP-002 are logged resolved above with their evidence trail, per the task's explicit instruction,
+rather than edited into the original "Deep review" section; that section is left untouched below as the
+historical record until whichever future pass would normally archive it. The unchanged carried-minors list
+is otherwise identical to Pass 23's.
+
+---
+
 ## Deep review — 2026-07-29 (`/big-guns`, on-demand, whole-system scope, judgment layer only)
 
 **Nature of this section.** Logged by `big-guns`, not `reviewer`. This is **not** a re-run of the 6-pass
@@ -1187,76 +1477,24 @@ Read order: `idea-brief.md` → `requirements.md` → `design.md` + all eleven `
 
 ---
 
-### DEEP-001 — `[DESIGN-GAP]` / `[SILENT-DEGRADATION]` — **blocker** — owner: dev (code), tech-lead (NFR2 claim), pm (FR/NFR sign-off)
+### DEEP-001 — `[DESIGN-GAP]` / `[SILENT-DEGRADATION]` — **blocker** — RESOLVED 2026-07-30 (Pass 24, INC-8)
 
-**A run in which 100% of AI calls failed writes heartbeat `status = "ok"`, so NFR2's monitor stays silent
-and the dashboard shows every ticker as `Hold`.**
-
-Location: `scripts/run_hourly.py:160-162`; `scripts/run_discovery.py:114-116`;
-`scripts/state.py:235-240`; `sql/phase5_monitoring.sql:203-213`; `pages/dashboard.html:192-199`.
-
-Evidence:
-- `state.process_ticker` returns the literal `"no-read"` for every `parse_status in ("failed",
-  "api_error")` row (`state.py:235-240`) — i.e. every fail-safe Hold.
-- `run_hourly.py:160` computes `degraded = outcomes["skip"] + outcomes["error"]`. `"no-read"` is in
-  neither bucket, so `status = "partial" if (degraded or config.TUNABLES_DEGRADED) else "ok"` evaluates to
-  `"ok"` even when **every single ticker** failed the AI call. `run_discovery.py:114` has the identical
-  omission (`skip + error + screens_errored`).
-- `check_pipeline_health()` only raises `degraded` on `wl_status <> 'ok'` (`phase5_monitoring.sql:203`),
-  and the heartbeat's `last_run_at` is fresh, so neither the stale branch nor the degraded branch fires —
-  `_clear_monitor` runs instead. The monitor actively reports **healthy**.
-- The most likely real-world triggers are all in this class and all silent: an expired/revoked/
-  billing-lapsed `GEMINI_API_KEY` (`require_secrets` only checks non-empty, `config.py:452-462`), a Gemini
-  outage that outlives `GEMINI_MAX_RETRIES`, or a bad model string in the FR30 portal (see DEEP-005).
-- Downstream presentation completes the illusion: `dashboard.html:197` special-cases **only**
-  `parse_status === "no_data"`; a `failed`/`api_error` row renders a normal `Hold` verdict pill. A user
-  opening the dashboard sees a full grid of `Hold` and a monitor that has said nothing.
-
-Why this is a blocker and not a minor: `requirements.md` NFR2 states the system "actively alerts the user
-when a scheduled run is missed, fails to trigger, **or completes degraded** — silence from the monitor
-means healthy," and `design.md` §0 load-bearing #5 restates it. A run where no verdict was produced is the
-canonical "completes degraded" case, and it is exactly the case the monitor cannot see. NFR2 is therefore
-**not delivered as specified**, which contradicts pm's Phase-4 "every FR/NFR delivered or deferred"
-confirmation and `design.md` §15's coverage row for NFR2. It also breaks `design.md` §0 load-bearing #8's
-guarantee in spirit: a bug cannot fabricate a *signal*, but it can fabricate a *state of health*.
-
-Suggested fix (small): add `outcomes["no-read"]` to the `degraded` expression in both entry points, and
-give `dashboard.html`/`detail.html` the same "no reading" treatment for `failed`/`api_error` that
-`no_data` already gets. A regression test for "all tickers no-read ⇒ heartbeat `partial`" does not exist
-in `tests/` today (`tests/test_run_orchestration.py:220` covers only the `error` half).
+Original finding: a run in which 100% of AI calls failed wrote heartbeat `status = "ok"` (NFR2's monitor
+stayed silent) and the dashboard showed every ticker as a normal `Hold`. **Full original finding text and
+closing disposition (independently re-verified against current code/tests, not accepted on account) moved
+to `docs/archive/review-log-archive.md` per doc hygiene — see `docs/review-log.md` Pass 24 above for the
+verification detail.** One non-blocking residual carried forward from this closure: REV-107 (AC3's literal
+browser-rendering check, owner qa, carried to Phase-4 closure).
 
 ---
 
-### DEEP-002 — `[DESIGN-GAP]` — **major** — owner: dev (code), tech-lead (`data-and-flow.md` §5/§6 contract), pm (FR15 wording)
+### DEEP-002 — `[DESIGN-GAP]` — **major** — RESOLVED 2026-07-30 (Pass 24, INC-8)
 
-**`call_log.alerted = true` means "we intended to push", not "a push was delivered" — and a failed push is
-never retried, because `verdict_state` has already been advanced.**
-
-Location: `scripts/notify.py:92-102` and `:105-108`; `scripts/state.py:259-267`;
-`scripts/state.py:102-112`.
-
-Evidence:
-- `NtfyNotifier.push` wraps `requests.post` in a bare `except Exception` that only prints
-  (`notify.py:101-102`), and it never calls `raise_for_status()` — so an ntfy 4xx/5xx (wrong topic, rate
-  limit, outage) is not even logged as an error; it is indistinguishable from success.
-- `state.process_ticker` writes `alerted=True` **before** the push (`state.py:260-261`) and advances
-  `current_verdict` **after** it (`:263-266`) regardless of outcome. The threshold crossing is consumed:
-  the next run sees `verdict == state.current_verdict` and goes quiet forever. Under FR7/FR8's
-  single-rule, no-cooldown, crossings-only design (`design.md` §0 #1/#2), **that signal is permanently
-  lost** — there is no standing-verdict reminder to recover it.
-- The same `alerted=True` is written when the notifier is `DryRunNotifier` (`notify.py:105-108`, chosen
-  whenever `ALERTS_ENABLED` is false or `NTFY_TOPIC` is empty) — so every dry-run change row also claims
-  an alert was sent.
-- FR15 requires the log to record "whether an alert **was sent**", and §2's success criterion is
-  auditable *only* from this log. `discovery`'s 7-day dedup also keys off it
-  (`state.recently_pushed_candidates` filters `alerted=True`, `state.py:109-111`), so an undelivered
-  candidate push suppresses its own re-push for 7 days.
-
-Suggested fix: have `push()` return a delivery boolean (`raise_for_status()` inside), write `alerted` from
-that boolean, and only advance `verdict_state.current_verdict` on a successful delivery so the next cycle
-re-attempts the crossing. If pm prefers not to change behaviour, FR15's wording and
-`data-and-flow.md` §5's `alerted` column description must be corrected to "alert attempted", and the
-success-criterion audit method adjusted accordingly — but the silent-loss half still needs the code fix.
+Original finding: `call_log.alerted = true` meant "we intended to push," not "a push was delivered," and a
+failed push was never retried because `verdict_state` had already been advanced regardless of outcome.
+**Full original finding text and closing disposition (independently re-verified against current code/tests,
+not accepted on account) moved to `docs/archive/review-log-archive.md` per doc hygiene — see
+`docs/review-log.md` Pass 24 above for the verification detail.**
 
 ---
 

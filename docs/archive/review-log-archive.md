@@ -2664,3 +2664,90 @@ content, not the fix commits' own claims:**
 
 **Verdict at Pass 23: Phase 4 closure CLEAR** — see live log for the six new minors (REV-103–REV-106, plus
 REV-097/REV-100/REV-101/REV-102 carried unchanged from Pass 22) and the full open-items list.
+
+---
+
+## DEEP-001 + DEEP-002 — logged 2026-07-29 (`/big-guns` deep review), RESOLVED 2026-07-30 at Pass 24's
+close (`docs/review-log.md`)
+
+Archived here per `CLAUDE.md`'s doc-hygiene rule now that both are closed; the rest of the "Deep review —
+2026-07-29" section (DEEP-003 through DEEP-007) remains live in `docs/review-log.md` since those items are
+still open (DEEP-003/DEEP-004 → INC-9, DEEP-005/DEEP-006 → INC-10, DEEP-007 → routed back to the user by
+pm, unresolved trade-off, no increment touches it).
+
+### DEEP-001 — `[DESIGN-GAP]` / `[SILENT-DEGRADATION]` — blocker — owner: dev (code), tech-lead (NFR2
+claim), pm (FR/NFR sign-off) — original finding text
+
+**A run in which 100% of AI calls failed writes heartbeat `status = "ok"`, so NFR2's monitor stays silent
+and the dashboard shows every ticker as `Hold`.**
+
+Location (as originally filed, pre-fix line numbers): `scripts/run_hourly.py:160-162`;
+`scripts/run_discovery.py:114-116`; `scripts/state.py:235-240`; `sql/phase5_monitoring.sql:203-213`;
+`pages/dashboard.html:192-199`.
+
+Evidence: `state.process_ticker` returned `"no-read"` for every `parse_status in ("failed","api_error")`
+row; `run_hourly.py`'s `degraded = outcomes["skip"] + outcomes["error"]` omitted `"no-read"`, so `status`
+evaluated to `"ok"` even when **every** ticker failed the AI call (`run_discovery.py` had the identical
+omission); `check_pipeline_health()` therefore never fired (fresh heartbeat, `status='ok'`) and actively
+reported healthy; `dashboard.html` special-cased only `parse_status === "no_data"`, so a `failed`/
+`api_error` row rendered a normal `Hold` pill — a user opening the dashboard saw a full grid of `Hold` and
+a monitor that had said nothing. Why a blocker: NFR2 states the system alerts on any run that "completes
+degraded," and a run producing zero verdicts is the canonical case the monitor could not see — NFR2 was not
+delivered as specified. Suggested fix (as filed): add `outcomes["no-read"]` to the `degraded` expression in
+both entry points, and widen `dashboard.html`'s (and, if needed, `detail.html`'s) no-reading treatment to
+`failed`/`api_error`.
+
+**Closing disposition (Pass 24, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+against current code and test behavior, not accepted on dev's/qa's account.** Every one of the nine
+possible per-ticker/per-candidate outcome labels across both entry points (`no-read`, `cold-start`,
+`quiet`, `push-failed`, `change-alert`, `candidate-logged`, `candidate-push-failed`, `candidate-pushed`,
+plus `skip`/`error`/`screens_errored`) was enumerated and checked against the shipped formulas
+(`run_hourly.py:166`, `run_discovery.py:118`) — not just the one label DEEP-001 named — confirming no
+outcome meaning "produced no verdict" is left uncounted. `pages/dashboard.html`'s verdict-pill condition is
+now `["no_data","failed","api_error"].includes(row.parse_status)`, independently confirmed by extracting
+and executing the real `botBlock()` function under Node against synthetic rows for all three values (qa's
+`tests/test_dashboard_pill_logic.py`) — real runtime execution, not a source grep. New permanent regression
+tests drive the actual `run_hourly.main()`/`run_discovery.main()` entry points with an all-failed batch and
+assert `run_heartbeat.status == "partial"` (`tests/test_run_orchestration.py`), reproducing DEEP-001's
+exact scenario. One residual, non-blocking, logged fresh: REV-107 (AC3's literal browser-rendering check
+was not performed — the Node-executed extraction is a strong but not identical substitute; carried to
+Phase-4 closure alongside this project's other environment-blocked live checks, same posture as REV-070's
+AC3 and INC-4's AC6).
+
+### DEEP-002 — `[DESIGN-GAP]` — major — owner: dev (code), tech-lead (`data-and-flow.md` §5/§6 contract),
+pm (FR15 wording) — original finding text
+
+**`call_log.alerted = true` meant "we intended to push", not "a push was delivered" — and a failed push was
+never retried, because `verdict_state` had already been advanced.**
+
+Location (as originally filed, pre-fix line numbers): `scripts/notify.py:92-102` and `:105-108`;
+`scripts/state.py:259-267`; `scripts/state.py:102-112`.
+
+Evidence: `NtfyNotifier.push` wrapped `requests.post` in a bare `except Exception` that only printed, never
+called `raise_for_status()`, so an ntfy 4xx/5xx was indistinguishable from success; `state.process_ticker`
+wrote `alerted=True` before the push and advanced `current_verdict` after it regardless of outcome, so a
+failed delivery permanently consumed the crossing under FR7/FR8's no-cooldown, crossings-only design; the
+same `alerted=True` was written for `DryRunNotifier`, so every dry-run row also claimed a delivered alert;
+discovery's 7-day dedup (`recently_pushed_candidates`, filtering `alerted=True`) falsely suppressed
+re-pushing an undelivered candidate for a week. Suggested fix (as filed): have `push()` return a delivery
+boolean, write `alerted` from it, and only advance `verdict_state.current_verdict` on confirmed delivery —
+or, if behavior is not to change, correct FR15's wording to "attempted" instead.
+
+**Closing disposition (Pass 24, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+against current code and test behavior, not accepted on dev's/qa's account.** `NtfyNotifier.push()` now
+calls `raise_for_status()` inside its `try` and returns `True`/`False`/(never raises); `DryRunNotifier.push()`
+returns `None` explicitly, a third state distinct from both. `state.py`'s `process_ticker`/
+`process_candidate` compute `delivered = notifier.push(...)`, write `alerted=(delivered is True)`, and
+advance `verdict_state.current_verdict` only when `delivered is not False` — a real failure returns
+`"push-failed"`/`"candidate-push-failed"` and leaves the crossing pending for automatic retry, exactly
+FR34's contract (added to `requirements.md` alongside this fix round). Every `write_call_log` call site in
+`state.py` (five total) was read directly and confirmed to write `alerted` consistently with the new
+semantics; every reader (`pages/dashboard.html`, `admin-portal/.../track-record/page.tsx`,
+`recently_pushed_candidates`) was checked and found to already interpret the column correctly — no stale
+"attempted" interpretation found anywhere. The pre-existing fail-safe guard
+(`parse_status in ("failed","api_error")`, `state.py:256`/`:142`) was independently re-verified as the
+first branch in both functions, structurally unreachable by the new delivery-gating logic — proven by
+behavior (a notifier that would succeed is never called on a fail-safe row), not by trusting the diff's
+shape. Repeated/persistent push failure was traced by hand: no unbounded growth, no alert flood (the
+existing `monitor_alerts` dedup still applies), no dedup-defeating interaction with Decision #32's 7-day
+cooldown. Full evidence trail: Pass 24, Checks 1–4, `docs/review-log.md`.
