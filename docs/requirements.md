@@ -253,9 +253,13 @@ reference, not a spec for a contractor.
     surface and alert exactly as NFR2 requires. Observing the pause flag later in the same run never
     downgrades, cancels, or reclassifies a real failure that already occurred earlier in it.
   - **Track-record integrity — no special-case handling needed or permitted.** `call_log` rows already
-    written under FR15 for tickers processed before the abort point are real, complete work product (real
-    verdicts from a real AI call) and are retained exactly as logged — never deleted, retracted, or
-    re-flagged as invalid on resume. No de-duplication or "resume where it left off" mechanism is required
+    written under FR15 for tickers processed before the abort point are real, complete work product — a
+    genuine, timestamped per-ticker outcome for that cycle (an AI-judged verdict, or a fail-safe no-read
+    Hold logged when the ticker's data could not be read), never a skipped no-op — and are retained
+    exactly as logged, never deleted, retracted, or re-flagged as invalid on resume. ("Real," here and in
+    this FR's opening paragraph, means non-skip — not exclusively "produced by a completed AI call" — so a
+    no-read row counts as real work product for this purpose, consistent with how the implementation
+    computes `real_rows_this_cycle`, §13.6.2/§13.6.3 of `design/operational-controls.md`.) No de-duplication or "resume where it left off" mechanism is required
     to guard against double-counting: FR15 already logs every check as its own timestamped row rather than
     a cumulative count, and FR7/FR8's existing crossings-only comparison against `verdict_state` already
     treats an unchanged verdict as silence — so a ticker re-evaluated on the next normal cycle behaves
@@ -456,6 +460,8 @@ tunables, not fixed requirements.
 | `AI_TEMPERATURE` | `0.2` | Gemini generation temperature; lower values reduce verdict-to-verdict drift for the same inputs — default chosen for consistency, operator-adjustable if ever needed |
 | `NTFY_TOPIC` | (secret) | US/TSX push topic |
 | `NSE_NTFY_TOPIC` | (secret, falls back to `NTFY_TOPIC`) | NSE push topic |
+| `NTFY_BASE_URL` | `https://ntfy.sh/` | ntfy push endpoint base URL (`notify.NtfyNotifier`) |
+| `NTFY_TIMEOUT_SECONDS` | `10` | Per-request timeout (seconds) for the ntfy push call |
 | `DETAIL_PAGE_BASE` | (env) | Base URL for tap-through detail page |
 | `ALERTS_ENABLED` | `false` | Master switch for real pushes |
 | `FORCE_RUN` | `false` | Manual override to run when market closed (testing/backfill) |
@@ -529,11 +535,118 @@ tunables, not fixed requirements.
 
 ---
 
+## 11. Phase 4 Closure — FR/NFR Delivery Confirmation (2026-07-30)
+
+**Basis.** `docs/review-log.md` Pass 29: zero open blockers, zero open majors anywhere in the live log;
+DEEP-001 through DEEP-007 (the `/big-guns` deep-review findings) all independently re-verified RESOLVED;
+INC-3 through INC-12 all dev-built, qa-PASS, and reviewer-CLEAR. `docs/handoff.md`'s "Evidence record:
+INC-11 live-verification pass (Decision #36)" section supplies the three live checks Decision #36 made
+mandatory before this confirmation could be written. Per this document's role as the record of what was
+promised, every FR/NFR below is marked **Delivered** (implemented, tested, reviewer-cleared, and — where
+Decision #36 required it — live-verified) or **Deferred** (implemented and reviewer-cleared, but a
+required live-verification step has not yet run). No FR/NFR is silently dropped; none was descoped.
+
+### Delivered
+
+FR1–FR10, FR12–FR14, FR16, FR18–FR23 — core v1 behavior (watchlist/holdings, discovery, monitoring,
+alerting, dashboard, timestamps). Unchanged since original approval; no open reviewer finding disputes
+their delivered behavior.
+
+FR11, FR15, FR17, FR29, FR30, FR34 — each was sharpened mid-round by a `/big-guns` DEEP finding
+(Decisions #31–#35) and independently confirmed to match its amended text, not just its original intent:
+- **FR11/FR29** (currency derived from `watchlist.market`, not admin free-choice) — INC-10's
+  `holdings_currency_derivation` trigger, live-confirmed present and enabled on `public.holdings`
+  (handoff.md INC-11 evidence, item 6).
+- **FR15** (`alerted` means confirmed-dispatched, not merely attempted) and **FR34** (delivery-confirmed
+  alerting with automatic retry) — INC-8, reviewer Pass 24 CLEAR.
+- **FR17** (structural stale-bar/closed-market check, no maintained holiday calendar) — INC-9, reviewer
+  Pass 25 CLEAR.
+- **FR30** (portal write-time validation mirrors `scripts/config.py`'s cast contract) — INC-10's
+  `tunables_validate_trigger`, live-confirmed rejecting an invalid `ALERTS_ENABLED` value inside a
+  rolled-back transaction against the production database (handoff.md INC-11 evidence, item 6 — DEEP-005
+  proven closed live, not only against a local scratch database).
+
+FR24, FR25, FR26 (kill-switch: pause/resume, dead-man-monitor pause-awareness, audit logging) — INC-3
+implemented, reviewer-cleared; live-verified per Decision #36: INC-3 AC3 executed 2026-07-30 against the
+production project — pause suppressed a scheduled dispatch (no `hourly-watchlist.yml` run created at
+`19:12`), resume restored normal dispatch, and `kill_switch_audit` gained exactly one row per toggle
+(`docs/handoff.md`, INC-11 evidence item 2). Moved from "deferred, pending live execution" to
+**Delivered**.
+
+FR35 (pause-triggered mid-run abort classification, follow-on to Decision #37/#38) — INC-12 implemented;
+reviewer Pass 29 independently re-verified RESOLVED (DEEP-007 closed): the causal-tie mechanism, the
+non-suppression of a genuine same-run degraded signal, and the checkpoint-1-precedes-tunables-write
+ordering were each re-traced directly against current code and two new regression tests confirmed to fail
+on pre-fix code and pass on the fix. **Delivered at the code/test level, with one outstanding pre-tag
+operational step**: `sql/kill_switch_abort_log.sql` — the table FR35's causal-tie audit trail writes to —
+has been independently verified correct and idempotent against two separate local Postgres instances
+(dev's and qa's) but has **not yet been applied to the live Supabase project**
+(`docs/review-log.md` Pass 29, "Open items after Pass 29" #4). Until it is applied, a live checkpoint-2/3
+abort would raise on the `write_kill_switch_abort()` insert rather than completing FR35's documented
+clean, expected-quiet abort. Recommend release/orchestrator apply it and run the confirming
+`role_table_grants` query (the same pattern already used for REV-081/REV-117) before `v0.1.0` is tagged —
+low-risk, already twice-verified SQL, not a design or code gap.
+
+FR33 (AI provider abstraction) — INC-4 implemented; reviewer Pass 15 CLEAR on 5 of 6 tests, with AC6 (a
+live Gemini smoke test) previously deferred for lack of a `GEMINI_API_KEY` in any build environment.
+Live-verified per Decision #36: 90 consecutive `call_log` rows in production, all `parse_status='ok'`,
+`model_used='gemini-2.5-flash'`, `fallback_from=null` (`docs/handoff.md`, INC-11 evidence item 3) — stronger
+evidence than the one-off smoke test AC6 originally asked for. Moved from "deferred, pending live
+execution" to **Delivered**.
+
+FR27, FR28 (admin portal: Google-OAuth login, watchlist CRUD) — INC-5, reviewer Pass 17 CLEAR.
+
+NFR1, NFR3, NFR4, NFR5, NFR6, NFR7 — unchanged or additively documented (NFR7 added per Decision #30); no
+open reviewer finding disputes delivered behavior.
+
+NFR2 ("completes degraded" explicitly defined so an all-tickers-failed run cannot read heartbeat "ok") —
+INC-8, reviewer Pass 24 CLEAR; code's `degraded` bucket (`skip`+`error`+`no-read`+`push-failed`) matches
+the amended definition exactly.
+
+### Deferred, pending live execution — user decision required
+
+**FR31, FR32** (admin portal: read-only track-record view, kill-switch UI toggle) — INC-7 implemented,
+qa-PASS, reviewer Pass 20 CLEAR. Per Decision #36, two live checks gate these: INC-7 Step 0 (confirm
+`sql/kill_switch_portal_grant.sql` is live) **passed** 2026-07-30 — the `admin_read_kill_switch` policy and
+`set_kill_switch()` RPC are confirmed present and correctly `is_admin()`-gated against production
+(`docs/handoff.md`, INC-11 evidence item 4). **INC-7 AC2/AC3 — the portal's own RPC round-trip and a live
+proof that toggling the kill switch through the portal actually suppresses dispatch — have not run.** Both
+require an authenticated admin **browser** session against the live Vercel-hosted portal (Google OAuth
+login through the deployed UI); no subagent or the orchestrator had one available in this environment.
+Note: INC-11's live pause/resume exercise (which passed, see FR24–FR26 above) used the `postgres`
+service-role credential directly via SQL — a different, already-trusted path — and does **not** substitute
+for AC2/AC3, which specifically exist to prove the portal's `is_admin()`-gated RPC path itself works
+end-to-end (`docs/handoff.md`, INC-11 evidence item 2's explicit caveat).
+
+**Status: FR31/FR32 remain Deferred, pending live execution** — they cannot be marked Delivered on the
+evidence available in this environment, per Decision #36's binding rule that a deferred live check may not
+be silently treated as terminal or waved through at closure.
+
+**pm's recommendation to the user, framed as a decision only you can make (not decided here):**
+1. **Hold the `v0.1.0` tag** until you can log into the deployed admin portal yourself (a two-minute check:
+   toggle the kill switch via the portal UI, confirm the `kill_switch_audit` row shows `source='admin-portal'`,
+   and confirm no scheduled dispatch fires while paused), then tag once that passes — this is the option
+   Decision #36 was written to force, and it closes the loop with the same standard every other deferred
+   check in this project was held to (INC-3 AC3, INC-4 AC6, both closed the same way).
+2. **Tag `v0.1.0` now with FR31/FR32 explicitly recorded as "deferred, pending live execution"** in the
+   release notes/runbook, on the reasoning that: the code is reviewer-cleared with zero blockers/majors,
+   the underlying RPC (`set_kill_switch`) and its authorization gate are independently confirmed live and
+   correctly configured (Step 0 passed), and the only unverified step is the portal UI's own call path to
+   an RPC that is already proven safe via the identical service-role exercise — a materially smaller risk
+   than the other two checks Decision #36 named, both of which are now closed.
+I recommend **option 1** if a two-minute manual check is acceptable to you before tagging — it is cheap,
+it is the standard this project has held every other deferred live check to, and it removes the one
+remaining assumption in an admin control surface for a system that pauses real AI/push/commit
+side-effecting work. If you'd rather not block the tag on portal access being available right now,
+**option 2** is a defensible, explicitly-labeled fallback — but the choice is yours, not mine, per
+Decision #36's own rationale for existing.
+
+---
+
 ## Changelog
 
 | Date | Change | Reason |
 |---|---|---|
-| 2026-07-30 | **DEEP-007 resolution — FR24 reworded to add in-flight boundary-check enforcement, not rescoped to future-dispatches-only.** Arjun's decision (Decision #37): the kill switch will stop an in-flight run at four defined checkpoints (entry to `run_hourly.py`/`run_discovery.py` `main()`, before the batched AI call, before the push call, before `publish_prices.py`'s commit), each reading `kill_switch_state.paused` directly via the Python layer. FR24 (§5.10) reworded to state the guarantee this actually delivers — enforcement at defined irreversible-action boundaries with an explicitly bounded residual window, not instantaneous cessation and not the rejected "no new dispatches; in-flight run completes" alternative. No other FR/NFR text changed in this entry; FR25's interaction with a boundary-triggered abort (what the dead-man monitor/heartbeat reports for a run that aborts mid-execution due to pause, as distinct from a completed-degraded run under NFR2/Decision #31) is flagged to tech-lead as a likely follow-on amendment once INC-8's heartbeat/accounting rewrite lands, not resolved here — sequencing this work (INC-12) strictly after INC-8 is itself part of Decision #37. Archived the oldest live entry (2026-07-16, shadow-experiment removal) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | User's explicit 2026-07-30 answer to the DEEP-007 trade-off pm escalated per the change-request process (open trade-offs go to the user, not decided silently); recorded per this project's established decision-then-changelog pattern. |
 | 2026-07-27 | **Reversal — FR30 tunables editor moves from GitHub-Variables-proxy to a Supabase `tunables` table.** During design, tech-lead found Decision #24's premise false: only 2 of the 10 curated keys (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`) are actually wired from GitHub Variables into the running workflows — `ALERTS_ENABLED` is a `workflow_dispatch` input on scheduled runs (not read from a Variable) and the 7 `DISCOVERY_*` keys aren't wired in at all. "Don't touch the production config-loading path" was never achievable, so closing that gap requires touching it regardless of mechanism. Revised FR30 to describe the new mechanism: a `tunables` Supabase table (key, value, description, example, updated_at, updated_by) seeded via migration at current defaults (no behavior change at cutover); `scripts/config.py` fetches these 10 keys from the table at run start with a fallback to hardcoded Python defaults on fetch failure; the portal writes directly to the table under an admin-scoped RLS policy (same mechanism as FR28/29/32) — no GitHub PAT or proxy. Revised NFR6 to drop the GitHub-PAT-specific line, replaced with the general RLS-write-policy requirement. Marked Decision #24 SUPERSEDED and added Decision #27 recording the new decision and rationale. Updated the §10 Configuration note under FR30 to describe the table-based mechanism. The other ~18 non-curated tunables are unaffected — they remain GitHub Variables/code defaults, since the portal doesn't touch them. Archived the next-oldest changelog entry (2026-07-12, Experimental Tracks section) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Arjun approved this direction after discussion with tech-lead once the wiring-gap discovery invalidated Decision #24's original premise; recorded here per the change-request/reversal process, not a fresh discovery round. |
 | 2026-07-27 | **Refinement — FR30 tunables editor fail-safe now falls back to a last-known-good cache, not a fixed hardcoded literal.** On a failed Supabase fetch, `scripts/config.py` now falls back to the last successfully-fetched value per curated key, read from a repo-committed cache file (`config/tunables_cache.json`), rather than a fixed hardcoded Python default. The cache file is seeded on day one with the then-current hardcoded defaults, and is updated (diff-checked, committed only if changed) on every successful Supabase fetch, reusing the same commit-on-change pattern `.github/workflows/publish-prices.yml` already uses for `pages/prices.json`. Decision #27's core reversal (Supabase table remains source of truth) is unchanged; this refines only the failed-fetch fallback. Added Decision #28 (refines #27). Updated FR30's fail-safe clause and the §10 Configuration note under FR30 accordingly. Flagged as an open note for tech-lead: which workflow(s) own writing back to the cache vs. read-only-consuming it — proposed shape is `hourly-watchlist.yml` as sole writer (most frequent run) with the two discovery-region workflows and `publish-prices.yml` as read-only consumers, pending Arjun's one-line confirmation if he expects a different shape (e.g. every workflow writing back independently). No new FR/NFR IDs — refinement recorded via Decision #28 per this project's established pattern (see #27). Archived the oldest changelog entry (2026-07-12, §11→§10 tunables-baseline sync) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Arjun approved this direction in discussion: a fixed hardcoded literal can silently drift weeks/months stale from what's actually been curated in practice via the portal, defeating the purpose of a portal-editable source of truth; a rolling last-known-good cache stays close to actual practice and reuses a mechanism already proven working in this exact codebase rather than inventing a new one. |
 | 2026-07-28 | Doc-sync: added `AI_PROVIDER` (default `gemini`) to the §10 config audit baseline table (Core system), per reviewer finding REV-074 (Pass 14). INC-4's AC5 had only directed dev to add it to `design/non-functional-ops.md` §9; §10 in this document — the table both the runbook and that design doc cite as the actual authoritative baseline — was missed. Same class of gap as REV-019 (2026-07-15). No FR/NFR text changed. | Reviewer finding REV-074: every tunable must appear in the config audit baseline (§10), not only the design-doc mirror. |
@@ -543,3 +656,4 @@ tunables, not fixed requirements.
 | 2026-07-29 | Doc-sync (Phase 4 closure pass): corrected Decision #28 and the §10 Configuration note under FR30 — both still cited the stale `config/tunables_cache.json` path from an early design draft instead of the as-built `tunables_cache.json` at the **repo root** (a repo-root `config/` directory would shadow the flat `scripts/` import path — REV-046 fixed this in code/design on 2026-07-28, but the fix never propagated to this document). Also added the missing description of the fallback's actual shape: **two tiers only** (Supabase table, then the cache file — no third hardcoded-literal tier), and fail-loud via `SystemExit` on a genuine double-miss (key absent from both tiers, or a value present in either tier that fails to cast) rather than silently guessing a default. No FR/NFR IDs added or renumbered; FR30's text is unchanged, only Decision #28 and the §10 note were corrected. Closes reviewer finding REV-068 (open since Pass 15, carried unresolved through Pass 23's Phase-4-closure audit). Archived the oldest live entry (2026-07-16, shadow-track retirement CR) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Reviewer finding REV-068 (`[REQUIREMENTS-GAP]`, owner pm): the as-built cache location and two-tier/fail-loud behavior had drifted from what this document described; surfaced and fixed during pm's Phase-4 "every FR/NFR delivered or deferred" confirmation pass rather than left open into closure. |
 | 2026-07-30 | **Change-request impact assessment — `/big-guns` deep review (DEEP-001–007), routed via change-request step 1.** Sharpened **NFR2** ("completes degraded" now explicitly defined so an all-tickers-failed run cannot read heartbeat "ok" — DEEP-001) and **FR17** (holiday/closed-market "no usable data" now explicitly requires a structural stale-bar check, since no holiday calendar exists — DEEP-004, refines Decision #8). Added **FR34** (§5.5: alert delivery/retry semantics — `alerted` means confirmed-delivered, not attempted; verdict state does not advance, and a failed push is retried automatically, until delivery succeeds — DEEP-002) and amended FR15's `alerted`-field definition to match. Amended **FR30** to require write-time validation mirroring `scripts/config.py`'s type/domain contract, so an invalid portal edit is rejected at write time instead of causing a silent behavior change or a system-wide `SystemExit` outage (DEEP-005). Amended **FR11** and **FR29** so holdings currency is derived from `watchlist.market` rather than admin free-choice, closing a latent wrong-P&L path (DEEP-006). Added Decisions Log **#31–#36** recording each fix-the-code/sharpen-the-claim call and a new binding decision (#36) that INC-3 AC3, INC-4 AC6, and INC-7 AC2/AC3 — all previously deferred — must be executed, not left indefinitely deferred, before FR24–FR26/FR33/FR31–FR32 are marked "delivered" at closure. **DEEP-003** (positional-fallback parse-attribution bug) has no requirements-level face — routed to tech-lead as a design/code contract issue, no FR/NFR added. **DEEP-007** (FR24's kill-switch boundary: does the guarantee cover an in-flight run, or only future dispatches) is an open trade-off with materially different cost/behavior implications — **not resolved here**; returned to the user as a question before tech-lead can design a fix (see this changelog's companion question, routed by the orchestrator). Archived the oldest live entry (2026-07-16, shadow-track retirement CR resolution) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | User's explicit 2026-07-30 direction: fix all six blocker/major `/big-guns` findings before tagging `v0.1.0`, and make the three deferred live checks requirement-traceable so closure cannot quietly skip them again; per-finding fix-vs-claim calls are pm's own, per the change-request process's no-inference rule (one genuine open trade-off, DEEP-007, held back for the user rather than guessed). |
 | 2026-07-30 | **Follow-on to Decision #37 — added FR35, amended FR25, cross-referenced FR32 (pause-triggered mid-run abort).** Now that INC-8's heartbeat/degraded-accounting rewrite has landed (`run_hourly.py`/`run_discovery.py` as shipped: `degraded = outcomes["skip"] + outcomes["error"] + outcomes["no-read"] + outcomes["push-failed"]`), resolved the gap pm flagged when reworking FR24: FR25's "absence of runs is expected-quiet" only covers a run that never starts (FR24 checkpoint 1); it did not cover FR24 checkpoints 2/3 aborting a run that has already produced real, logged per-ticker work. Amended **FR25** (§5.10) to state explicitly which case it covers (checkpoint 1 only) and point to the new requirement for the rest. Added **FR35** (§5.10): a mid-run pause abort at checkpoint 2/3, after at least one real `call_log` row exists for the cycle, is expected-quiet for NFR2 purposes — but only when the classification is causally tied to the specific checkpoint-and-flag-read event (never inferred from an outcome count or missing heartbeat, which a genuine crash also produces), and never when it would suppress a real degraded signal already present in the same run (NFR2/Decision #31 keeps applying in full). Confirmed no new de-duplication/resume machinery is needed for track-record integrity — FR15's per-check logging plus FR7/FR8's existing crossings-only comparison already make re-evaluation on the next normal cycle safe. Checkpoint 1 stays under FR25 (unchanged); checkpoint 4 (`publish_prices.py`'s commit) stays under FR25 too, since no per-ticker logged work exists there to protect. Amended **FR32** to add FR35 to the list of behaviors the portal's kill-switch UI inherits automatically. Added **Decision #38**. Archived the oldest live entry (2026-07-26, kill-switch/admin-portal/AI-provider-abstraction CR) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Sequencing was itself part of Decision #37 (INC-12 strictly after INC-8, since designing the abort-accounting contract before INC-8 settled "degraded" would mean guessing at a shape INC-8 might change out from under it); with INC-8 landed (qa PASS, reviewer Pass 24 CLEAR) the shape is now known and this follow-on is resolvable. The causal-tie requirement exists specifically to prevent a genuine failure from being misreported as a deliberate pause, which the orchestrator flagged as the exact loophole to avoid. |
+| 2026-07-30 | **Phase 4 closure — FR/NFR delivery confirmation (§11 added); FR24–FR26 and FR33 moved from "deferred, pending live execution" to Delivered on live evidence (Decision #36); FR31/FR32 remain Deferred, routed back to the user as a decision, not resolved here; FR35 wording corrected (REV-120); two missing tunables added to the §10 audit baseline (REV-066/REV-052, pm half).** Added §11 "Phase 4 Closure — FR/NFR Delivery Confirmation," walking every FR/NFR to Delivered or Deferred status per Decision #36's binding rule. FR24–FR26: Delivered — INC-3 AC3 executed live 2026-07-30 (dispatch suppressed while paused, `kill_switch_audit` gained exactly one row per toggle). FR33: Delivered — INC-4 AC6 satisfied by 90 consecutive live `call_log` rows, all `parse_status='ok'`, zero fallbacks, stronger evidence than the one-off smoke test the AC asked for. FR31/FR32: still Deferred — INC-7 AC2/AC3 (the portal's own authenticated-browser RPC round-trip and live dispatch-suppression proof) have not run in this environment; §11 records pm's explicit recommendation and both options for the user, per Decision #36's rule that this choice is not pm's to make silently. Also flagged, not a requirements change: `sql/kill_switch_abort_log.sql` (FR35's causal-tie audit table) is independently verified correct twice locally but not yet applied to the live project — recommended as a pre-tag release step. Corrected **FR35**'s track-record-integrity bullet (§5.10): removed the overclaim that every "real" `call_log` row is "a real verdict from a real AI call" — a no-read row (fail-safe Hold, no AI call made) is real/non-skip work product for this FR's purposes exactly as the implementation computes `real_rows_this_cycle`, and the text now says so explicitly, closing reviewer finding REV-120 (no behavior/gating implication — the field is informational). Added `NTFY_BASE_URL` (`https://ntfy.sh/`) and `NTFY_TIMEOUT_SECONDS` (`10`) to the §10 Core-system config audit baseline table — present in `scripts/config.py` since before this pass but missing from this baseline, per reviewer finding REV-066/REV-052 (pm half; the `non-functional-ops.md` §9 half remains tech-lead's, still open). No FR/NFR IDs added; no FR/NFR text changed beyond FR35's wording correction. Archived the oldest live entry (2026-07-30, DEEP-007 resolution) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Phase-4 closure requires pm to confirm every FR/NFR delivered or deferred (`CLAUDE.md`); Decision #36 specifically forbids treating a deferred live check as silently terminal, so FR24–FR26/FR33 are moved only on dated live evidence and FR31/FR32's gap is routed to the user rather than assumed away. REV-120 and REV-066/REV-052 were open reviewer findings within pm's own document; fixed as part of the same closure pass rather than left open into the tag. |
