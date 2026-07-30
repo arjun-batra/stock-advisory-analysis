@@ -2885,3 +2885,119 @@ file, `tunables_cache.json` at the **repo root**," states "the chain is **two ti
 reviewer since Pass 15 (no pass between Pass 17 and Pass 24 had `requirements.md` in its diff scope);
 independently confirmed against current file content at Pass 25, not accepted on pm's changelog claim
 alone. Full evidence trail: Pass 25, `docs/review-log.md`.
+
+### DEEP-005 — `[DESIGN-GAP]` — major — owner: dev (portal + SQL), tech-lead (FR30 fail-safe posture) —
+original finding text
+
+**The FR30 tunables editor validates nothing but emptiness, and the two keys whose casts can never fail
+turn a single operator typo into a silent, system-wide behaviour change.**
+
+Location: `admin-portal/lib/validation.ts:47-58`; `admin-portal/app/(app)/tunables/page.tsx:66-81`;
+`sql/admin_portal_tunables.sql:11-23`; `scripts/config.py:101-144`, `:232-236`, `:204-205`.
+
+Evidence:
+- `validateTunableValue` rejects only a blank string, and `public.tunables.value` is `text not null` with
+  a CHECK on **`key` only** — no per-key type or domain constraint. So any string for any key is accepted
+  by the portal and the database, and the save reports success.
+- Three distinct outcomes, only one of which is the designed fail-loud:
+  - **Numeric keys** (`DISCOVERY_*`): `_tunable(..., float/int)` raises `SystemExit` at *import* time
+    (`config.py:119-124`), which kills **every** entry point — `run_hourly`, `run_discovery`, *and*
+    `publish_prices`. One typo in a web form takes the whole system down, and the operator's only signal
+    is a "watchlist stalled" push 70+ minutes later that says nothing about a tunable. Fail-loud is the
+    design intent (`tunables-fallback.md`), but the portal being unable to prevent it is not.
+  - **`ALERTS_ENABLED`**: cast is `lambda v: str(v).lower() == "true"` (`config.py:234`) — it **cannot
+    fail**. `"yes"`, `"1"`, `"True "`, `"tru"` all resolve to `False`, which silently switches the entire
+    system to `DryRunNotifier` (`notify.py:105-108`). No error, no `TUNABLES_DEGRADED`, no monitor signal,
+    heartbeat `ok` — and (per DEEP-002) `call_log` keeps recording `alerted=true`. For a system whose sole
+    output channel is push, this is total, invisible output loss from a one-character mistake.
+  - **`GEMINI_MODEL` / `_BACKUP`**: cast is `str` — also cannot fail. A misspelled model name makes every
+    Gemini call a FATAL `ProviderError`, i.e. DEEP-001's blind spot, reached from the portal.
+- Compounding presentation gap: the effective value of `ALERTS_ENABLED` is
+  `_alerts_input AND ALERTS_ENABLED_TABLE` (`config.py:235`), but the editor renders only the table value,
+  under a description that calls it "Master switch for real pushes". Nothing in the portal, the dashboard,
+  or `call_log` reports whether pushes are *actually* live right now.
+
+Suggested fix: mirror `config.py`'s ten casts as per-key validators in `validation.ts` (the key set is
+fixed by the DB CHECK, so this is ten lines, not a framework); render `ALERTS_ENABLED` as a
+`true`/`false` select rather than a free-text input; and add a per-key `CHECK` or a validating
+`BEFORE UPDATE` trigger on `public.tunables` so a direct SQL edit is caught too. Consider surfacing the
+AND-gated effective value on the portal.
+
+**Closing disposition (Pass 26, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+against current code/SQL/tests, not accepted on dev's/qa's account.** All three named failure modes were
+traced independently against the shipped `sql/tunables_validate_trigger.sql` and `admin-portal/lib/
+validation.ts`, not accepted on "validation was added": numeric-key write-time rejection now happens
+before any row is ever written (closing the `SystemExit` outage path through the portal/direct-SQL write
+path); `ALERTS_ENABLED` is now both a `<select>` (structurally removing free text) and DB-rejected outside
+`{true,false}`, with the exact repro strings (`"tru"`, `"yes"`, etc.) permanently regression-tested;
+`GEMINI_MODEL` non-blank is enforced both layers, and the one sub-case write-time validation structurally
+cannot close (a misspelled-but-valid model name) is independently confirmed to already be covered by
+DEEP-001/INC-8's shipped heartbeat-degraded fix (reviewer-cleared Pass 24), not a gap in this round. The
+trigger's ten per-key rules were read side by side against `scripts/config.py`'s `_TUNABLE_CASTS` and found
+to genuinely mirror it (one deliberate, safe-direction strictness in the float/int regexes — a subset of
+Python's `float()`/`int()` grammar, matching the design's own specified subset — not a divergence that
+recreates the gap). Both new SQL files were independently checked as safe production artifacts: additive
+only (no `create table`/`create policy`/`drop *` of any existing object), syntactically valid (the
+PL/pgSQL CASE statement's comma-separated `WHEN` list is valid grammar, distinct from this project's one
+prior live-only SQL defect), and not yet applied live. The PG14+ dependency (`create or replace trigger`)
+is an explicit, correctly-handled INC-11 prerequisite, not a merge blocker, since neither file has been
+applied live and the failure mode on an unsupported version is a hard, immediately visible syntax error,
+not silent corruption. One new, adjacent finding surfaced independently from this verification: REV-112
+(`sql/admin_portal_tunables.sql`'s corrective `UPDATE` is packaged inside a non-re-runnable migration file,
+risking the correction never landing live — a packaging issue, not a content issue; owner tech-lead +
+release). Full evidence trail: Pass 26, `docs/review-log.md`.
+
+### DEEP-006 — `[DESIGN-GAP]` — major — owner: dev (portal + SQL), tech-lead (§7.3 assumption) — original
+finding text
+
+**Holdings currency is free-choice, defaults to `USD`, and is never reconciled against the ticker's
+market — so a TSX or NSE position entered at its natural default silently produces a wrong unrealized P&L
+that is fed to the AI as fact (FR11) and rendered on the detail page.**
+
+Location: `admin-portal/app/(app)/holdings/page.tsx:18` (`currency: CURRENCIES[0]` ⇒ `"USD"`) and
+`:233-236`; `admin-portal/lib/validation.ts:60-75`; `sql/schema.sql:65-68`;
+`scripts/state.py:143-154` (`build_position`); `scripts/ai_judge.py:92-97`;
+`docs/design/non-functional-ops.md` §7.3.
+
+Evidence:
+- `validateHoldingsRow` checks only that `currency ∈ {USD, CAD, INR}`; the DB CHECK is the same set. The
+  `holdings.ticker` FK to `watchlist(ticker)` exists, so the ticker's `market` is *known* at write time —
+  and neither layer uses it. The add-form's default is `USD` for every market.
+- `build_position` computes `pl_pct = price / cost_basis - 1` with **no** currency reconciliation, while
+  `data.price` is always in the ticker's native currency (design §7.3: "native per market — no FX
+  conversion"). The design's no-FX rule is an *assumption about the input data* that nothing enforces.
+- The failure is plausible-looking, not absurd: a `.TO` holding whose cost basis was entered in USD 50
+  against a native CAD price of 68 yields `pl_pct = +36%` where the true figure is ~0%. That number goes
+  straight into the prompt as `"Cost basis: 50 USD, Current price: 68, Unrealized P/L: 36%"`
+  (`ai_judge.py:92-97`) — and FR11 plus the in-prompt cost-basis/disposition-effect guard mean the model
+  is explicitly instructed to *weigh* it. The detail page renders the same wrong P&L.
+- Real money, single user, manual entry, no second source to cross-check against: this is precisely the
+  "quietly wrong answer that looks right" class the brief asked me to weight.
+- Note the live watchlist currently has 0 held tickers (`components.md` §4.7 calls the position block
+  "dormant"), so this is latent rather than active — which is also why no test or QA pass has touched it.
+
+Suggested fix: derive the currency from `watchlist.market` instead of asking (US⇒USD, TSX⇒CAD, NSE⇒INR),
+or keep the field but validate it against the joined market in `validation.ts` **and** as a DB CHECK/
+trigger. A defensive `build_position` guard that returns `pl_pct = None` on a currency mismatch with
+`data["fundamentals"]["currency"]` would stop a bad row from reaching the prompt at all.
+
+**Closing disposition (Pass 26, 2026-07-30, `docs/review-log.md`) — RESOLVED, independently re-verified
+against current code/SQL/tests, not accepted on dev's/qa's account.** `sql/holdings_currency_derivation.sql`'s
+`BEFORE INSERT OR UPDATE` trigger derives `new.currency` unconditionally from `watchlist.market` and
+overwrites whatever was submitted, on every write path — traced the function body directly (no branch
+preserves a client-submitted value) rather than accepting dev's/qa's scratch-Postgres "still shows CAD
+after a direct SQL UPDATE" claim on its word alone, though that claim is also structurally inevitable given
+the code. The portal no longer offers a `currency` field at all (`holdings/page.tsx`, read-only derived
+label only), and `MARKET_CURRENCY` (`validation.ts`) matches the trigger's own mapping exactly. The
+`build_position` defense-in-depth guard was independently traced and confirmed unable to suppress a
+legitimate calculation: it fires only when both currencies are present and unequal; a missing fundamentals
+currency or a genuine match both fall through to normal computation, confirmed by the branch condition
+directly and by three new permanent tests including the explicit "missing is unknown, not mismatch" case.
+One new, adjacent finding surfaced independently from this verification, beyond what the original finding
+or its suggested fix anticipated: REV-113 — the design's own suggested-fix language ("stop a bad row from
+reaching the prompt at all") is not fully realized in the shipped code: `ai_judge._ticker_block` still
+renders the raw, unlabeled, mismatched cost-basis/price figures next to each other even when `pl_pct` is
+suppressed, and nothing in the batch system prompt guards against the model computing its own ratio from
+them — the same risk class reachable via a different mechanism (model inference vs. system arithmetic),
+non-blocking but real, on the exact narrower residual case the design itself carved out for this guard to
+cover. Owner: tech-lead. Full evidence trail: Pass 26, `docs/review-log.md`.

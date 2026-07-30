@@ -1833,6 +1833,394 @@ round's specific diff rather than merely assumed unchanged.
 
 ---
 
+## Pass 26 — 2026-07-30 (INC-10 diff-scoped audit — tunables write-time validation + holdings-currency
+derivation; FR30/FR11/FR29; DEEP-005+DEEP-006 closure)
+
+**Scope.** Diff-scoped to `git diff --name-only f2fdb1e..HEAD` (Pass 25 cleared INC-9 at `f2fdb1e`),
+across five commits: `7e29f30` (INC-10 code + handoff), `669a216` (qa run + BUG-008), `a500b37`
+(intermediate BUG-008 approach, superseded), `19013e2` (dev's final BUG-008 fix), `e7aca9f` (qa PASS +
+idempotency guard test). **Method caveat (standing, unchanged since Pass 2): no shell/execute tool this
+session — Read/Grep only, so `git diff --name-only` itself could not be re-run.** Scope was instead derived
+from `docs/handoff.md`'s "Files changed" list and AC8's `git diff --name-only` claim, cross-checked by
+reading every file named there directly (not accepted on the claim alone) plus every file the design docs
+name as this round's targets: `sql/tunables_validate_trigger.sql`, `sql/holdings_currency_derivation.sql`
+(both new), `sql/admin_portal_tunables.sql` (edited), `admin-portal/lib/validation.ts`,
+`admin-portal/app/(app)/tunables/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, `scripts/state.py`,
+`tests/admin_portal/validation.test.ts`, `tests/admin_portal/tunables_static.test.ts`,
+`tests/admin_portal/static_source_checks.test.ts`, `tests/test_state.py`, `docs/handoff.md`,
+`docs/test-report.md`. Also read for the contract: `docs/design/admin-portal.md` §16.2–§16.4,
+`docs/design/admin-portal-tunables.md` §16.4, `docs/design/non-functional-ops.md` §7.3/§7.5/§8,
+`docs/requirements.md` FR11/FR29/FR30 + Decisions #34/#35, `docs/design.md` §0/§15 (module index and
+coverage map), `docs/design/increment-plan.md`'s `### INC-10` section, `docs/runbook.md` §2.3/§5 (SQL
+apply order and corrective-migration convention), `scripts/config.py`'s `_TUNABLE_CASTS`/`_tunable()`,
+`scripts/ai_judge.py:75-118` (`_ticker_block`, the prompt-rendering consumer of `build_position`'s output),
+`prompts/batch_system_prompt.txt`. Confirmed independently, not accepted on the handoff's word, that no
+`drop trigger` survives anywhere in `sql/` — `a500b37`'s abandoned intermediate approach left no trace in
+the final tree.
+
+### 1. Traceability, requirements → code
+
+| Link | Location | Status |
+|---|---|---|
+| Requirement | `requirements.md` FR30 (`:247-271`, sharpened text + Decision #34 `:385`), FR11 (`:112-117`, sharpened + Decision #35 `:386`), FR29 (`:242-246`, sharpened + Decision #35) | present, self-verifiable text |
+| Design | `admin-portal-tunables.md` §16.4 "FIX ROUND (DEEP-005, INC-10)" (exact SQL/TS blocks given verbatim); `admin-portal.md` §16.3 "FIX ROUND (DEEP-006, INC-10)" (exact SQL block given verbatim); `non-functional-ops.md` §7.3 (currency enforcement, two-layer statement) | present, code matches verbatim (Checks 3–4 below) |
+| Implementation | `sql/tunables_validate_trigger.sql`, `sql/holdings_currency_derivation.sql` (new), `admin-portal/lib/validation.ts`, `admin-portal/app/(app)/tunables/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, `scripts/state.py:build_position` | present, independently re-derived, not accepted on account |
+| Tests | `tests/admin_portal/validation.test.ts` (per-key rule coverage, 10 keys), `tests/admin_portal/tunables_static.test.ts` (static SQL/page-source shape + BUG-008 regression guard), `tests/admin_portal/static_source_checks.test.ts` (holdings-trigger static shape + BUG-008 guard), `tests/test_state.py:325-370` (currency-mismatch guard, 3 new tests) | present for everything static/Python-side; DB triggers' *live behaviour* (actual rejection, actual override) is verified only by dev's and qa's own ephemeral local-Postgres sessions, not by a permanent, CI-re-run test — see REV-114 below |
+
+**No `[REQUIREMENTS-GAP]`/`[DESIGN-GAP]`/`[CODE-GAP]` on the core chain.** Every one of DEEP-005's three
+named failure modes was checked independently against the shipped trigger, not accepted on "validation was
+added":
+- **Numeric keys' `SystemExit`.** `sql/tunables_validate_trigger.sql:44-56` rejects any
+  `DISCOVERY_{GAINER,LOSER}_PCT`/`VOL_SPIKE`/`MIN_MARKET_CAP{,_INR}` value failing
+  `^-?[0-9]+(\.[0-9]+)?$` and any `DISCOVERY_SHORTLIST_MAX`/`DISCOVERY_PUSH_COOLDOWN_DAYS` value failing
+  `^-?[0-9]+$`, **before** the row is ever written — so the write path that used to let a bad value reach
+  `config.py`'s `_tunable()` and crash all three entry points via `SystemExit` at import time can no longer
+  happen through the portal or a direct SQL edit. `validation.ts:75-90`'s client-side mirror blocks the
+  same class earlier, with a better error.
+- **`ALERTS_ENABLED`'s cast that cannot fail.** `sql/tunables_validate_trigger.sql:57-64` rejects anything
+  outside `{true, false}` (case-insensitive) at the DB layer; `tunables/page.tsx:120-129` renders the field
+  as a `<select>` with exactly those two options, structurally removing the free-text path that produced
+  DEEP-005's exact repro (`"tru"` → silently `False`). `validateTunableValue`'s test suite
+  (`validation.test.ts:147-156`) asserts DEEP-005's own repro strings (`"yes"`, `"tru"`, `"True "`, `"1"`,
+  `"0"`, `""`) are all rejected — not just the happy path.
+- **`GEMINI_MODEL`'s `str` cast that accepts anything.** Non-blank is now enforced portal- and DB-side
+  (`validation.ts:99-103`, `tunables_validate_trigger.sql:65-70`) — closing the "blank primary model" case.
+  A **misspelled-but-non-blank** model name (the finding's literal example) is structurally uncatchable by
+  write-time validation, since no config-file check can validate an arbitrary string against Gemini's live
+  model catalog without a network call — and the finding's own text names this as reaching "DEEP-001's
+  blind spot," not as something DEEP-005's fix was meant to close. Independently confirmed that
+  DEEP-001/INC-8's fix (reviewer-cleared Pass 24) already makes an all-failed run heartbeat-visible rather
+  than silently `"ok"`, so a bad-but-valid-looking model name now surfaces as degraded rather than
+  vanishing — the correct, already-shipped mitigation for this specific sub-case, not a gap in this round.
+- **Trigger genuinely mirrors `config.py`'s `_TUNABLE_CASTS`.** Read both side by side
+  (`scripts/config.py:204-367` vs. `sql/tunables_validate_trigger.sql:43-80`): the same 10 keys, the same
+  float/int/bool/str-non-blank/str-blank-allowed classification, key for key. No divergence that would
+  recreate the gap. One asymmetry, deliberately in the safe direction: the SQL/TS float regex
+  (`^-?[0-9]+(\.[0-9]+)?$`) is a stricter subset of what Python's `float()` accepts (no scientific notation,
+  no leading `+`, no bare trailing `.`) — this can only cause a false *rejection* of a value Python would
+  accept, never a false *acceptance* of a value Python would reject, and the design's own text
+  (`admin-portal-tunables.md:143-145`) specifies exactly this practical subset, not full IEEE-float syntax.
+  Not a finding.
+
+DEEP-006 traced with the same independence: `sql/holdings_currency_derivation.sql:30-54`'s `BEFORE INSERT
+OR UPDATE` trigger derives `new.currency` unconditionally from `watchlist.market` (US⇒USD/TSX⇒CAD/NSE⇒INR)
+and **overwrites whatever was submitted** — confirmed this is not merely "the portal no longer offers the
+field" (`holdings/page.tsx:210-237`, currency input fully removed, replaced with a read-only derived
+label) but a server-side override that holds against a path the UI never controls: dev's and qa's own
+scratch-Postgres AC6 both independently attempted `UPDATE holdings SET currency='USD'` on a TSX row via
+raw SQL — bypassing the portal entirely — and both recorded the row still showing `CAD` after the write. I
+did not re-run that query myself (no live/local DB tool bound to this session), but the trigger body itself
+makes the result structurally inevitable: `new.currency := case v_market when ...` runs unconditionally on
+every `INSERT`/`UPDATE`, with no branch that ever preserves a client-submitted value — there is no code path
+by which a submitted `currency` survives the trigger. `MARKET_CURRENCY` (`validation.ts:27-31`) and the
+trigger's `case` mapping are read side by side and are identical (`US→USD`, `TSX→CAD`, `NSE→INR`).
+
+### 2. Traceability, code → requirements — clean, no `[SCOPE-CREEP]`
+
+Every changed line maps to an explicit design instruction. `validateTunableValue`'s key-aware signature and
+`HoldingsInput`/`validateHoldingsRow` dropping `currency` are both design-mandated (`admin-portal-tunables.md`
+§16.4, `admin-portal.md` §16.3) — dev flagged the resulting two-file test-adaptation explicitly rather than
+silently applying it (see §4 below). `sql/admin_portal_tunables.sql`'s seed-description correction is
+named in `increment-plan.md:417` ("one seed-data correction (`ALERTS_ENABLED`'s `description` row)") — in
+scope, not an undisclosed edit. No public function signature changed beyond what the design specifies
+(`build_position`'s return shape — `shares`/`cost_basis`/`currency`/`pl_pct` — is byte-identical to
+pre-INC-10, confirmed by reading both pre-existing tests still passing unmodified).
+
+### 3. Hardcoding audit — clean
+
+No new tunable-shaped literal. The ten validation rules in both `validation.ts` and
+`tunables_validate_trigger.sql` are a fixed, closed set (the DB's own `key` CHECK bounds the registry to
+exactly ten), not a config surface — matching the pattern the design explicitly frames as "ten lines, not a
+framework." `sql/admin_portal_tunables.sql`'s seed values are unchanged data, not new hardcoding.
+
+### 4. Leanness audit — clean, with two things worth naming as calibration, not findings
+
+No dead code, no commented-out code, no unused import in any of the seven production files. Dev's
+`tests/`-file deviation (two pre-existing test files edited to keep the suite green after a design-mandated
+signature change) was flagged explicitly in the handoff per `CLAUDE.md`'s "never silently deviate" rule and
+independently confirmed proportionate: three `validateTunableValue(...)` call sites gained the minimal
+`GEMINI_MODEL` argument (matching the tests' original non-blank intent unchanged), and the one deleted
+currency test ("every declared currency is accepted") was **replaced**, not merely removed, by a new test
+locking down `MARKET_CURRENCY`'s shape against `sql/holdings_currency_derivation.sql`'s mapping
+(`validation.test.ts:102-112`) — net coverage position is sound, not merely green (confirmed by reading the
+replacement test's assertions, not accepted on the handoff's framing of "restores the coverage"). Second: qa
+added a genuine BUG-008 regression test to each affected static-check file, verified (per `test-report.md`
+§3) to actually fail against a reverted bare `create trigger` before being restored — a property test, not
+a syntax-string test.
+
+### 5. Security audit — clean, no `[SECURITY]`
+
+Both new SQL objects are `security definer set search_path = ''`, matching the codebase's established
+hardening convention for every prior admin-portal function (`_stamp_tunable_update`, `is_admin`). Neither
+new file touches an RLS policy, a grant, or the `tunables`/`holdings` table definition — confirmed by
+`grep`-equivalent read: no `create table`, `create policy`, `drop table`, `drop policy`, or `drop trigger`
+in either new file (also independently locked in by qa's own permanent test,
+`tunables_static.test.ts:179-189`). `admin_portal_tunables.sql`'s edit is a `description`-column data
+change plus a comment; the RLS policies, the CHECK constraint, and the stamp trigger are byte-for-byte
+unchanged from the already-reviewer-cleared INC-6 shape. No committed secret; no new trust boundary.
+
+### 6. Structure audit — clean at the level `code-map.md`/`design.md` describe
+
+No dependency-direction violation, no import bypassing a public interface, no new circular import. Function
+sizes are in line with the rest of the codebase. `MARKET_CURRENCY` in `validation.ts` and the trigger's own
+`case` mapping are two independent copies of the same US/TSX/NSE→USD/CAD/INR fact — the handoff names this
+itself (a display-only constant vs. the DB's enforcement mapping) and the design explicitly accepts the
+duplication ("this constant is display-only... a mismatch can only ever produce a wrong label, never a
+wrong write"). Not logged as `[STRUCTURE]` duplication: the two copies serve genuinely different purposes
+(one is UI-only, the other is the sole enforcement mechanism) and a permanent test (`validation.test.ts:
+102-112`) locks them to the same values today.
+
+---
+
+### Independent judgment — the six questions this pass was asked to weigh
+
+**1. Do the two new SQL files do what §16.3/§16.4 specify, and are they safe to apply to a live project?**
+Yes, on both counts, read as a reviewer of production SQL rather than accepted on dev's/qa's verification
+claims:
+- Both files are **strictly additive** — neither redefines `tunables`, `holdings`, the stamp trigger, or
+  either RLS policy (confirmed directly, not just via qa's regex test — see §5/§6 above). Both declare their
+  dependency on already-live objects in a header comment and state plainly they have **not** been applied
+  live this round.
+- Both trigger functions are syntactically sound Postgres, checked independently rather than assumed: the
+  `_validate_tunable_update()` body uses a PL/pgSQL **CASE statement** (not a CASE *expression*), whose
+  `WHEN expression [, expression [, ...]] THEN` form genuinely does accept a comma-separated value list per
+  the PL/pgSQL control-structure grammar — the five- and two-key `WHEN` lists (`:44-56`) are valid, not a
+  repeat of this project's one prior live-only defect (`CREATE POLICY ... FOR select, update`, Pass-19
+  addendum — a *different* SQL construct, where Postgres genuinely does not accept a command list). This
+  project's history of static-review-passed-but-live-invalid SQL was weighted explicitly here: dev's and
+  qa's own independent local-Postgres 16 sessions each exercised every one of the ten keys' accept/reject
+  paths, twice (once per BUG-008 fix cycle), which is stronger evidence than syntax review alone and is the
+  same standard this log has applied to prior SQL passes.
+- `holdings_currency_derivation.sql`'s `if v_market is null then raise exception` branch is presently
+  unreachable given the live `holdings.ticker → watchlist(ticker)` FK (a row can't exist without a matching
+  ticker) — correctly defensive rather than dead, since it also guards a future schema change that loosens
+  the FK.
+- **One genuine production-SQL judgment finding, independent of what was asked directly: `sql/
+  admin_portal_tunables.sql`'s edit mixes a one-time migration with a live data correction in a way that
+  risks the correction never actually landing — logged fresh below as REV-112.**
+
+**2. The PG14+ dependency.** Position: **an acceptable, correctly-handled residual risk, not a blocker
+against merging INC-10** — but it is a blocker against *applying* either new file, and that distinction is
+handled exactly right by qa's write-up (`test-report.md` §4), which this pass independently re-derives
+rather than accepts: `create or replace trigger` requires Postgres 14+; nobody has queried the live
+project's version; the two files are demonstrably safe to merge because **neither has been applied live**
+(confirmed: no live-application claim anywhere in `handoff.md` or `test-report.md` for this round, unlike
+the admin-portal foundation/tunables files, which carry dated live-evidence blocks). If the live project
+turned out to predate PG14, the failure mode is a **hard, immediately-visible `CREATE TRIGGER` syntax
+error on first apply** — not a silent bad state, not data corruption, not a partial application (Postgres
+DDL is transactional). Given this project's one prior live-only incident was exactly this class of thing
+(a syntax construct nobody checked against the live server), it is correct that qa did not wave this away —
+it is named as an explicit, quotable INC-11 prerequisite (`test-report.md:103-109`) with a concrete
+fallback (`drop trigger if exists` + `create trigger`) already specified for release to use if the version
+check fails. This is the right amount of caution for a residual that is cheap to verify (`select version();`)
+and cannot corrupt anything if forgotten — it just fails loudly. Not escalating beyond qa's framing.
+
+**3. Does the validation trigger close DEEP-005's whole surface?** Yes, as scoped — see §1 above for the
+three failure modes traced independently, including the one (misspelled-but-valid `GEMINI_MODEL`) that was
+never closable by write-time validation and is correctly left to DEEP-001's already-shipped heartbeat fix.
+
+**4. Does the currency derivation close DEEP-006, including paths the UI doesn't control, and can
+`build_position`'s guard suppress a legitimate calculation?** The DB-level derivation closes the literal
+finding for every write path, UI-controlled or not — traced in §1 above. The mismatch guard cannot suppress
+a legitimate calculation: it fires only when both `holding["currency"]` and
+`data["fundamentals"]["currency"]` are present **and** unequal (`state.py:182`); a missing fundamentals
+currency (both pre-existing `build_position` tests' exact shape) or a genuine match both fall through to
+the normal `pl_pct` computation, confirmed by reading the branch directly and by the three new
+`test_state.py` tests including the explicit "missing fundamentals is unknown, not mismatch" case
+(`:357-370`). **But my own independent read of this guard's actual effect surfaced a real, adjacent gap the
+task's specific question didn't ask about — logged fresh below as REV-113**: suppressing the *computed*
+`pl_pct` does not prevent the *raw* `cost_basis`/`price` figures from still reaching the prompt side by
+side in `ai_judge._ticker_block` (`ai_judge.py:101-106`), with `price` carrying no currency label at all in
+that line and nothing in `prompts/batch_system_prompt.txt` instructing the model not to compute its own
+ratio from two adjacent numbers. This is the same "wrong answer that looks right" mechanism DEEP-006 named,
+reachable now via model inference rather than system arithmetic, on the exact same already-accepted
+"narrower residual" case (`watchlist.market` itself wrong for the ticker) the design explicitly carved out
+of DEEP-006's scope for `build_position`'s guard to cover. Not a blocker — it requires its own design
+decision, same as DEEP-005/006 did.
+
+**5. dev editing qa-owned test files — is net coverage sound?** Yes, confirmed in §4 above: the adaptation
+was minimal and mechanical where the design didn't add new behavior, and where a test's underlying fact
+moved (currency's client-side validation moving to a DB-only mechanism), a new, more targeted test was
+added rather than the coverage simply disappearing.
+
+**6. Scope discipline / `sql/admin_portal_tunables.sql`'s edit.** The edit itself (seed-description
+correction in the INSERT text, plus an idempotent `UPDATE` to sync the already-live row) is in scope — named
+explicitly in `increment-plan.md:417` — and does not redefine any existing live object. **But *how* it was
+packaged is the wrong call, independent of whether the content itself was correct — see REV-112.**
+
+---
+
+### NEW FINDINGS — Pass 26
+
+**REV-111 — `[DESIGN-GAP]` — minor — owner: tech-lead.** INC-10's status markers are stale the moment this
+pass's verdict lands — the same propagation pattern this log has flagged repeatedly before a merge event
+(REV-073, REV-079, REV-084, REV-090, REV-093/094, REV-108, REV-110), now a fourth time in the same handful
+of files. Location: `docs/design.md:45,49` ("INC-9, INC-10, and INC-11 are approved ... not yet built"),
+`:81` (`non-functional-ops.md` index row, "STALE fix-round additions ... INC-9/INC-10, pending dev"), `:84`
+(`admin-portal.md` index row, "§16.3 has a STALE fix-round addition, INC-10, pending dev"), `:85`
+(`admin-portal-tunables.md` index row, same phrasing), `:211` (FR2/FR11 coverage row, "STALE pending
+merge"), `:232` (FR29 coverage row, same), `:233` (FR30 coverage row, same);
+`docs/design/admin-portal.md:19-21` ("2026-07-30 addendum (STALE, pending dev)"),
+`docs/design/admin-portal-tunables.md:20-22` (same); `docs/design/increment-plan.md:1,38,341` (title/status
+note, "INC-9–INC-11 approved-and-not-yet-built"), `:408` (`### INC-10` heading, "APPROVED, not yet built").
+Not a defect — tech-lead could not have written "Pass 26 CLEAR" before this pass ran — but every location
+above now needs one follow-up edit flipping INC-10 to IMPLEMENTED/reviewer-CLEAR Pass 26, citing REV-112/
+REV-113/REV-114 as the non-blocking residuals. Worth folding into the same batched edit as REV-108's
+still-open INC-8 markers and REV-110's INC-9 markers, since all three live in the same handful of files at
+the same handful of locations. Not a merge blocker.
+
+**REV-112 — `[DESIGN-GAP]`/production-SQL-practice — minor — owner: tech-lead (design convention),
+release (apply-time instruction).** `sql/admin_portal_tunables.sql`'s new corrective `UPDATE` (`:97-99`)
+is bundled into a migration file whose earlier statements (`create table`, `create policy`, the seed
+`insert`) are **not** re-runnable against the live project — `create table public.tunables` alone errors
+`relation "tunables" already exists` on any second apply. `docs/runbook.md` §2.3 documents this exact file
+as a one-time, apply-once-in-order migration ("Deployed as part of INC-6"), and §5's own stated convention
+for a post-hoc data correction is "write a corrective SQL script and apply it manually" — i.e. a
+**separate** script, which is the pattern the two brand-new files in this same round (`tunables_validate_
+trigger.sql`, `holdings_currency_derivation.sql`) correctly follow. As packaged, a release engineer who
+follows §2.3's normal apply instruction (or a tool like `supabase db push`, which tracks already-applied
+migrations by filename and would skip this file entirely on a re-run) has no clear path to actually landing
+the description correction against the live row — they must know, from `handoff.md` alone, to extract and
+run only lines 97-99 by hand. The content of the `UPDATE` itself is correct and genuinely idempotent in
+isolation (confirmed: scoped to one column, one `WHERE key = 'ALERTS_ENABLED'`, safe to run any number of
+times) — this finding is about the packaging, not the SQL. Not a blocker: worst case is the correction
+silently fails to apply and the seed row's description stays stale (a cosmetic/documentation gap, not a
+functional or security one) rather than any corruption. Suggested fix: either a new, separate
+`sql/admin_portal_tunables_alerts_enabled_description_fix.sql` (one `UPDATE` statement, matching the two
+new trigger files' own additive-file convention), or, at minimum, an explicit INC-11-prerequisite note
+(parallel to qa's PG14+ note) telling release to apply only the trailing `UPDATE`, not the whole file.
+
+**REV-113 — `[DESIGN-GAP]` — major, non-blocking — owner: tech-lead (prompt/`_ticker_block` design).** See
+"Independent judgment" question 4 above for the full derivation. `scripts/ai_judge.py:101-106`'s
+`_ticker_block` still renders `Cost basis: {position['cost_basis']} {position['currency']}, Current price:
+{data['price']}` verbatim even when `build_position` has suppressed `pl_pct` to `None` for a currency
+mismatch — `current price` carries no currency label in that line at all, and nothing in
+`prompts/batch_system_prompt.txt` tells the model not to compute its own gain/loss estimate from two
+adjacent, unlabeled, differently-denominated numbers. DEEP-006's own suggested-fix text said a
+`build_position` guard "would stop a bad row from reaching the prompt at all" — the shipped fix stops the
+*derived figure*, not the *underlying row*, from reaching the prompt. This reproduces DEEP-006's exact
+"quietly wrong answer that looks right" risk class via model inference instead of system arithmetic, on
+the system's sole real-money advice surface. Rated major (matching DEEP-005/006's own severity for the same
+risk class) but explicitly non-blocking for INC-10, for the same reason DEEP-006 itself was accepted as
+latent: this is the already-narrowed residual case (`watchlist.market` wrong for the ticker) layered under
+a case the live watchlist doesn't currently exercise (zero held positions), and it needs its own design
+decision (e.g., omit `Cost basis`/`Current price` entirely from the block on a detected mismatch, or label
+`Current price` with its own currency and add an explicit "these two figures are not comparable" note),
+which is out of dev's scope to invent unilaterally. Suggested owner sequencing: same shape as DEEP-005/006
+— tech-lead records the design decision, dev implements, qa tests.
+
+**REV-114 — `[TEST-GAP]` — minor — owner: qa.** Neither new SQL trigger's actual runtime behaviour
+(rejecting a bad write, overriding a submitted currency) is exercised by a permanent, CI-re-run test — only
+by dev's and qa's own ephemeral local-Postgres sessions (real, and independently corroborated across two
+fix cycles, but not repeatable automatically). The **static** shape of both files (idempotent creation
+syntax, no redefinition of existing objects, presence of a validation branch per key) **is** permanently
+tested (`tunables_static.test.ts`, `static_source_checks.test.ts`) — this finding is specifically about the
+*behavioral* half (AC2/AC3/AC5/AC6 in `increment-plan.md`'s INC-10 section), which currently has no
+automated regression guard at all. This is a systemic, pre-existing limitation across every SQL file in
+this repo (no SQL executes in CI anywhere in this project), not something INC-10 introduced — flagging the
+fresh instance because two of INC-10's own acceptance criteria rest entirely on manual verification, and
+because this project has one prior incident of SQL that passed every static check available and was still
+wrong live. Not a blocker; suggest either a lightweight scratch-Postgres harness wired into CI, or an
+explicit, named acceptance of this as a standing limitation (mirroring how REV-070/INC-4 AC6 are tracked as
+named live-verification deferrals rather than silently assumed covered).
+
+---
+
+### Open items after Pass 26
+
+**Blockers: 0.**
+
+**DEEP-005 and DEEP-006 — RESOLVED as of this pass (2026-07-30), independently verified against current
+code/SQL/design/test content, not accepted on dev's/qa's account** — see the six questions above for the
+full evidence trail. Both moved to `docs/archive/review-log-archive.md` with this pass's closing
+disposition, matching the DEEP-001–004 precedent. **DEEP-007 remains open, unchanged, deliberately excluded
+from this fix round** (`design.md:53-56`) — no file in its scope was touched this pass.
+
+**New minors this pass — 3 IDs:** REV-111 (tech-lead — INC-10 status markers, fold with REV-108/REV-110),
+REV-112 (tech-lead + release — `admin_portal_tunables.sql`'s corrective-`UPDATE` packaging), REV-114 (qa —
+no permanent test of either new trigger's live behaviour).
+
+**New major this pass — 1 ID, non-blocking:** REV-113 (tech-lead — `_ticker_block` still shows raw
+mismatched currency figures to the model even when `pl_pct` is suppressed).
+
+**Resolved this pass: 2** (DEEP-005, DEEP-006).
+
+**Carried, unchanged from Pass 25 (none of these files intersect INC-10's diff) — 15 IDs:** REV-063
+residual + REV-071 (dev), REV-065 (tech-lead — confirmed its location, `non-functional-ops.md`'s
+"used throughout `hourly-watchlist.yml`" paragraph, untouched by INC-10's §7.3/§7.5/§8 edits), REV-066 +
+REV-052 (tech-lead + pm — confirmed `NTFY_BASE_URL`/`NTFY_TIMEOUT_SECONDS` still absent from
+`requirements.md` §10, untouched by INC-10's Decision #34/#35 additions), REV-067 (tech-lead), REV-072
+(tech-lead), REV-048 (qa), REV-049(b) (release), REV-080 (qa), REV-079 (tech-lead), REV-097 (dev or pm),
+REV-100 (dev), REV-101 (tech-lead/dev), REV-102 (tech-lead), REV-103/104/105 (release), REV-106 (dev),
+REV-107 (qa, carried to closure), REV-108 (tech-lead, fold with REV-110/REV-111), REV-109 (qa), REV-110
+(tech-lead, fold with REV-108/REV-111), plus REV-070's AC3 residual (qa+release) and INC-4's AC6 (release
+then qa) — both unchanged live-verification deferrals per Decision #36.
+
+**Routing (new items only):**
+- **tech-lead** — REV-111 (status markers, fold with REV-108/110), REV-112 (design half — corrective-SQL
+  packaging convention), REV-113 (prompt/`_ticker_block` design decision for the residual mismatch case).
+- **release** — REV-112 (apply-time half — explicit instruction for the trailing `UPDATE`), fold into the
+  same INC-11 prerequisite note as qa's PG14+ flag.
+- **qa** — REV-114 (permanent test, or named acceptance, of the two triggers' live behaviour).
+
+None of the above halts the pipeline. **INC-11 may proceed** per `CLAUDE.md`'s "no increment starts before
+the previous one passes QA" — INC-10 has now passed both qa and reviewer with zero blockers.
+
+---
+
+### Pass 26 summary
+
+**New findings by tag — 4: `[DESIGN-GAP]` 3 (REV-111 minor, REV-112 minor, REV-113 major-non-blocking),
+`[TEST-GAP]` 1 (REV-114 minor).** No new blockers. Pass 2 clean — no `[SCOPE-CREEP]`. Pass 3 clean — no
+`[HARDCODED]`. Pass 4 clean — no `[BLOAT]`. Pass 5 clean — no `[SECURITY]`. Pass 6 clean — no `[STRUCTURE]`
+violation; `code-map.md` not touched by this round and not re-audited beyond confirming no new
+module/dependency shape was introduced.
+
+**Resolved this pass: 2** — DEEP-005, DEEP-006 (both independently re-verified against current code, SQL,
+and tests, not accepted on dev's/qa's account — see the six questions above).
+
+**Open blocker count: 0. Open major count: 1, non-blocking** (REV-113, newly surfaced this pass).
+
+### Verdict — Pass 26 / INC-10
+
+**CLEAR.** DEEP-005 is genuinely closed: all three of its named failure modes were traced independently
+against the shipped trigger and portal code (not accepted on "validation was added"), the trigger's
+per-key rules were compared side by side against `config.py`'s `_TUNABLE_CASTS` and found to mirror it
+correctly (one deliberate, safe-direction strictness, not a gap), and the one sub-case write-time
+validation structurally cannot close (a misspelled-but-valid model name) is correctly and already covered
+by DEEP-001's shipped heartbeat fix. DEEP-006 is genuinely closed for its literal, stated finding: currency
+is now derived unconditionally at the DB layer for every write path, UI-controlled or not, and the
+`build_position` mismatch guard cannot suppress a legitimate calculation (traced the exact branch condition
+and the three new tests covering it). The two new SQL files are additive, syntactically sound (independently
+checked, not merely trusted, including the one construct — a PL/pgSQL CASE statement's comma-separated
+`WHEN` list — that looks unusual on first read but is valid grammar), and safe to leave unapplied pending
+INC-11's version check; the PG14+ residual is handled with the right amount of caution given this project's
+one prior live-only SQL defect. `sql/admin_portal_tunables.sql`'s edit is in-scope content, packaged in a
+way that risks the correction never actually landing live (REV-112) — a real but non-blocking finding.
+
+**What CLEAR does and does not mean here.** It means the seven-file production diff (plus the two flagged
+test-file adaptations) was independently read and traced against current file content for exactly what this
+task asked: DEEP-005's full failure-mode surface, DEEP-006's full write-path surface including paths the UI
+doesn't control, the mismatch guard's false-suppression risk, the two SQL files' production-readiness, the
+PG14+ dependency's handling, and the net effect of dev's test-file edits. It does **not** mean
+`docs/design.md`'s status markers have been flipped (REV-111, foldable with REV-108/110), that either new
+SQL file is safe to apply without first confirming the live project's Postgres version (qa's named INC-11
+prerequisite, independently endorsed here, not re-litigated), or that the underlying "wrong answer that
+looks right" risk class DEEP-006 named is fully closed at the AI-prompt layer — my own independent reading
+found it is not (REV-113), through a mechanism (model self-inference from adjacent raw figures) distinct
+from the one DEEP-006 originally named (the system's own computed figure) and therefore not something
+DEEP-006's fix could reasonably have been expected to close without being asked to. None of REV-111/112/
+113/114 halts the pipeline; REV-113 should be prioritized before `v0.1.0` given the "advice-handling
+system, real money, single user, no cross-check" posture this project has repeatedly weighted heavily
+elsewhere in this log.
+
+**Doc hygiene applied this pass.** DEEP-005/DEEP-006's full original text and this pass's closing
+disposition moved to `docs/archive/review-log-archive.md`, matching the DEEP-001–004 precedent. Pass 25 is
+not archived (its own findings, REV-109/REV-110, remain open and untouched by this round's diff). Pass 24
+likewise stays live (REV-107/REV-108 remain open).
+
+---
+
 ## Deep review — 2026-07-29 (`/big-guns`, on-demand, whole-system scope, judgment layer only)
 
 **Nature of this section.** Logged by `big-guns`, not `reviewer`. This is **not** a re-run of the 6-pass
@@ -1895,76 +2283,35 @@ doc hygiene — see `docs/review-log.md` Pass 25 above for the verification deta
 
 ---
 
-### DEEP-005 — `[DESIGN-GAP]` — **major** — owner: dev (portal + SQL), tech-lead (FR30 fail-safe posture)
+### DEEP-005 — `[DESIGN-GAP]` — major — owner: dev (portal + SQL), tech-lead (FR30 fail-safe posture) —
+RESOLVED 2026-07-30 (Pass 26, INC-10)
 
-**The FR30 tunables editor validates nothing but emptiness, and the two keys whose casts can never fail
-turn a single operator typo into a silent, system-wide behaviour change.**
-
-Location: `admin-portal/lib/validation.ts:47-58`; `admin-portal/app/(app)/tunables/page.tsx:66-81`;
-`sql/admin_portal_tunables.sql:11-23`; `scripts/config.py:101-144`, `:232-236`, `:204-205`.
-
-Evidence:
-- `validateTunableValue` rejects only a blank string, and `public.tunables.value` is `text not null` with
-  a CHECK on **`key` only** — no per-key type or domain constraint. So any string for any key is accepted
-  by the portal and the database, and the save reports success.
-- Three distinct outcomes, only one of which is the designed fail-loud:
-  - **Numeric keys** (`DISCOVERY_*`): `_tunable(..., float/int)` raises `SystemExit` at *import* time
-    (`config.py:119-124`), which kills **every** entry point — `run_hourly`, `run_discovery`, *and*
-    `publish_prices`. One typo in a web form takes the whole system down, and the operator's only signal
-    is a "watchlist stalled" push 70+ minutes later that says nothing about a tunable. Fail-loud is the
-    design intent (`tunables-fallback.md`), but the portal being unable to prevent it is not.
-  - **`ALERTS_ENABLED`**: cast is `lambda v: str(v).lower() == "true"` (`config.py:234`) — it **cannot
-    fail**. `"yes"`, `"1"`, `"True "`, `"tru"` all resolve to `False`, which silently switches the entire
-    system to `DryRunNotifier` (`notify.py:105-108`). No error, no `TUNABLES_DEGRADED`, no monitor signal,
-    heartbeat `ok` — and (per DEEP-002) `call_log` keeps recording `alerted=true`. For a system whose sole
-    output channel is push, this is total, invisible output loss from a one-character mistake.
-  - **`GEMINI_MODEL` / `_BACKUP`**: cast is `str` — also cannot fail. A misspelled model name makes every
-    Gemini call a FATAL `ProviderError`, i.e. DEEP-001's blind spot, reached from the portal.
-- Compounding presentation gap: the effective value of `ALERTS_ENABLED` is
-  `_alerts_input AND ALERTS_ENABLED_TABLE` (`config.py:235`), but the editor renders only the table value,
-  under a description that calls it "Master switch for real pushes". Nothing in the portal, the dashboard,
-  or `call_log` reports whether pushes are *actually* live right now.
-
-Suggested fix: mirror `config.py`'s ten casts as per-key validators in `validation.ts` (the key set is
-fixed by the DB CHECK, so this is ten lines, not a framework); render `ALERTS_ENABLED` as a
-`true`/`false` select rather than a free-text input; and add a per-key `CHECK` or a validating
-`BEFORE UPDATE` trigger on `public.tunables` so a direct SQL edit is caught too. Consider surfacing the
-AND-gated effective value on the portal.
+Original finding: the FR30 tunables editor validated nothing but emptiness; `ALERTS_ENABLED`'s and
+`GEMINI_MODEL`/`_BACKUP`'s casts can never raise, so a typo silently changed system behaviour with no
+error, while a typo in any of the seven numeric keys instead took down every scheduled entry point via
+`SystemExit`. **Full original finding text and closing disposition (independently re-verified against
+current code/SQL/tests, not accepted on dev's/qa's account) moved to
+`docs/archive/review-log-archive.md` per doc hygiene — see `docs/review-log.md` Pass 26 above for the
+verification detail.** One new, adjacent finding surfaced independently from this verification, logged
+fresh below: REV-113 (the `build_position` currency-mismatch guard suppresses the computed `pl_pct` but
+does not scrub the raw mismatched cost-basis/price figures from the AI prompt; owner tech-lead).
 
 ---
 
-### DEEP-006 — `[DESIGN-GAP]` — **major** — owner: dev (portal + SQL), tech-lead (§7.3 assumption)
+### DEEP-006 — `[DESIGN-GAP]` — major — owner: dev (portal + SQL), tech-lead (§7.3 assumption) — RESOLVED
+2026-07-30 (Pass 26, INC-10)
 
-**Holdings currency is free-choice, defaults to `USD`, and is never reconciled against the ticker's
-market — so a TSX or NSE position entered at its natural default silently produces a wrong unrealized P&L
-that is fed to the AI as fact (FR11) and rendered on the detail page.**
-
-Location: `admin-portal/app/(app)/holdings/page.tsx:18` (`currency: CURRENCIES[0]` ⇒ `"USD"`) and
-`:233-236`; `admin-portal/lib/validation.ts:60-75`; `sql/schema.sql:65-68`;
-`scripts/state.py:143-154` (`build_position`); `scripts/ai_judge.py:92-97`;
-`docs/design/non-functional-ops.md` §7.3.
-
-Evidence:
-- `validateHoldingsRow` checks only that `currency ∈ {USD, CAD, INR}`; the DB CHECK is the same set. The
-  `holdings.ticker` FK to `watchlist(ticker)` exists, so the ticker's `market` is *known* at write time —
-  and neither layer uses it. The add-form's default is `USD` for every market.
-- `build_position` computes `pl_pct = price / cost_basis - 1` with **no** currency reconciliation, while
-  `data.price` is always in the ticker's native currency (design §7.3: "native per market — no FX
-  conversion"). The design's no-FX rule is an *assumption about the input data* that nothing enforces.
-- The failure is plausible-looking, not absurd: a `.TO` holding whose cost basis was entered in USD 50
-  against a native CAD price of 68 yields `pl_pct = +36%` where the true figure is ~0%. That number goes
-  straight into the prompt as `"Cost basis: 50 USD, Current price: 68, Unrealized P/L: 36%"`
-  (`ai_judge.py:92-97`) — and FR11 plus the in-prompt cost-basis/disposition-effect guard mean the model
-  is explicitly instructed to *weigh* it. The detail page renders the same wrong P&L.
-- Real money, single user, manual entry, no second source to cross-check against: this is precisely the
-  "quietly wrong answer that looks right" class the brief asked me to weight.
-- Note the live watchlist currently has 0 held tickers (`components.md` §4.7 calls the position block
-  "dormant"), so this is latent rather than active — which is also why no test or QA pass has touched it.
-
-Suggested fix: derive the currency from `watchlist.market` instead of asking (US⇒USD, TSX⇒CAD, NSE⇒INR),
-or keep the field but validate it against the joined market in `validation.ts` **and** as a DB CHECK/
-trigger. A defensive `build_position` guard that returns `pl_pct = None` on a currency mismatch with
-`data["fundamentals"]["currency"]` would stop a bad row from reaching the prompt at all.
+Original finding: holdings currency was free-choice, defaulted to `USD` for every market, and was never
+reconciled against the held ticker's own `watchlist.market` — a TSX/NSE position entered at its natural
+default could silently produce a wrong unrealized P&L, fed to the AI as fact (FR11) and rendered on the
+detail page. **Full original finding text and closing disposition (independently re-verified against
+current code/SQL/tests, not accepted on dev's/qa's account) moved to `docs/archive/review-log-archive.md`
+per doc hygiene — see `docs/review-log.md` Pass 26 above for the verification detail.** One new, adjacent
+finding surfaced independently from this verification, logged fresh below: REV-113 — the design's own
+suggested-fix language ("stop a bad row from reaching the prompt at all") is not fully realized: the
+`build_position` guard suppresses the computed `pl_pct` on a currency mismatch, but `ai_judge._ticker_block`
+still renders the raw, unlabeled, mismatched cost-basis/price figures next to each other with no guardrail
+against the model computing its own ratio from them. Owner: tech-lead.
 
 ---
 
