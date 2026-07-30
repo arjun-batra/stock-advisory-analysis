@@ -1726,3 +1726,179 @@ remains `true` and its `description` carries the corrected AND-gate text.
 - INC-10's three live SQL objects (already applied per a prior, uncredentialed session) are now
   independently confirmed present, enabled, and behaviorally correct against the real production database,
   not just reasoned about from a local scratch-database proxy.
+
+---
+
+# Handoff — INC-12 fix cycle 1: REV-116 (DEEP-007 residual) + REV-117 (SQL REVOKE gap)
+
+## Build plan (written before coding)
+
+Reviewer Pass 28 (`docs/review-log.md`) found two majors blocking `v0.1.0`: (1) `run_hourly.py`'s
+`config.write_tunables_cache_if_fetched()` — a real `contents: write` commit path — ran unconditionally as
+`main()`'s first statement, before checkpoint 1's pause read, so a paused run could still commit to `main`
+(REV-116, DEEP-007 not fully closed); (2) `sql/kill_switch_abort_log.sql`'s `REVOKE` omitted `truncate`
+(REV-117), the same gap class closed four times before in this codebase. Plan: (a) read
+`operational-controls.md` §13.1/§13.6 and `tunables-fallback.md`'s "before the market gate... cache
+refreshes on every dispatch" design property to find a fix that closes REV-116 without silently breaking
+that property; (b) check `run_discovery.py`/`publish_prices.py` for the same before-checkpoint-1
+irreversible-write pattern rather than assuming it's unique to `run_hourly.py`; (c) apply `admin_allowlist`'s
+exact four-verb REVOKE shape to `kill_switch_abort_log.sql`, double-apply locally to confirm idempotency;
+(d) run full regression + a real-code-path smoke test that doesn't rely on `SKIP_TUNABLES_FETCH` masking.
+Files: `scripts/run_hourly.py`, `sql/kill_switch_abort_log.sql` only — no `tests/` edits (qa owns those),
+no design-doc edits (tech-lead owns those; flagging the checkpoint-1 placement/§13.1 claim below instead).
+
+## REV-116 — where checkpoint 1 moved, and why
+
+**Checked `run_discovery.py` and `publish_prices.py` first, per the brief's explicit instruction not to
+assume the gap is unique to `run_hourly.py`.** Confirmed via `grep -rn write_tunables_cache_if_fetched
+scripts/` that only `run_hourly.py` calls it — `write_tunables_cache_if_fetched()`'s own docstring
+(`config.py:165-168`) states Decision #28 made `hourly-watchlist.yml` the **sole** writer; `run_discovery.py`
+and `publish_prices.py` "never call this; they remain pure read-only consumers." Read both files' `main()`
+top-to-bottom directly: `run_discovery.py` goes `require_secrets()` → `client()` → `notifier` → checkpoint 1
+with nothing irreversible in between; `publish_prices.py` goes `require_secrets(...)` → `client()` →
+watchlist read → a Yahoo-fetch loop (not irreversible) → checkpoint 4 immediately before the file write, and
+checkpoint 1 is explicitly out of scope for it per §13.6.2's own text ("FR24's text does not name this
+checkpoint for `publish_prices.py`"). **No fix needed in either file** — the pattern genuinely does not
+recur there.
+
+**`run_hourly.py` fix: moved checkpoint 1 (the `is_paused()` read) to the very top of `main()`, ahead of
+both the tunables-cache write and the market-gate computation, preceded only by its genuine precondition**
+(`config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")` then `sb = state.client()` — the two
+secrets `state.client()` itself needs; `GEMINI_API_KEY` isn't a precondition for reading the pause flag and
+stays validated later, right before the AI call, via a second, narrower `require_secrets("GEMINI_API_KEY")`
+call further down). Considered the simpler alternative the reviewer also named — leaving checkpoint 1 where
+it was and just moving the tunables-write call to after it — but rejected it: `tunables-fallback.md:302-303`
+states, as an explicit design property (not just a comment), that the write runs "before the market gate...
+so the cache refreshes on every dispatch regardless of whether the market check inside `main()` goes on to
+skip work." Checkpoint 1's *old* position was already after the closed-market early return, so moving only
+the write (not the checkpoint) down to that position would have made the cache silently stop refreshing on
+every closed-market invocation (most of the day) — a real regression of a stated design property, not a
+neutral fix. Moving checkpoint 1 itself to the top preserves that property exactly (the cache still refreshes
+on every dispatch that isn't paused, open market or not) while also closing REV-116 (nothing irreversible is
+reachable before the pause read, full stop). Verified both properties hold by executing the real `main()`
+code path directly (see "What a test can honestly prove," below) rather than trusting the property from
+reading the diff alone.
+
+**This changes what `operational-controls.md` documents and needs a design-doc correction I did not make
+myself:**
+- §13.6.2's checkpoint-1 placement text ("Placed immediately after `sb = state.client()` / `notifier =
+  notify.get_notifier()` are constructed") is now stale — checkpoint 1 no longer waits for `notifier`, and
+  now also precedes the market-gate computation and the tunables-cache write.
+- §13.1's accepted-risk paragraph (`operational-controls.md:59-68`) still contains the exact sentence Pass 28
+  flagged as false ("no irreversible action possible in that window") — this fix is what makes that sentence
+  true again, so it needs updating to describe the corrected window, not deleting outright.
+Flagging both per the brief's instruction ("if your fix changes what §13.6 specifies... say so and I will
+route the design update to tech-lead") rather than editing `operational-controls.md` myself. Noted in passing:
+tech-lead's in-progress edits already on this branch (uncommitted, `git diff docs/design/`) have updated
+§13.6.5's REVOKE sample for REV-117 and the top-of-file/§13.6 status lines for the Pass 28 NOT CLEAR verdict,
+but have not yet touched §13.1's claim or §13.6.2's checkpoint-1 placement text — both still need the
+correction above.
+
+## REV-117 — REVOKE fix + double-apply result
+
+Added `truncate` to `sql/kill_switch_abort_log.sql`'s `REVOKE`, matching `admin_allowlist`'s exact four-verb
+shape (`sql/admin_portal_rls.sql:17`, the closest precedent per the brief — no legitimate write path to this
+table exists at all, same as `admin_allowlist`):
+```sql
+revoke insert, update, delete, truncate on public.kill_switch_abort_log from public, anon, authenticated;
+```
+Updated the file's own comment to name REV-117 and the four prior closures of this same gap class
+(REV-081/REV-086/`kill_switch_portal_grant.sql`/REV-099), same convention the file already used.
+
+**Double-apply result (local, not live — the orchestrator is holding this file until fix + reviewer
+clearance).** No Docker or PG17 available in this sandbox (checked; Docker daemon unreachable, only
+`postgresql-16` installed) — ran against a local **Postgres 16.13** cluster instead (`initdb`/`pg_ctl`
+under a throwaway data dir, `anon`/`authenticated` roles created fresh). Nothing in this file is
+version-sensitive (no trigger, no PG14+ construct — same conclusion the file's own header comment already
+draws), so REVOKE/RLS/FORCE semantics are unchanged across 16→17.6.1 and this remains a faithful proxy, but
+it is **not** a PG17.6.1-identical verification — flagging the substitution explicitly rather than silently
+presenting it as equivalent.
+- **First apply:** `CREATE TABLE` / `ALTER TABLE` ×2 / `REVOKE` all succeeded.
+- **Second apply, verbatim, no edits:** `NOTICE: relation "kill_switch_abort_log" already exists, skipping` /
+  `CREATE TABLE` (no-op) / `ALTER TABLE` ×2 / `REVOKE` — exit code 0, clean no-op.
+- **Verified the actual privilege state, not just a clean exit code:** `\dp public.kill_switch_abort_log`
+  shows only `postgres=arwdDxt/postgres` — no `PUBLIC` default grant remains. `set role anon; truncate
+  public.kill_switch_abort_log;` and the same under `authenticated` both failed with `permission denied for
+  table kill_switch_abort_log`.
+- Scratch cluster stopped and its data directory removed afterward; nothing left running.
+
+## What a test can honestly prove about REV-116, given `SKIP_TUNABLES_FETCH`
+
+Per the brief's warning: every committed test runs with `SKIP_TUNABLES_FETCH=true` (`tests/conftest.py`),
+which empties `config._TUNABLES` at import time, so `write_tunables_cache_if_fetched()`'s own `if not
+_TUNABLES: return` guard makes it a silent no-op regardless of ordering — **no test in the committed suite,
+old or new, can distinguish "the call happens after the pause check" from "the call never does anything at
+all."** A green suite here proves the checkpoint's *call-site position* is textually correct (e.g.
+`test_checkpoint_call_site_counts`) and that nothing else regressed; it does **not** prove the fix actually
+prevents the commit path from firing while paused — that requires exercising the pre-fetch-populated path
+the suite deliberately skips for determinism.
+
+To actually verify REV-116 is closed, I ran `run_hourly.main()` directly (not through pytest) with
+`config._TUNABLES` populated with a real pending value (bypassing the `SKIP_TUNABLES_FETCH` skip) and
+`is_paused()` faked to return `True`: `write_tunables_cache_if_fetched()`'s call count was `0` — confirmed
+by wrapping the function with a call-counting spy, not by reading print output. A second run with the same
+populated `_TUNABLES` and `is_paused()` returning `False` (market closed, no `FORCE_RUN`) showed a call
+count of `1`, confirming the "refreshes on every non-paused dispatch, including a closed-market one" property
+survived the fix. Neither of these is a committed test (scratch-only, per the brief's scope: qa owns
+`tests/`) — **qa should add a permanent test that populates `_TUNABLES`/`_TUNABLE_CASTS` directly (bypassing
+`SKIP_TUNABLES_FETCH`) and asserts `write_tunables_cache_if_fetched` is not called when `is_paused()` returns
+`True`**, since this is exactly the scenario the existing 22 boundary tests structurally cannot exercise.
+
+## Tests that need updating (qa owns `tests/`, not edited here)
+
+- `tests/test_kill_switch_boundary.py::test_checkpoint1_run_hourly_aborts_before_any_named_side_effect`'s
+  docstring ("Checkpoint 1 is placed AFTER `sb = state.client()` / `notifier = notify.get_notifier()` are
+  constructed") is now stale — checkpoint 1 no longer waits for `notifier`. The test's actual assertions
+  still pass unchanged (it never required notifier construction to happen, only that six named functions are
+  never called), so this is a comment-only staleness, not a failing assertion.
+- `tests/test_run_orchestration.py::test_all_markets_closed_without_force_run_is_a_noop`'s comment ("main()
+  returns before `state.client()` or `state.write_heartbeat()` are ever reached") is also now stale —
+  `state.client()` (mocked) and `is_paused()` (against the base `FakeSupabase`, which returns `paused=False`
+  by default for any unhandled table) are now both reached before the closed-market check. The test still
+  passes (`wire_main.run_heartbeat == {}` is unaffected), same comment-only staleness.
+- **New test recommended** (see previous section): a real-`_TUNABLES`-populated, paused-run assertion that
+  `write_tunables_cache_if_fetched` is not called — the one scenario this fix cycle's own regression suite
+  cannot exercise.
+
+## Files changed
+
+- `scripts/run_hourly.py` — `main()` restructured: checkpoint 1 (`require_secrets` for the two Supabase
+  secrets, `state.client()`, `is_paused()`) moved to the top; `write_tunables_cache_if_fetched()` moved to
+  right after it; the later `require_secrets()` call narrowed to `"GEMINI_API_KEY"` only (the Supabase pair
+  is already validated by then). Checkpoint call-site count unchanged (still exactly 2 `if
+  state.is_paused(sb):` occurrences).
+- `sql/kill_switch_abort_log.sql` — `REVOKE` gains `truncate`; comment updated to name REV-117 and the prior
+  precedent files.
+
+## How to run it
+
+`python3 -m pytest -q --tb=short` (Python suite); `node --experimental-strip-types --test
+tests/admin_portal/*.test.ts` (TypeScript suite, unaffected — zero `admin-portal/` files touched this fix
+cycle).
+
+## Full regression + smoke test
+
+**Python: 275 passed, 0 failed** (matches the stated baseline exactly — no regressions, no new tests added
+by dev per scope). **TypeScript: 82 passed, 0 failed** (matches baseline; unaffected by this fix cycle's
+files). Smoke test: the two scratch-harness runs described above (REV-116, real code path, paused vs.
+not-paused) plus the full existing `tests/test_kill_switch_boundary.py` (22 tests) and
+`tests/test_run_orchestration.py` suites re-run in isolation, all passing.
+
+## Known limitations
+
+- SQL double-apply verification used local Postgres 16, not the live-confirmed PG17.6.1, due to no
+  Docker/PG17 availability in this sandbox — semantically equivalent for the REVOKE/RLS/FORCE constructs
+  touched, but not a byte-identical version match. Flagged above, not silently substituted.
+- Did not apply `sql/kill_switch_abort_log.sql` live, per explicit instruction — still queued, now with the
+  REV-117 fix, pending reviewer re-clearance.
+- Did not edit `docs/design/operational-controls.md` (§13.1's claim, §13.6.2's checkpoint-1 placement text) —
+  flagged above for tech-lead, per scope.
+- Did not edit `tests/` — flagged the two stale-comment tests and one recommended new test above for qa.
+- An automated environment checkpoint (`git log` commit `3cd13b9`, "checkpoint dev's in-progress REV-116/117
+  fixes (UNVERIFIED)") committed `scripts/run_hourly.py`/`sql/kill_switch_abort_log.sql` mid-session, before
+  self-verification was complete — same pattern as this file's earlier `b09e65f` note, not a commit I made
+  myself. Diffed the checkpoint against my final edits (`git show 3cd13b9 -- scripts/run_hourly.py
+  sql/kill_switch_abort_log.sql`) and confirmed it matches the final, tested state byte-for-byte — nothing
+  was lost or silently changed. Flagging so the orchestrator doesn't mistake the checkpoint's own "UNVERIFIED"
+  label for this handoff's status: full regression (275/0 Python, 82/0 TypeScript) and the real-code-path
+  smoke tests above were run against this exact content, after the checkpoint landed.
