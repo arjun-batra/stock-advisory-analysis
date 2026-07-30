@@ -16,6 +16,7 @@ import config
 from conftest import FakeAPIError, FakeGeminiResponse, FakeUsageMetadata
 
 import ai_judge
+import state
 
 
 def _item(ticker="AAPL", market="US"):
@@ -441,3 +442,103 @@ def test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undo
     log = capsys.readouterr().out
     assert log.count("positional fallback used for ABC.TO") == 2
     assert "discarding" not in log  # only the failed-over-ok guard logs a discard
+
+
+# --- _ticker_block with a HELD position (FR11/FR29, REV-113, INC-10 fix round #2) ---
+# Coverage gap dev flagged against itself in the fix-cycle-2 handoff: no existing test
+# exercised _ticker_block with a non-None position at all before these were added. Both
+# positions below are built via state.build_position so the whole real data/position
+# contract (including the new currency_mismatched flag) is exercised, not a hand-rolled
+# dict that could drift from what build_position actually returns.
+
+def _held_data(ticker="SHOP.TO", market="TSX", price=68.0, fundamentals_currency="CAD"):
+    return {
+        "ticker": ticker, "market": market,
+        "price": price, "pct_change_1d": 1.0, "pct_change_5d": 2.0,
+        "pct_change_20d": 3.0, "volume_vs_avg": 1.1,
+        "fundamentals": {"currency": fundamentals_currency},
+        "headlines": [], "session_live": False, "volume_pro_rated": False,
+    }
+
+
+def test_ticker_block_currency_mismatch_omits_cost_basis_and_states_not_comparable(capsys):
+    """REV-113: a holding whose currency disagrees with the ticker's own fundamentals
+    currency must not let cost_basis and price sit side by side (raw or otherwise) --
+    the block must state plainly that no gain/loss should be computed."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "USD"}
+    data = _held_data()
+    position = state.build_position(holding, data)
+    assert position["currency_mismatched"] is True  # sanity: the fixture is a real mismatch
+    capsys.readouterr()  # discard build_position's WARNING log, not under test here
+
+    block = ai_judge._ticker_block(data, position)
+
+    assert "Cost basis:" not in block  # the labeled figure, not the prose mentioning the concept
+    assert "50.0" not in block
+    assert "Unrealized P/L" not in block
+    assert "not comparable" in block
+    assert "do not compute or state an unrealized" in block
+    # Both currencies named so the model understands *why* they're withheld.
+    assert "USD" in block
+    assert "CAD" in block
+    # Shares are not currency-denominated -- still fine to show.
+    assert "Shares: 10" in block
+
+
+def test_ticker_block_currency_mismatch_leaks_no_cost_basis_figure_by_any_route(capsys):
+    """The point of REV-113 is that a model cannot derive a P/L from mismatched-currency
+    inputs -- not just that one line's wording changed. Walk the WHOLE block: the raw
+    cost_basis number must not survive anywhere (e.g. smuggled into another field), and
+    the price that legitimately remains (for price/volume analysis) must be unambiguously
+    labeled with the fundamentals currency, not left bare next to the withheld cost basis."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "USD"}
+    data = _held_data(price=68.42, fundamentals_currency="CAD")
+    position = state.build_position(holding, data)
+    capsys.readouterr()
+
+    block = ai_judge._ticker_block(data, position)
+
+    # The distinctive cost-basis figure (50.0) must not appear anywhere in the block --
+    # not on the held-position line (already checked above) and not smuggled into any
+    # other field (fundamentals/price/volume lines etc.).
+    assert "50.0" not in block
+    assert "50" not in block
+    # The price DOES legitimately remain, but only in the unrelated Price/volume line,
+    # and only ever labeled with the fundamentals currency (CAD here) -- never bare next
+    # to an unlabeled number a model could pair it with.
+    price_lines = [ln for ln in block.splitlines() if "68.42" in ln]
+    assert len(price_lines) == 1
+    assert price_lines[0].startswith("Price/volume")
+    assert "CAD" in price_lines[0]
+
+
+def test_ticker_block_currency_mismatch_fails_on_pre_fix_behavior():
+    """Guard against regression to the pre-REV-113 rendering: reconstructs the exact
+    pre-fix _ticker_block held-position line (cost_basis and price on one unlabeled
+    line, pl_pct suppressed to n/a but the two raw figures still adjacent) and confirms
+    the CURRENT code no longer does that for a mismatch. This is the same assertion as
+    the test above; kept separate and documented so a future refactor that silently
+    reintroduces the old branch is caught by name."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "USD"}
+    data = _held_data()
+    position = state.build_position(holding, data)
+    block = ai_judge._ticker_block(data, position)
+    # The old (pre-fix) line shape would have been:
+    #   "  Shares: 10, Cost basis: 50.0 USD, Current price: 68.0, Unrealized P/L: n/a"
+    # None of that shape should be present now.
+    assert "Cost basis: 50.0 USD" not in block
+    assert "Unrealized P/L: n/a" not in block
+
+
+def test_ticker_block_agreeing_currency_position_line_unchanged():
+    """Held-position block for a NON-mismatched holding must be exactly the pre-REV-113
+    shape (byte-identical wording), proving the fix only branches on an actual mismatch."""
+    holding = {"shares": 10, "cost_basis": 50.0, "currency": "CAD"}
+    data = _held_data(price=60.0, fundamentals_currency="CAD")
+    position = state.build_position(holding, data)
+    assert position["currency_mismatched"] is False
+
+    block = ai_judge._ticker_block(data, position)
+
+    assert "  Shares: 10, Cost basis: 50.0 CAD, Current price: 60.0, Unrealized P/L: 20.0%" in block
+    assert "not comparable" not in block

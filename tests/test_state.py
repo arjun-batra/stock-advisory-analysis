@@ -340,6 +340,7 @@ def test_build_position_suppresses_pl_pct_on_currency_mismatch(capsys):
     pos = state.build_position(holding, data)
     assert pos["pl_pct"] is None
     assert pos["currency"] == "USD"  # holding's stored currency is still reported as-is
+    assert pos["currency_mismatched"] is True  # REV-113: single source of truth for _ticker_block
     log = capsys.readouterr().out
     assert "WARNING" in log
     assert "SHOP.TO" in log
@@ -351,6 +352,7 @@ def test_build_position_computes_normally_when_currencies_agree(capsys):
     data = {"ticker": "SHOP.TO", "price": 60.0, "fundamentals": {"currency": "CAD"}}
     pos = state.build_position(holding, data)
     assert pos["pl_pct"] == 20.0
+    assert pos["currency_mismatched"] is False  # REV-113: agreeing currencies -> not mismatched
     assert "WARNING" not in capsys.readouterr().out
 
 
@@ -363,11 +365,13 @@ def test_build_position_missing_fundamentals_currency_is_unknown_not_mismatch(ca
     data = {"ticker": "AAPL", "price": 60.0}  # no "fundamentals" key at all
     pos = state.build_position(holding, data)
     assert pos["pl_pct"] == 20.0
+    assert pos["currency_mismatched"] is False  # REV-113: unknown fundamentals currency != mismatch
     assert "WARNING" not in capsys.readouterr().out
 
     data_empty_fundamentals = {"ticker": "AAPL", "price": 60.0, "fundamentals": {}}
     pos2 = state.build_position(holding, data_empty_fundamentals)
     assert pos2["pl_pct"] == 20.0
+    assert pos2["currency_mismatched"] is False
 
 
 # --- process_candidate (discovery, FR4 Decision #16: Buy-only push) -----------

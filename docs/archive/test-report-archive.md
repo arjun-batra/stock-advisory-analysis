@@ -2638,3 +2638,29 @@ intermediate `drop trigger if exists`+`create trigger` attempt at `a500b37`). qa
 the fix (double-apply on a fresh local PG16 instance, object state + row data + behavior all confirmed
 unchanged after the second apply) — see the live report's INC-10 BUG-008 fix-cycle-1 re-test entry for
 full detail. **RESOLVED 2026-07-30.**
+
+
+## INC-10 — BUG-008 fix-cycle-1 re-test — 2026-07-30
+
+**Scope.** Re-test of INC-10 (FR30, FR11, FR29; DEEP-005+DEEP-006 — full original verdict archived
+above) after dev's fix-cycle-1 for BUG-008 (SQL idempotency). Dev changed approach mid-work: an
+intermediate `drop trigger if exists` + `create trigger` version was briefly committed (`a500b37`),
+superseded by dev's final answer at `19013e2`, `create or replace trigger` — qa's own originally
+suggested fix. 1 of 3 fix cycles used.
+
+Independent re-verification of the double-apply property on a fresh local Postgres 16.13 instance:
+both fixed files' second apply succeeded (trigger fire order, function OIDs, row data all unchanged
+after the second apply; behavior re-confirmed, not just object metadata). BUG-008's exact repro no
+longer reproduces. Dev's atomicity reasoning for `create or replace trigger` over drop-then-recreate
+assessed and holds. `tests/admin_portal/tunables_static.test.ts:144-153`'s stale regex (hard-coded
+`create trigger`) fixed to `create (or replace )?trigger`, plus new permanent regression-guard tests
+added to `tunables_static.test.ts` and `static_source_checks.test.ts` asserting the idempotent form
+literally, verified to fail against a reverted bare `create trigger`. PG14+ dependency carried forward
+as an explicit named INC-11 prerequisite (live version unconfirmed, no basis to expect <PG14).
+
+**Regression:** 249 Python / 0 failed (unchanged), 82 TypeScript / 0 failed (79/1 baseline going in,
+regex relaxed + 2 new tests). Shippability: all three Python entry points import cleanly, `npm run
+build` succeeds, all 7 routes compile.
+
+**Verdict: PASS. BUG-008 CLOSED (resolved 2026-07-30, fix-cycle-1).** INC-10 clean apart from BUG-008,
+now independently re-verified fixed. No new bugs filed this pass.

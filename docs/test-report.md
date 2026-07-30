@@ -5,128 +5,108 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-10 — BUG-008 fix-cycle-1 re-test — 2026-07-30
+## INC-10 — fix-cycle-2 re-test (REV-113 major, REV-112 minor) — 2026-07-30
 
-**Scope.** Re-test of INC-10 (FR30, FR11, FR29; DEEP-005+DEEP-006 — full original verdict archived,
-`docs/archive/test-report-archive.md`) after dev's fix-cycle-1 for BUG-008 (SQL idempotency). Read
-`docs/handoff.md`'s "BUG-008 fix (fix cycle 1 of 3)" section, `sql/tunables_validate_trigger.sql`,
-`sql/holdings_currency_derivation.sql` as they now stand, and this file's own prior BUG-008 entry. Dev
-changed approach mid-work: an intermediate `drop trigger if exists` + `create trigger` version was
-briefly committed (`a500b37`), superseded by dev's final answer at `19013e2`, `create or replace trigger`
-— qa's own originally suggested fix. 1 of 3 fix cycles used.
+**Scope.** Verification of dev's fix-cycle-2 on INC-10 at commit `649c945`, covering **REV-113** (major,
+`docs/review-log.md` Pass 26) and **REV-112** (minor, same pass). Read `docs/review-log.md` Pass 26's
+REV-113/REV-112 entries, `docs/handoff.md`'s INC-10 fix-cycle-2 entry, `scripts/ai_judge.py`'s
+`_ticker_block`, `scripts/state.py`'s `build_position`, and the new
+`sql/admin_portal_tunables_alerts_enabled_description_fix.sql`. 2 of 3 fix cycles used.
 
-### 1. Independent re-verification of the double-apply property
+### REV-113 — mismatched-currency figures no longer reach the prompt by any route
 
-Did not inherit dev's verification claim. Started a fresh local Postgres 16.13 instance (this repo's
-reference Postgres, matching dev's own environment), built a scratch database with `watchlist`/`holdings`
-(per `sql/schema.sql`) and `sql/admin_portal_tunables.sql` applied verbatim (stubbing `auth.jwt()`/
-`is_admin()`, live-Supabase-only functions), then for each of the two fixed files independently:
+Confirmed by direct read of `scripts/ai_judge.py:101-116`: for a held position where
+`position["currency_mismatched"]` is true, `_ticker_block` now omits both `cost_basis` and `price` from
+the held-position line entirely and states plainly that the two figures are not comparable and that no
+gain/loss should be computed — replacing the old unlabeled `Cost basis: X CUR, Current price: Y` line
+that let a model do the subtraction itself even with `pl_pct` suppressed.
 
-- Applied once — succeeded (`CREATE FUNCTION` / `CREATE TRIGGER`).
-- Recorded object state: `pg_trigger` fire order (`tunables_0_validate_update` before
-  `tunables_stamp_update`, confirmed via `tgname` ordering query) and function OIDs (`_validate_tunable_
-  update`=24813, `_derive_holdings_currency`=24815).
-- Inserted one holding per market (US/TSX/NSE, all submitted with `currency='USD'`) — confirmed derivation
-  to `USD`/`CAD`/`INR`.
-- **Applied each file again, verbatim — both second applies succeeded, exit code 0, no error.** BUG-008's
-  exact repro (`trigger "..." already exists`) no longer reproduces.
-- Re-checked object state after the second apply: **trigger fire order unchanged, function OIDs
-  unchanged** (identical to before), **row data byte-identical** (`tunables.updated_at`/`updated_by` and
-  all 10 values unchanged; `holdings` rows unchanged).
-- Re-confirmed behavior after the second apply, not just object metadata: `DISCOVERY_GAINER_PCT='5%'` and
-  `ALERTS_ENABLED='tru'` still rejected; a rejected write still leaves `updated_at`/`updated_by` untouched;
-  a direct `UPDATE holdings SET currency='USD'` on the TSX row is still overridden back to `CAD`; a ticker
-  absent from `watchlist` still raises `holdings.ticker % has no matching watchlist row`.
-- Scratch database dropped, local Postgres cluster stopped after verification; nothing left running.
+**Closed the coverage gap dev flagged against itself** (`docs/handoff.md`: "no existing test exercises
+`_ticker_block` with a non-`None` position at all"). Added to `tests/test_ai_judge.py`:
+- `test_ticker_block_currency_mismatch_omits_cost_basis_and_states_not_comparable` — mismatch case: no
+  labeled cost-basis figure, no `Unrealized P/L` line, "not comparable" instruction present, both
+  currencies named, `Shares` still shown.
+- `test_ticker_block_currency_mismatch_leaks_no_cost_basis_figure_by_any_route` — walks the **whole**
+  rendered block (not just the held-position line) and confirms the raw cost-basis number (`50.0`/`50`)
+  does not survive anywhere by another route, and that the price which legitimately remains appears
+  exactly once, only in the `Price/volume` line, unambiguously labeled with the fundamentals currency.
+- `test_ticker_block_currency_mismatch_fails_on_pre_fix_behavior` — locks in the specific pre-fix line
+  shape (`Cost basis: 50.0 USD ... Unrealized P/L: n/a`) as absent, named so a future regression to the
+  old branch is caught explicitly.
+- `test_ticker_block_agreeing_currency_position_line_unchanged` — agreeing-currency case: the normal
+  held-position line is byte-identical to the pre-REV-113 rendering (`Shares: 10, Cost basis: 50.0 CAD,
+  Current price: 60.0, Unrealized P/L: 20.0%`), proving the fix only branches on an actual mismatch.
 
-**Confirms dev's report exactly** (trigger fire order, function OIDs, row data, behavior all independently
-re-verified unchanged, not accepted on trust). **BUG-008 is genuinely fixed — RESOLVED 2026-07-30.** Full
-original bug text moved to `docs/archive/test-report-archive.md` with this closure noted.
+**Verified the mismatch tests genuinely test the fix, not incidental behavior:** reverted
+`scripts/ai_judge.py` to the pre-fix content (`git show 6784d26:scripts/ai_judge.py`) in a scratch copy,
+ran the four new tests — all three mismatch-case tests fail against the pre-fix code (cost basis and
+unlabeled price still render on one line), the agreeing-currency test still passes (unaffected by the
+fix, as expected). Restored the working tree afterward (`git diff` on `scripts/ai_judge.py` clean —
+qa never edits production code).
 
-### 2. Atomicity reasoning — assessed, holds
+**`build_position`'s `currency_mismatched` flag** (`scripts/state.py:164-202`) is the single source of
+truth `_ticker_block` now consumes. Extended the three existing `test_state.py` currency-guard tests
+(no new test files needed — same fixtures, added assertions) to assert the flag directly, not just
+`pl_pct`'s side effect:
+- Match (`test_build_position_computes_normally_when_currencies_agree`): `currency_mismatched is False`,
+  `pl_pct` computed normally — unchanged from last pass's verification.
+- Mismatch (`test_build_position_suppresses_pl_pct_on_currency_mismatch`): `currency_mismatched is True`,
+  `pl_pct is None`, warning logged — unchanged from last pass's verification.
+- Unknown fundamentals currency, both the no-key and empty-dict shapes
+  (`test_build_position_missing_fundamentals_currency_is_unknown_not_mismatch`):
+  `currency_mismatched is False` in both, `pl_pct` still computed — confirms "unknown" is correctly
+  distinct from "mismatched," and `pl_pct` suppression behavior is unchanged from when this was last
+  verified (Pass 26 predecessor run).
 
-Dev's stated reason for preferring `create or replace trigger` over drop-then-recreate: it is one atomic
-DDL statement, whereas `drop trigger` + `create trigger` are two separately auto-committed statements
-under `psql -f` (no `-1`/`--single-transaction`), leaving a window where a concurrent write could commit
-while the trigger is absent. **Empirically confirmed, not just reasoned about:** re-running `psql -f`
-against both files in this pass showed two distinct command tags per file (`CREATE FUNCTION` /
-`CREATE TRIGGER`), consistent with each top-level statement auto-committing independently absent an
-explicit transaction wrapper — the window dev describes is real under that invocation method. Postgres DDL
-is transactional, so a single `create or replace trigger` statement has no such window by construction
-(MVCC hides the catalog change from other sessions until commit, and there is only one statement to
-commit). One nuance worth naming: `docs/runbook.md` §2.3 specifies live application via the Supabase SQL
-Editor or `supabase db push`, not raw `psql -f` — a multi-statement string sent as one round trip may be
-implicitly transactional under either of those paths, which would narrow (not eliminate) the gap
-drop-then-recreate exposes. This doesn't weaken the conclusion: `create or replace trigger` is atomic
-under every plausible application method at zero behavioral cost beyond the version floor addressed in
-§3 below, so it is the strictly safer choice regardless of which deployment path is actually used. **Dev's
-reasoning holds.**
+**REV-113 holds. Verified 2026-07-30 (fix-cycle-2).**
 
-### 3. Stale assertion — fixed, chose the property over the syntax
+### REV-112 — corrective SQL now additive, idempotent, and genuinely re-runnable
 
-`tests/admin_portal/tunables_static.test.ts:144-153` hard-coded a regex matching only literal
-`create trigger`, broken by the `create or replace trigger` fix. Dev's suggested minimal fix (relax to
-`create (or replace )?trigger`) was applied to restore the fire-order test's own property (trigger name
-sorts before `tunables_stamp_update`) — that assertion is still worth keeping, syntax-relaxed.
+Read the new `sql/admin_portal_tunables_alerts_enabled_description_fix.sql` (one `update` statement,
+scoped to `key = 'ALERTS_ENABLED'`) and the diff to `sql/admin_portal_tunables.sql`
+(`git show 649c945 -- sql/admin_portal_tunables.sql`): confirmed the diff removes only the trailing
+`update` block and its comment, replacing it with a one-line pointer comment — lines 1-86 (the
+already-applied `create table`/trigger/policies/seed `insert`) are byte-for-byte untouched.
 
-**But also went further, per this task's instruction to consider testing the property that actually
-matters.** Added a new permanent test to each affected file's static-check suite —
-`tunables_static.test.ts` (for `sql/tunables_validate_trigger.sql`) and `static_source_checks.test.ts`
-(for `sql/holdings_currency_derivation.sql`) — asserting the file's trigger-creation statement is
-literally the idempotent `create or replace trigger` form, not a bare `create trigger` (SQL comments
-stripped before matching, since both files' own BUG-008 explanatory comments mention the literal string
-`create trigger` in prose). This is a direct regression guard for BUG-008 itself: **verified it actually
-fails** against a bare `create trigger` (reverted `sql/tunables_validate_trigger.sql` locally, confirmed
-the new test fails, restored the file — `git diff` on the SQL files is clean, qa never edits production
-code) and passes against the real fixed file. Chose to add this rather than only relax the regex because
-the regex-only fix tests syntax; this test tests the property the whole bug was about (re-runnability),
-so a future regression to bare `create trigger` in either file is now caught immediately rather than only
-resurfacing on a live re-apply.
+Independently re-ran BUG-008's own re-runnability standard on a local Postgres 16 scratch database
+(dropped after verification): applied `sql/schema.sql` + `sql/admin_portal_rls.sql` +
+`sql/admin_portal_tunables.sql`, then simulated a live-seeded row still carrying the **original,
+pre-DEEP-005** stale description (`git show 99e0255:sql/admin_portal_tunables.sql`'s literal seed text,
+which is what a project seeded before this fix round actually has live), then:
+- Applied the new fix file once → `UPDATE 1`, description corrected to the AND-gate text.
+- Applied it again, verbatim → `UPDATE 1` again, no error, description unchanged (idempotent — matches
+  BUG-008's established double-apply standard).
 
-### 4. PG14+ dependency — residual risk, explicit INC-11 prerequisite
+Confirms the file **genuinely corrects** `ALERTS_ENABLED`'s seed description against a database seeded
+from `sql/admin_portal_tunables.sql`, is additive (touches no table/trigger/policy definition), and is
+re-runnable to the same standard as the other two INC-10 SQL files. The original file's already-applied
+content is otherwise untouched, confirmed by direct diff.
 
-`create or replace trigger` requires Postgres 14+. Dev could not confirm the live Supabase project's
-actual major version (no live access this session) and said so plainly, offering circumstantial evidence
-only: qa's original BUG-008 repro ran on local PG16, this environment's reference Postgres is PG16
-(confirmed again this pass — 16.13), and Supabase's current default for active projects is PG15+. **That
-is inference, not confirmation**, and qa did not attempt to confirm it against the live project (out of
-scope — no live application performed, per this task's explicit instruction).
-
-**Position:** this is an acceptable residual risk to carry into INC-11, not a blocker for closing
-BUG-008 or clearing INC-10. Nothing in `docs/` gives any reason to expect the live project predates PG14,
-the syntax has been independently re-verified correct wherever it can be tested (local PG16, twice, by
-two different agents), and neither file has been applied live yet — so no live object is at risk today.
-However, since the fix's correctness is conditional on a fact nobody in this pipeline has actually checked
-against the live project, **this must not be silently assumed true at apply time.** Flagging as an
-explicit prerequisite so it cannot be forgotten:
-
-> **INC-11 prerequisite:** before applying `sql/tunables_validate_trigger.sql` or
-> `sql/holdings_currency_derivation.sql` to the live Supabase project, confirm the project's Postgres
-> major version is 14 or later (e.g. `select version();` via Supabase SQL Editor/MCP). If it is not,
-> both files' `create or replace trigger` statements will fail outright on first apply (a hard,
-> immediately-visible error, not a silent bad state) and must fall back to a guarded form
-> (`drop trigger if exists` + `create trigger`, accepting the narrower atomicity window discussed in §2)
-> before proceeding.
+**REV-112 holds. Verified 2026-07-30 (fix-cycle-2).**
 
 ### Regression suite
 
-- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **249 passed, 0 failed** (unchanged from
-  baseline — SQL-only fix, no Python touched).
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **82 passed, 0 failed** (79/1
-  baseline going in — regex relaxed to restore the 1 failure, +2 new BUG-008 regression-guard tests).
-  Both required green suites (**249 Python / 82 TypeScript, 0 failed each**) restored.
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **253 passed, 0 failed** (baseline 249 +
+  4 new `_ticker_block` tests; 3 existing `build_position` tests gained assertions, no new test files
+  for those).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **82 passed, 0 failed**
+  (unchanged from baseline — this fix cycle touched no TypeScript).
 - Shippability: `SKIP_TUNABLES_FETCH=true python3 -c "import run_hourly, run_discovery, publish_prices"`
-  → clean import, all three entry points unaffected (this fix touches only `sql/` and `tests/`).
-  `cd admin-portal && npm run build` → succeeds, all 7 routes compile.
+  → all three entry points import cleanly (this fix cycle touches `scripts/ai_judge.py`,
+  `scripts/state.py`, `sql/`; no entry-point contract change).
+- No SQL applied to the live Supabase project (per instruction) — all SQL verification against a local
+  scratch Postgres instance, dropped after use.
 
-### Verdict — INC-10
+### Verdict — INC-10 fix-cycle-2
 
-**PASS. BUG-008 CLOSED (resolved 2026-07-30, fix-cycle-1).** INC-10 is clean: all AC1-AC8 previously
-independently verified (archived run), BUG-008 was the sole open item and is now independently
-re-verified fixed (not accepted on dev's account), the one test-suite casualty of the fix (the stale
-regex) is repaired and strengthened rather than merely patched, and the PG14+ dependency is carried
-forward as a named, explicit INC-11 prerequisite rather than a silent assumption. No new bugs filed this
-pass. Reviewer is next; INC-11 and INC-12 remain after that.
+**PASS.** REV-113 (major) and REV-112 (minor) both independently verified closed, not accepted on dev's
+account — REV-113's fix confirmed to actually prevent cost-basis leakage by every route in the rendered
+block (not just the one line that changed), confirmed to genuinely change model-facing output (fails
+against pre-fix code), and confirmed not to weaken the pre-existing agreeing-currency/unknown-currency
+behavior. REV-112's file confirmed additive, idempotent, and actually effective against a realistically
+stale live row. No new bugs filed this pass. **INC-10 is clean for reviewer** — no open qa-owned defect
+remains against this increment (REV-114, the SQL-behavior CI gap, is a pre-existing systemic limitation
+flagged for qa as future work, not a fix-cycle-2 regression, and does not block this verdict).
 
 ---
 
@@ -134,8 +114,8 @@ pass. Reviewer is next; INC-11 and INC-12 remain after that.
 
 **BUG-007 — `_parse_batch`'s duplicate-requested-ticker resolution is silently last-write-wins when both
 occurrences resolve legitimately (`ok`) to DIFFERENT verdicts — minor, deferred by design — INC-9, BUG-006
-fix-cycle-2 residual, filed for the record, not currently blocking.** Unchanged this pass — INC-10 touched
-no `ai_judge.py` code. Full detail: `docs/archive/test-report-archive.md`'s INC-9 BUG-006 fix-cycle-2 entry
-(repro: `tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_
-undocumented_elsewhere`). **Owner:** tech-lead (design-level call on `_parse_batch`'s ticker-keyed return
-contract, if ever addressed).
+fix-cycle-2 residual, filed for the record, not currently blocking.** Unchanged this pass — fix-cycle-2
+touched no `_parse_batch` code. Full detail: `docs/archive/test-report-archive.md`'s INC-9 BUG-006
+fix-cycle-2 entry (repro: `tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_
+last_write_wins_undocumented_elsewhere`). **Owner:** tech-lead (design-level call on `_parse_batch`'s
+ticker-keyed return contract, if ever addressed).
