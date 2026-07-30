@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8–INC-11 DRAFT, pending user approval (GATE 3-equivalent)
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — approved by the user (GATE 3-equivalent, 2026-07-30); INC-8 IMPLEMENTED (reviewer-CLEAR Pass 24); INC-9–INC-11 approved-and-not-yet-built
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -33,7 +33,9 @@ all six blocker/major findings before `v0.1.0` and running the three deferred li
 (`requirements.md` Decision #36); pm sharpened NFR2/FR11/FR15/FR17/FR29/FR30 and added FR34 to make each
 fix self-verifiable (Decisions #31–#35). **`DEEP-007` is explicitly excluded** — an unresolved user
 trade-off, routed back to the user separately by pm; no increment below touches FR24/§13.1. Four new
-increments, **DRAFT, pending the user's GATE-3-equivalent approval of this plan before dev starts**:
+increments, **approved by the user (GATE-3-equivalent) on 2026-07-30. INC-8 is now IMPLEMENTED** —
+dev-built, qa-tested (PASS, zero bugs, `docs/test-report.md`), reviewer Pass 24 verdict CLEAR, zero
+blockers/majors (`docs/review-log.md`). **INC-9, INC-10, and INC-11 are approved and not yet built**:
 **INC-8** (DEEP-001+002 — NFR2 heartbeat accounting + FR34 delivery-confirmed alerting), **INC-9**
 (DEEP-003+004 — the parse-attribution contract + the FR17 stale-bar/holiday check), **INC-10** (DEEP-005+006
 — FR30 tunables write-time validation + FR29 holdings-currency derivation), **INC-11** (Decision #36's
@@ -336,9 +338,9 @@ layout; new `sql/kill_switch_portal_grant.sql` (extends `set_kill_switch`, adds
 
 ---
 
-## 2026-07-30 fix round — INC-8 through INC-11 (DRAFT, pending user GATE-3-equivalent approval)
+## 2026-07-30 fix round — INC-8 through INC-11 (approved by the user, GATE-3-equivalent, 2026-07-30; INC-8 IMPLEMENTED, INC-9–INC-11 approved-and-not-yet-built)
 
-### INC-8 — Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34; DEEP-001+DEEP-002) — **DRAFT**
+### INC-8 — Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34; DEEP-001+DEEP-002) — **IMPLEMENTED** (dev-built, qa-tested — PASS, zero bugs, `docs/test-report.md`; reviewer Pass 24 verdict CLEAR — zero blockers, zero majors; one non-blocking minor, REV-107, carried to Phase-4 closure — `docs/review-log.md`)
 **Design:** `docs/design/components.md` §4.6 (alerting), §4.8 (reliability/heartbeat); `docs/design/
 data-and-flow.md` §6 (core flow pseudocode). **Files:** `scripts/state.py` (`process_ticker`,
 `process_candidate`, `write_call_log`, `build_position` untouched here — DEEP-006 touches
@@ -377,7 +379,7 @@ bug is entirely in which Python outcomes count as "not ok" (`components.md` §4.
    dedupes an undelivered candidate (Decision #32).
 8. Full existing test suite passes; `git diff` confirms no file outside the list above changed.
 
-### INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — **DRAFT**
+### INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — **APPROVED, not yet built** (GATE-3-equivalent, user approval 2026-07-30; build in progress, result not yet known)
 **Design:** `docs/design/components.md` §4.2 (ingestion), §4.4/§4.4a (parse & retry); `docs/design/
 non-functional-ops.md` §7.5 (delisting/holidays). **Files:** `scripts/ai_judge.py` (`_parse_batch`, new
 `_normalize_ticker` helper, module docstring), `scripts/ingest.py` (`get_market_data`).
@@ -403,7 +405,7 @@ non-functional-ops.md` §7.5 (delisting/holidays). **Files:** `scripts/ai_judge.
 6. Full existing test suite passes; `git diff` confirms no file outside `scripts/ai_judge.py` and
    `scripts/ingest.py` changed.
 
-### INC-10 — Portal write-time validation + holdings-currency derivation (FR30, FR11, FR29; DEEP-005+DEEP-006) — **DRAFT**
+### INC-10 — Portal write-time validation + holdings-currency derivation (FR30, FR11, FR29; DEEP-005+DEEP-006) — **APPROVED, not yet built** (GATE-3-equivalent, user approval 2026-07-30)
 **Design:** `docs/design/admin-portal-tunables.md` §16.4 (tunables validation); `docs/design/admin-portal.md`
 §16.3 (holdings currency); `docs/design/non-functional-ops.md` §7.3 (currency enforcement). **Files:** new
 `sql/tunables_validate_trigger.sql`, new `sql/holdings_currency_derivation.sql`; `admin-portal/lib/
@@ -443,7 +445,7 @@ convention — no new authorization mechanism. Independent of INC-8/INC-9.
 8. Full existing test suite (Python + `tests/admin_portal/*.test.ts`) passes; `git diff` confirms no file
    outside the list above changed.
 
-### INC-11 — Live-verification pass (Decision #36; no dev code) — **DRAFT**
+### INC-11 — Live-verification pass (Decision #36; no dev code) — **APPROVED, not yet built** (GATE-3-equivalent, user approval 2026-07-30)
 **Design:** n/a — this increment executes acceptance criteria already defined for INC-3, INC-4, and INC-7
 above; it does not add or change design. **Files:** none in `scripts/`/`admin-portal/`/`sql/` — only
 `docs/handoff.md` (dated evidence block, same pattern as the INC-5/INC-3 live-evidence records already in
