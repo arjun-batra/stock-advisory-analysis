@@ -5,7 +5,9 @@ load-bearing decisions, increment plan, and requirement coverage map — read th
 orientation. Section numbers below (§13–§14) continue the pre-split numbering; §15 (coverage map)
 stays in `docs/design.md` itself, so this file skips it.
 
-**Status: §13.1–§13.5 IMPLEMENTED, §14 IMPLEMENTED, §13.6 DRAFT.** §13.1–§13.5 and §14 cover the
+**Status: §13.1–§13.5 IMPLEMENTED, §14 IMPLEMENTED, §13.6 dev-built + qa-PASS, reviewer Pass 28 NOT CLEAR
+(REV-116/REV-117 open, fix cycle in progress — see the note at the top of §13.6 below).** §13.1–§13.5 and
+§14 cover the
 2026-07-26 change request (kill-switch, FR24–FR26; AI provider abstraction, FR33). Both increments have
 shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction) were dev-built, qa-tested, and
 reviewer-cleared with zero blockers through Pass 14 (`docs/review-log.md`). Two verification items remain
@@ -15,13 +17,21 @@ pause/resume verification test (AC1–AC5), to be run as part of INC-11's live-v
 AC6 (live-Gemini smoke test) is deferred pending real credentials (`docs/handoff.md`), also part of INC-11.
 
 **§13.6 is new: INC-12 (DEEP-007 resolution, Decisions #37/#38, FR24's four in-flight boundary checkpoints
-+ FR35's mid-run-abort classification) — DRAFT, pending user approval (GATE-3-equivalent) before dev
-starts.** This closes the gap DEEP-007 found (`docs/review-log.md`, "Deep review — 2026-07-29"): a run
-already dispatched when the kill switch flips ran to full completion, including a real push and a
-`contents: write` commit, while the portal badge already read PAUSED. Sequenced strictly after INC-8
-(Decision #37) since it needed INC-8's degraded-accounting rewrite to settle what "the run produced real
-work, then stopped" means for NFR2 — INC-8 shipped and is reviewer-cleared (Pass 24), so this is now
-unblocked. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance criteria.
++ FR35's mid-run-abort classification) — dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`);
+reviewer Pass 28 verdict NOT CLEAR, one fix cycle in progress.** This closes most of the gap DEEP-007 found
+(`docs/review-log.md`, "Deep review — 2026-07-29"): a run already dispatched when the kill switch flips ran
+to full completion, including a real push and a `contents: write` commit, while the portal badge already
+read PAUSED. Sequenced strictly after INC-8 (Decision #37) since it needed INC-8's degraded-accounting
+rewrite to settle what "the run produced real work, then stopped" means for NFR2 — INC-8 shipped and is
+reviewer-cleared (Pass 24), so it was unblocked; the user approved the design for build (GATE-3-equivalent,
+2026-07-30). **Not yet reviewer-clear:** Pass 28's diff-scoped audit found two new majors — **REV-116**
+(tracing past the four named checkpoints surfaced a fifth, unguarded, pre-checkpoint-1 irreversible write in
+`run_hourly.py`'s `main()`; **DEEP-007 is not yet fully resolved** as a result, see §13.1's accepted-risk
+note below, still accurate to Pass 27 and pending correction once dev's fix lands) and **REV-117** (the new
+SQL file's `REVOKE` omits `TRUNCATE`, fixed in §13.6.5 below as of this update; blocks only live application
+of `sql/kill_switch_abort_log.sql`, not merging INC-12's Python code). Neither blocks INC-12's own qa-passed
+code from being on `main`. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance
+criteria.
 
 ---
 
@@ -103,6 +113,12 @@ alter table public.kill_switch_audit force row level security;
 revoke insert, update, delete on public.kill_switch_audit from public, anon, authenticated;
 -- REV-033 fix, 2026-07-28 (append-only was previously asserted in a comment
 -- only, enforced by nothing). Two layers, each independently sufficient:
+-- HISTORICAL NOTE (added 2026-07-30, REV-117's fix round): this REVOKE predates REV-081's discovery
+-- that RLS never governs TRUNCATE and omits that verb -- closed later, live, by
+-- sql/kill_switch_portal_grant.sql's own `revoke truncate on public.kill_switch_audit ...` (INC-7,
+-- admin-portal.md §16.6). Left unedited here as an accurate record of what actually shipped in what
+-- order; do NOT copy this specific block for a new table -- copy admin_allowlist's four-verb shape
+-- instead (design.md §0 rule #12).
 --   1. The REVOKE above removes the base insert/update/delete grant from
 --      every non-owner role — this alone blocks anon/authenticated regardless
 --      of any RLS policy that might be added later by mistake.
@@ -223,7 +239,10 @@ adjusted baseline.
 
 ### 13.6 In-flight boundary checks — FR24 checkpoints 1–4, FR35 causal-tie classification (INC-12)
 
-**Status: DRAFT, pending user approval.** Resolves DEEP-007 (`docs/review-log.md`) per Decision #37: §13.1's
+**Status: dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`); reviewer Pass 28 verdict
+NOT CLEAR — REV-116 (DEEP-007 residual) and REV-117 (SQL REVOKE gap, fixed in §13.6.5 below) open, one fix
+cycle in progress (`docs/review-log.md`).** Targets resolving DEEP-007 (`docs/review-log.md`) per Decision
+#37 — **not yet fully resolved**, see the top-of-file status note and REV-116 for what remains. §13.1's
 dispatch-layer guard only stops *future* dispatches — a run already executing when the flag flips ran to
 completion (real Yahoo fetches, a real AI call, a real push, a real commit to `main`) while the portal
 badge already read PAUSED. Arjun chose option (b): add Python-layer checks so an in-flight run stops itself
@@ -252,6 +271,29 @@ cap: at most ~4 extra reads per `hourly-watchlist`/`daily-discovery` run (checkp
 once per open market-group — normally 1, at most 2 on the never-overlapping-in-practice double-open edge
 case §4.1 already documents — and checkpoint 3 once per verdict crossing that actually requires a push,
 typically zero or a handful per cycle), plus one in `publish_prices.py`.
+
+**Failure mode if `is_paused()` itself raises (Supabase unreachable) — known asymmetry, not a defect
+(REV-119).** All four checkpoints fail *closed* with respect to the action they guard (nothing downstream
+ever runs on a failed pause-check), but they don't all fail the same *way*, because only checkpoint 3 sits
+inside a `try`/`except Exception` boundary:
+- **Checkpoints 1, 2, 4** (`main()`'s entry check in `run_hourly.py`/`run_discovery.py`; the pre-`judge_
+  batch` check inside `_process_group`, itself outside any `try`/`except` in that function; `publish_
+  prices.py`'s entry check) — a real, non-`KillSwitchAbort` exception from `is_paused()` propagates fully
+  uncaught and **crashes the whole run**. No `run_heartbeat` row is written for that cycle, which
+  `check_pipeline_health()`'s staleness check (§13.4) eventually catches — a crash is never silently
+  swallowed — but it is the *loud* failure mode: the operator learns from an absent heartbeat, not a
+  logged error.
+- **Checkpoint 3** (`state.process_ticker`/`process_candidate`) sits inside `_process_group`'s per-ticker
+  `except Exception` guard — a real exception there is caught, counted as an ordinary `outcomes["error"]`,
+  and contributes to a `partial` heartbeat **this same cycle**. Materially gentler: the run keeps going and
+  the failure surfaces immediately via NFR2's existing degraded-heartbeat path, not via a missing-heartbeat
+  staleness alert on a later cycle.
+
+Both paths eventually alert (NFR2 is not violated either way) and both fail closed with respect to the
+guarded action — this is a known, accepted property of the checkpoint placements, not something to
+"fix" by wrapping checkpoints 1/2/4 in a try/except: doing so would change their crash-on-Supabase-failure
+behavior, which is out of scope for this increment. A future on-call reader should expect checkpoint 2/4
+failures to look like checkpoint 1's (a hard run-crash), not checkpoint 3's (a gentler per-ticker error).
 
 #### 13.6.2 The four checkpoints — placement and control flow
 
@@ -440,16 +482,26 @@ create table public.kill_switch_abort_log (       -- append-only, never updated/
 );
 alter table public.kill_switch_abort_log enable row level security;
 alter table public.kill_switch_abort_log force row level security;
-revoke insert, update, delete on public.kill_switch_abort_log from public, anon, authenticated;
--- Same two-layer deny-all posture as kill_switch_audit (§13.2, REV-033): the REVOKE blocks
--- anon/authenticated regardless of any policy added later by mistake; RLS+FORCE with zero
--- policies denies every role except one with BYPASSRLS (Supabase's postgres role, and therefore
--- the SUPABASE_SECRET_KEY service connection every script already authenticates with) -- no new
--- grant, policy, or secret needed to write this table, per Decision #37's own text. No SELECT
--- policy for anon/authenticated is added by this increment -- nothing reads this table yet; a
--- future admin-portal observability view would add one additively, the same pattern INC-7 used
--- for kill_switch_state's first SELECT policy (§13.3), not a redesign.
+revoke insert, update, delete, truncate on public.kill_switch_abort_log from public, anon, authenticated;
+-- Same two-layer deny-all posture as kill_switch_audit (§13.2, REV-033), PLUS the `truncate` verb
+-- (REV-117 fix, 2026-07-30 -- omitted in the first draft of this sample, mirroring admin_allowlist's
+-- exact four-verb shape, sql/admin_portal_rls.sql:17): the REVOKE blocks anon/authenticated regardless
+-- of any policy added later by mistake -- RLS does NOT govern TRUNCATE in Postgres at all (design.md
+-- §0 rule #12), so omitting it here would leave TRUNCATE live on this table by Supabase's default
+-- grants alone, letting anon/authenticated destroy the append-only abort trail this table exists to
+-- make tamper-evident, with no trace. RLS+FORCE with zero policies separately denies every role
+-- except one with BYPASSRLS (Supabase's postgres role, and therefore the SUPABASE_SECRET_KEY service
+-- connection every script already authenticates with) -- no new grant, policy, or secret needed to
+-- write this table, per Decision #37's own text. No SELECT policy for anon/authenticated is added by
+-- this increment -- nothing reads this table yet; a future admin-portal observability view would add
+-- one additively, the same pattern INC-7 used for kill_switch_state's first SELECT policy (§13.3), not
+-- a redesign.
 ```
+**Before writing any other table's SQL in this codebase, read `docs/design.md` §0 rule #12** — this is the
+sixth time (REV-081, REV-086, INC-7's `kill_switch_state`/`kill_switch_audit` closure, REV-099's six-table
+sweep, and this table's own first draft, now fixed above) the same RLS-does-not-govern-TRUNCATE gap has
+been found in this project. The rule now lives in one place read regardless of module; don't rediscover it
+a seventh time.
 `checkpoint`'s two values match `KillSwitchAbort.checkpoint`'s two values exactly (`'ai_call'`, `'push'`) —
 checkpoint 1 and checkpoint 4 never write this table (§13.6.2), so no `'entry'`/`'commit'` value is needed.
 

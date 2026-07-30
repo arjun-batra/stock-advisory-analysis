@@ -111,7 +111,8 @@ scripts/
                          #   alerted/verdict-state-advance on notifier.push()'s delivery result — see
                          #   components.md §4.6. IMPLEMENTED (DEEP-006, INC-10, reviewer-CLEAR Pass 27):
                          #   build_position() suppresses pl_pct on a currency mismatch — see §7.3 above.
-                         #   DRAFT (INC-12, pending user approval): gains is_paused(), KillSwitchAbort,
+                         #   BUILT (INC-12, qa-PASS, reviewer Pass 28 NOT CLEAR — REV-116/REV-117 open,
+                         #   `docs/review-log.md`): gains is_paused(), KillSwitchAbort,
                          #   write_kill_switch_abort() and a checkpoint-3 call in process_ticker/
                          #   process_candidate — see operational-controls.md §13.6.
   notify.py              # ntfy dispatch (provider-agnostic); per-market topic + timestamp
@@ -123,19 +124,22 @@ scripts/
                          #   called early in main(); status computation gains `or
                          #   config.TUNABLES_DEGRADED` (REV-045) — the only entry point that writes back.
                          #   IMPLEMENTED (DEEP-001+002, INC-8): degraded formula gains outcomes["no-read"]
-                         #   + outcomes["push-failed"] — see components.md §4.8. DRAFT (INC-12, pending
-                         #   user approval): gains checkpoint 1 (entry) + checkpoint 2 (before
+                         #   + outcomes["push-failed"] — see components.md §4.8. BUILT (INC-12, qa-PASS,
+                         #   reviewer Pass 28 NOT CLEAR — REV-116/REV-117 open, `docs/review-log.md`):
+                         #   gains checkpoint 1 (entry) + checkpoint 2 (before
                          #   judge_batch) — see operational-controls.md §13.6.2.
   run_discovery.py       # daily discovery orchestrator (region-aware) — thin entry point. IMPLEMENTED
                          #   (INC-6): the same `or config.TUNABLES_DEGRADED` (REV-045).
                          #   IMPLEMENTED (DEEP-001+002, INC-8): same degraded-formula fix as run_hourly.py.
-                         #   DRAFT (INC-12, pending user approval): same checkpoint 1/2 shape as
+                         #   BUILT (INC-12, qa-PASS, reviewer Pass 28 NOT CLEAR — REV-116/REV-117 open,
+                         #   `docs/review-log.md`): same checkpoint 1/2 shape as
                          #   run_hourly.py — see operational-controls.md §13.6.2.
   publish_prices.py      # fetch watchlist prices, write pages/prices.json — thin entry point.
                          #   IMPLEMENTED (INC-6): the same `or config.TUNABLES_DEGRADED` (REV-045);
                          #   IMPLEMENTED (REV-043, live-system, independent of INC-6): switches to
-                         #   ingest.get_price_only() instead of get_market_data(). DRAFT (INC-12,
-                         #   pending user approval): gains checkpoint 4, immediately before the
+                         #   ingest.get_price_only() instead of get_market_data(). BUILT (INC-12,
+                         #   qa-PASS, reviewer Pass 28 NOT CLEAR — REV-116/REV-117 open,
+                         #   `docs/review-log.md`): gains checkpoint 4, immediately before the
                          #   prices.json write — see operational-controls.md §13.6.2.
 sql/
   scheduler_pgcron.sql, schema.sql, phase5_monitoring.sql, dashboard_latest_call_view.sql
@@ -164,8 +168,12 @@ sql/
   admin_portal_tunables_alerts_enabled_description_fix.sql   # IMPLEMENTED (INC-10 fix-cycle-2, REV-112,
                                         #   reviewer-CLEAR Pass 27): one-column, one-row corrective
                                         #   UPDATE, additive/idempotent — see admin-portal-tunables.md §16.4.
-  kill_switch_abort_log.sql            # DRAFT (INC-12, pending user approval): new append-only table,
-                                        #   FR35's causal-tie record — see operational-controls.md §13.6.5.
+  kill_switch_abort_log.sql            # BUILT, NOT YET APPLIED LIVE (INC-12, reviewer Pass 28 — REV-117:
+                                        #   REVOKE was missing `truncate`, fixed in operational-controls.md
+                                        #   §13.6.5 as of this update; dev fix to this file pending, blocks
+                                        #   live application until landed, `docs/review-log.md`): new
+                                        #   append-only table, FR35's causal-tie record — see
+                                        #   operational-controls.md §13.6.5.
 pages/
   detail.html, dashboard.html, prices.json   # FIX ROUND (DEEP-001, INC-8): dashboard.html's per-row
                                               #   verdict pill widens its "no reading" special-case from
