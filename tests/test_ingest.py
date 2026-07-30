@@ -236,3 +236,191 @@ def test_get_price_only_no_price_data_is_skip_not_fatal(monkeypatch):
 
     assert data["has_price"] is False
     assert data["notes"]
+
+
+# --- DEEP-004 / FR17 Decision #33: stale-bar / closed-market structural check,
+# get_market_data() ------------------------------------------------------------
+# `_session_state()` and the new check both read `ingest.datetime.now(tz)`
+# with no explicit `now=` parameter available on `get_market_data`'s call
+# path, so "today" is frozen by monkeypatching the module-level `datetime`
+# name itself (the same seam dev's handoff names) rather than passing a
+# clock argument.
+
+class _FrozenDatetimeBase(dt.datetime):
+    """Subclass of the real datetime whose .now(tz) always returns one frozen
+    instant, converted into whatever tz is requested -- so a single frozen
+    moment drives both config.MARKET_TZ and config.NSE_MARKET_TZ consistently,
+    exactly like a real wall clock would."""
+    _instant = None
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return cls._instant
+        return cls._instant.astimezone(tz)
+
+
+def _freeze(monkeypatch, instant):
+    frozen = type("FrozenDatetime", (_FrozenDatetimeBase,), {"_instant": instant})
+    monkeypatch.setattr(ingest, "datetime", frozen)
+
+
+class _RaisesIfFundamentalsTouched:
+    """Fake yf.Ticker whose .fast_info/.info/.news all raise if accessed --
+    proves the stale-bar return happens BEFORE _fundamentals()/_headlines()
+    (and therefore before any price/volume pro-rating math) ever runs."""
+
+    def __init__(self, ticker, closes, index):
+        self.ticker = ticker
+        self._closes = closes
+        self._index = index
+
+    def history(self, period=None, auto_adjust=False):
+        return pd.DataFrame({"Close": self._closes,
+                              "Volume": [1_000] * len(self._closes)}, index=self._index)
+
+    @property
+    def fast_info(self):
+        raise AssertionError("stale-bar check must return before fundamentals are fetched")
+
+    @property
+    def info(self):
+        raise AssertionError("stale-bar check must return before fundamentals are fetched")
+
+    @property
+    def news(self):
+        raise AssertionError("stale-bar check must return before headlines are fetched")
+
+
+class _FullFakeTickerForDate:
+    """Same shape as test_get_price_only_matches_...'s FullFakeTicker, but
+    with a caller-supplied index so the same-day/live-clock scenarios can
+    control the exact bar date."""
+
+    def __init__(self, ticker, closes, index, currency="USD"):
+        self.ticker = ticker
+        self._closes = closes
+        self._index = index
+        self.fast_info = {"currency": currency}
+
+    def history(self, period=None, auto_adjust=False):
+        return pd.DataFrame({"Close": self._closes,
+                              "Volume": [1_000] * len(self._closes)}, index=self._index)
+
+    @property
+    def info(self):
+        return {}
+
+    @property
+    def news(self):
+        return []
+
+
+def test_get_market_data_stale_bar_during_live_clock_skips_before_prorating(monkeypatch):
+    """DEEP-004's exact scenario: a weekday, mid-session US clock, but the
+    last available bar predates today (an undetected holiday). Must return
+    has_price=False with a reason note naming both dates, and -- critically --
+    none of pct_change_1d/volume_vs_avg/fundamentals may have been computed,
+    since running that math on a stale bar was the fabricated-volume-spike
+    half of the defect."""
+    frozen_now = dt.datetime(2026, 7, 30, 12, 45, tzinfo=config.MARKET_TZ)  # Thu, mid-session ET
+    _freeze(monkeypatch, frozen_now)
+    idx = pd.date_range(end=dt.date(2026, 7, 27), periods=5, freq="D")  # last bar 3 days stale
+    monkeypatch.setattr(
+        ingest.yf, "Ticker",
+        lambda ticker: _RaisesIfFundamentalsTouched(ticker, [10.0, 10.5, 11.0, 10.8, 11.2], idx))
+
+    data = ingest.get_market_data("AAPL")
+
+    assert data["has_price"] is False
+    assert data["session_live"] is False           # left at its default, never flipped True
+    assert data["pct_change_1d"] is None            # pro-rating math never ran
+    assert data["pct_change_5d"] is None
+    assert data["volume_vs_avg"] is None
+    assert data["fundamentals"] == {}                # _fundamentals() never called
+    assert data["headlines"] == []
+    note = " ".join(data["notes"])
+    assert "market appears closed today" in note
+    assert "2026-07-30" in note   # today (market-local)
+    assert "2026-07-27" in note   # the stale bar's own date
+
+
+def test_get_market_data_same_day_bar_during_live_clock_is_unaffected(monkeypatch):
+    """Negative case for DEEP-004: a same-day bar during genuinely live hours
+    must be entirely unaffected -- has_price stays True, session_live is
+    True, and normal pro-rating still applies."""
+    frozen_now = dt.datetime(2026, 7, 30, 12, 45, tzinfo=config.MARKET_TZ)  # Thu, mid-session ET
+    _freeze(monkeypatch, frozen_now)
+    idx = pd.date_range(end=dt.date(2026, 7, 30), periods=30, freq="D")   # last bar is TODAY
+    long_closes = [10.0 + i * 0.1 for i in range(30)]
+    monkeypatch.setattr(ingest.yf, "Ticker",
+                         lambda ticker: _FullFakeTickerForDate(ticker, long_closes, idx))
+
+    data = ingest.get_market_data("AAPL")
+
+    assert data["has_price"] is True
+    assert data["session_live"] is True
+    assert data["pct_change_1d"] is not None
+    assert not any("market appears closed" in n for n in data["notes"])
+
+
+# --- DEEP-004 timezone assumption check (NSE) ---------------------------------
+# dev's handoff flags that `h.index[-1].date()` is taken at face value as
+# already exchange-local, with no explicit tz conversion -- untested by the
+# pre-existing suite, whose fixtures all use naive pd.date_range indexes.
+# NSE is the market whose offset (+5:30, no DST) is furthest from UTC, so it
+# is the sharpest test of that assumption. These use a REAL tz-aware pandas
+# DatetimeIndex (Asia/Kolkata-localized, matching what live yfinance actually
+# returns) instead of a naive one.
+
+def test_get_market_data_nse_stale_bar_with_tz_aware_kolkata_index(monkeypatch):
+    frozen_now = dt.datetime(2026, 7, 30, 12, 0, tzinfo=config.NSE_MARKET_TZ)  # Thu, mid-session IST
+    _freeze(monkeypatch, frozen_now)
+    idx = pd.date_range(end=pd.Timestamp("2026-07-27 15:00", tz="Asia/Kolkata"), periods=5, freq="D")
+    monkeypatch.setattr(
+        ingest.yf, "Ticker",
+        lambda ticker: _RaisesIfFundamentalsTouched(ticker, [100.0, 101.0, 102.0, 101.5, 103.0], idx))
+
+    data = ingest.get_market_data("SBIN.NS")
+
+    assert data["has_price"] is False
+    assert "market appears closed today" in " ".join(data["notes"])
+
+
+def test_get_market_data_nse_same_day_bar_with_tz_aware_kolkata_index(monkeypatch):
+    frozen_now = dt.datetime(2026, 7, 30, 12, 0, tzinfo=config.NSE_MARKET_TZ)  # Thu, mid-session IST
+    _freeze(monkeypatch, frozen_now)
+    idx = pd.date_range(end=pd.Timestamp("2026-07-30 12:00", tz="Asia/Kolkata"), periods=30, freq="D")
+    long_closes = [100.0 + i for i in range(30)]
+    monkeypatch.setattr(ingest.yf, "Ticker",
+                         lambda ticker: _FullFakeTickerForDate(ticker, long_closes, idx))
+
+    data = ingest.get_market_data("SBIN.NS")
+
+    assert data["has_price"] is True
+    assert data["session_live"] is True
+    assert not any("market appears closed" in n for n in data["notes"])
+
+
+def test_get_market_data_nse_same_day_bar_robust_even_if_index_tz_were_utc(monkeypatch):
+    """Probes whether the assumption is a latent bug: if yfinance's index were
+    ever localized to UTC instead of exchange-local Asia/Kolkata (contrary to
+    the design's stated assumption), would the comparison still land on the
+    correct calendar date? NSE's session (9:15-15:30 IST = 03:45-10:00 UTC)
+    never crosses a UTC midnight boundary, so a UTC-localized bar timestamp
+    taken during NSE's own live session still carries the SAME calendar date
+    as its IST equivalent -- .date() cannot disagree between the two
+    representations for any bar time inside NSE trading hours. This test
+    demonstrates that (not merely argues it): a same-day bar recorded with a
+    UTC tz instead of Kolkata still reads as unaffected."""
+    frozen_now = dt.datetime(2026, 7, 30, 12, 0, tzinfo=config.NSE_MARKET_TZ)  # 06:30 UTC same day
+    _freeze(monkeypatch, frozen_now)
+    idx = pd.date_range(end=pd.Timestamp("2026-07-30 06:30", tz="UTC"), periods=30, freq="D")
+    long_closes = [100.0 + i for i in range(30)]
+    monkeypatch.setattr(ingest.yf, "Ticker",
+                         lambda ticker: _FullFakeTickerForDate(ticker, long_closes, idx))
+
+    data = ingest.get_market_data("SBIN.NS")
+
+    assert data["has_price"] is True
+    assert not any("market appears closed" in n for n in data["notes"])

@@ -5,164 +5,176 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-8 — Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34; DEEP-001+DEEP-002) — 2026-07-30
+## INC-9 — Parse-attribution contract + closed-market structural check (FR17; DEEP-003+DEEP-004) — 2026-07-30
 
-**Scope.** `scripts/state.py`, `scripts/notify.py`, `scripts/run_hourly.py`, `scripts/run_discovery.py`,
-`pages/dashboard.html` (`git diff --name-only 087f5dd..feaf58b` confirms exactly these five files + `docs/
-handoff.md`). Read against `docs/design/increment-plan.md`'s INC-8 section (8 ACs),
-`docs/design/components.md` §4.6/§4.8, `docs/design/data-and-flow.md` §6, `docs/requirements.md`
-NFR2/FR15/FR34 + Decisions #31/#32, and `docs/review-log.md` DEEP-001/DEEP-002 — not from dev's summary.
+**Scope.** `scripts/ai_judge.py` (`_parse_batch`, new `_normalize_ticker`, module docstring),
+`scripts/ingest.py` (`get_market_data`) — confirmed via `git diff --stat f66d693..HEAD -- scripts/`
+(exactly these two files). Read against `docs/design/increment-plan.md`'s INC-9 section (6 ACs),
+`docs/design/components.md` §4.2/§4.4a, `docs/design/non-functional-ops.md` §7.5, `docs/requirements.md`
+FR17 + Decisions #33/#34, and `docs/review-log.md`'s DEEP-003/DEEP-004 entries — not from dev's handoff
+summary.
 
-### 1. Baseline reconciliation (dev claimed 207, `test-report.md`'s last full-system entry recorded 204)
+### 1. Baseline reconciliation
 
-**Both were correct at their own point in time — not a contradiction.** Stashed dev's INC-8 diff and ran the
-suite against the immediate pre-INC-8 commit (`087f5dd`): **207 passed, 0 failed**, confirming dev's stated
-baseline exactly. The archived Phase-4 entry's "204" was recorded at commit `34e94d9`, three commits before
-`eb859b5` ("fix: add `ingest.get_price_only()`...", REV-043) added exactly 3 new tests to
-`tests/test_ingest.py`. 204 + 3 = 207 — the true, reconciled pre-INC-8 baseline is **207 passed, 0 failed**;
-the "204" figure was already stale by the time INC-8 started, for reasons unrelated to INC-8.
+Dev claimed 229 passed / 0 failed pre-INC-9, with **no pre-existing test encoding the old (buggy)
+behavior** — unlike INC-8, nothing needed rewriting. Independently confirmed rather than accepted on
+account: `git stash`'d this session's new test files and reran the suite against dev's INC-9 commit
+(`d006eb2`) — **229 passed, 0 failed**, exact match. Confirmed `229` is also exactly the pre-INC-9 baseline
+by running the identical suite against `f66d693` (last reviewer-cleared commit) — also 229/0. Dev's "no
+tension to flag" claim holds: the fixes are additive/narrowing, not a contract change any existing test
+asserted the old shape of.
 
-### 2. Verifying dev's claim on the 8 failures (not accepted on account)
+### 2. New tests, and whether each is a genuine regression test
 
-Ran the suite against dev's INC-8 commit (`feaf58b`) independently: reproduced the exact same **199 passed,
-8 failed**, all in `tests/test_notify.py`/`tests/test_state.py`, as dev reported. Read every failing
-assertion against the actual new contract in `scripts/notify.py`/`scripts/state.py` (behavior, not diff) and
-against `docs/design/components.md` §4.6's specified return contract before touching anything. Per-failure
-classification:
+Every new test below was run against **both** the INC-9 commit (`d006eb2`, current) and the pre-INC-9
+baseline (`f66d693`, dev's code swapped out and back in via `git show <rev>:<path>`, not a branch
+checkout) to confirm it actually discriminates old-vs-new behavior rather than passing by construction.
 
-| Test | Classification | Why |
-|---|---|---|
-| `test_notify.py::test_ntfy_notifier_swallows_network_errors_without_crashing` | **Old-contract assertion — fixed** | Asserted the retired `"[notify error]"` log substring; AC4 explicitly requires the new, distinct `[notify] ERROR push failed for {ticker}: ...` line (confirmed present via behavior, not read from the diff). Not a defect — the new line is correct and required. |
-| `test_state.py::test_any_verdict_change_fires_immediate_alert` (6 parametrized cases) | **Old-contract assertion — fixed** | `FakeNotifier.push()` had no `return` (implicit `None`). Under the *old* contract the return value was never read; under FR34, `None` means "dry run," so `alerted` is correctly written `False` per the new contract, and the test's `assert ... is True` is checking behavior FR34 deliberately changed. This is DEEP-002's own finding, almost verbatim. |
-| `test_state.py::test_discovery_buy_pushes` | **Old-contract assertion — fixed** | Same root cause as above, discovery side. |
+| Test (file) | On `d006eb2` (new) | On `f66d693` (pre-fix) | Genuine regression test? |
+|---|---|---|---|
+| `test_parse_batch_misattributed_shifted_array_fails_safe_not_borrowed` (`test_ai_judge.py`) | PASS | **FAIL** — `TSLA` resolves `MSFT`'s verdict/rationale under `parse_status="ok"`, the exact DEEP-003 shape | Yes |
+| `test_parse_batch_legitimate_fallback_missing_ticker_label_still_resolves` (`test_ai_judge.py`) | PASS | **FAIL** — old code has no `used_fallback` log line at all (AC2 is new behavior), so the log-line assertion fails even though the resolution itself was already correct pre-fix | Yes (for AC2's log line; the underlying resolution behavior was already correct pre-fix, only the new log line is what regresses) |
+| `test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_market` (`test_ai_judge.py`) | **FAIL** (see BUG-005) | **FAIL** (same root symptom, pre-existing, unfixed by INC-9's narrowing) | Not a new regression — pre-existing defect the fix's own `_normalize_ticker` mechanism does not close; see BUG-005 |
+| `test_get_market_data_stale_bar_during_live_clock_skips_before_prorating` (`test_ingest.py`) | PASS | **FAIL** — `has_price=True`, pro-rating ran, the fake ticker's `.fast_info`/`.info`/`.news` (rigged to raise if touched) were actually called | Yes |
+| `test_get_market_data_same_day_bar_during_live_clock_is_unaffected` (`test_ingest.py`) | PASS | PASS (expected — negative case, no behavior change either side) | N/A by design (regression guard for the *other* direction) |
+| `test_get_market_data_nse_stale_bar_with_tz_aware_kolkata_index` (`test_ingest.py`) | PASS | **FAIL** — same as the US case, NSE path | Yes |
+| `test_get_market_data_nse_same_day_bar_with_tz_aware_kolkata_index` (`test_ingest.py`) | PASS | PASS (negative case) | N/A by design |
+| `test_get_market_data_nse_same_day_bar_robust_even_if_index_tz_were_utc` (`test_ingest.py`) | PASS | PASS (negative case, both sides — see §4) | N/A by design |
 
-**No real defect found among the 8.** Verified this conclusion against production behavior directly (not
-just re-reading dev's own diagnosis): drove `state.process_ticker`/`process_candidate` with a
-`FakeNotifier` configured to actually return `True`/`False`/`None` per FR34's three-valued contract and
-confirmed `alerted`/`current_verdict`/outcome all match `components.md` §4.6 exactly (see §4 below) — the
-production code is correct; only the shared test fixture encoded the old contract.
+Verified by literally running the assertions against both revisions (not inferred from the diff) —
+methodology in §5 below.
 
-**Fix applied (`tests/`, qa's own file, not production code):** `FakeNotifier` (`tests/test_state.py`) now
-takes `returns=True` (default — an ordinary successful send, matching what these pre-existing tests actually
-intend) or `queue=[...]` (a scripted per-call sequence, used by the new AC5 retry test). `tests/
-test_notify.py`'s two assertions updated to the new log line and now additionally assert the `bool`/`None`
-return values themselves (the old test never checked `push()`'s return value at all).
+### 3. AC-by-AC verification
 
-**Separately found and fixed (not one of the 8, a latent gap, no bug filed — production code is correct):**
-`test_ntfy_notifier_posts_to_correct_topic_url_mocked`'s mocked response object had a bare `status_code`
-with no `raise_for_status()` method. Once `NtfyNotifier.push()` started calling `raise_for_status()` inside
-its `try`, this "success" test's mock actually made `push()` return `False` via the caught `AttributeError`
-— silently, since the test never asserted on the return value. Confirmed by direct execution (`result =
-False` against the un-fixed mock). Fixed the mock to include a no-op `raise_for_status()` and added `assert
-result is True`, so a genuine 2xx now provably exercises the `True` path this test's name claims to cover.
+1. **PASS.** `test_parse_batch_misattributed_shifted_array_fails_safe_not_borrowed` — the `[A,B,C]`
+   request / `[A,X,B]` response shape from DEEP-003's evidence: `TSLA` (the dropped ticker) fails safe
+   (`parse_status="failed"`), never receives `MSFT`'s verdict/rationale under `"ok"`. Second test,
+   `test_parse_batch_legitimate_fallback_missing_ticker_label_still_resolves`, confirms the legitimate
+   no-label case still resolves positionally with `parse_status="ok"`.
+2. **PASS.** `grep -n "positional fallback used for" scripts/ai_judge.py` returns the line; both new tests
+   assert on captured stdout directly (not just grep) — fires for the legitimate-fallback ticker, does
+   NOT fire for the rejected misattribution candidate.
+3. **PASS.** Confirmed by direct read: `ai_judge.py`'s module docstring (lines 1–12) no longer states the
+   unqualified "can only ever MISS a signal" claim — it names `_parse_batch`'s narrowed positional-fallback
+   acceptance test as the mechanism. One caveat, not an AC3 failure: the docstring's claim is not fully
+   true given BUG-005 below (a residual fabrication path); flagged there, not re-litigated here since AC3
+   only asks whether the docstring text itself was corrected, which it was.
+4. **PASS.** `test_get_market_data_stale_bar_during_live_clock_skips_before_prorating` — weekday,
+   mid-session US clock, last bar 3 days stale → `has_price=False`, note contains "market appears closed
+   today", both dates named, and (stronger than the AC's own text) the fake ticker's `.fast_info`/`.info`/
+   `.news` are rigged to raise `AssertionError` if ever touched — proving `_fundamentals()`/`_headlines()`
+   and the pro-rating math genuinely never ran, not merely that their output was discarded.
+   `test_get_market_data_same_day_bar_during_live_clock_is_unaffected` — same-day bar, unaffected:
+   `has_price=True`, `session_live=True`, normal pro-rating path reached.
+5. **PASS.** `grep -n "last_bar_date" scripts/ingest.py` — both occurrences sit between the empty-history
+   guard and `close = h["Close"].dropna()` (line 270), before any of `pct_change_1d/5d/20d`/
+   `volume_vs_avg` — confirmed by direct read of `get_market_data`, matching the AC's "structurally
+   unreachable, not a late-added guard" framing.
+6. **PASS.** `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **236 passed, 1 failed** (229
+   baseline + 8 new INC-9 tests; 1 new test fails, documenting BUG-005, a residual defect — not a
+   regression from a clean baseline). `git diff --stat f66d693..HEAD -- scripts/` confirms exactly
+   `scripts/ai_judge.py` and `scripts/ingest.py` changed (tech-lead's own doc-only commits are outside this
+   diff scope, as dev's handoff notes).
 
-### 3. The three highest-stakes behaviors, tested directly
+### 4. Timezone assumption (dev's flagged inherited risk) — verified, not a latent bug
 
-- **AI/Gemini failure fail-safe guard (`state.py:256`) — untouched, confirmed by behavior.** New tests
-  `test_ai_failure_fail_safe_guard_is_untouched_by_delivery_gating` and the `api_error` variant wire a
-  `FakeNotifier(returns=True)` (would deliver successfully if called) into a `parse_status="failed"`/
-  `"api_error"` cycle and assert `notifier.calls == []` (push never even attempted),
-  `current_verdict` unchanged, `alerted=False`. A regression here would fabricate advice; it does not occur.
-- **Failed push → `alerted=False`, OLD verdict retained, automatic retry on next cycle** —
-  `test_failed_push_leaves_state_pending_then_retries_and_succeeds` (AC5's exact named flow, one assertion
-  block: fail once, confirm state pending, retry with the same new verdict, succeed, confirm state now
-  advances).
-- **Dry run → `alerted=False` but state DOES advance, no backlog dump** —
-  `test_dry_run_push_logs_undelivered_but_still_advances_state_no_backlog` (AC6, both halves in one block
-  per the AC's own reasoning, plus a following identical-verdict cycle confirmed genuinely `"quiet"`, not a
-  second push).
+Dev flagged: `h.index[-1].date()` is taken at face value as already exchange-local, with no explicit
+tz conversion, and every pre-existing fixture uses a **naive** `pd.date_range` index, so this was
+previously untested against a real tz-aware index. Checked directly for NSE (furthest UTC offset,
++5:30, no DST) with three new tests using **tz-aware** `Asia/Kolkata`-localized pandas indices (matching
+what live `yfinance` actually returns — exchange-local via the ticker's own `exchangeTimezoneName`),
+not naive ones:
 
-**Also tested, not named by any single AC (flagged in the qa brief as the difference between a useful retry
-and misleading advice):** `test_failed_push_then_verdict_changes_again_retries_current_not_stale_verdict` —
-after a failed push leaves the crossing pending, if the AI's verdict changes AGAIN before the retry, the
-retry pushes the CURRENT verdict, not a replay of the stale failed one. Passes.
-`test_ai_failure_while_a_push_failed_crossing_is_pending_does_not_alert_or_advance` — interaction of both
-DEEP-001/DEEP-002 fixes: an AI-call failure arriving while a push-failed crossing is already pending must
-not disturb it (no push attempted, old verdict stays put). Passes.
+- Stale-bar and same-day-bar NSE scenarios both pass with a genuinely tz-aware Kolkata index — the
+  assumption holds for the realistic case, closing the "only tested against naive fixtures" gap.
+- A third test deliberately builds the index as **UTC**-localized instead (probing the failure mode: what
+  if `yfinance` ever returned a non-exchange-local index) — still passes. This is not luck: NSE's live
+  session (9:15–15:30 IST = 03:45–10:00 UTC) never crosses a UTC midnight boundary, so `.date()` on a bar
+  timestamp taken during NSE's own trading hours reads the same calendar date whether the Timestamp
+  carries `Asia/Kolkata` or `UTC` tzinfo. The same arithmetic holds for US (13:30–20:00 UTC) and TSX
+  (same session as US).
 
-### 4. New permanent tests added (AC-by-AC)
+**Verdict: verified safe, not a latent bug, and no longer untestable** — closed the gap dev flagged with a
+tz-aware fixture rather than leaving it as an inherited, unexercised assumption. Would only become a real
+defect for a market whose live trading hours straddle UTC midnight while its index were mislocalized —
+not a configuration any of the three current markets (US/TSX/NSE) has.
 
-- **AC1** (`tests/test_run_orchestration.py`) — `test_heartbeat_is_partial_when_every_ticker_ai_call_fails`
-  (both watchlist tickers `parse_status="failed"`/`"api_error"` → `run_heartbeat.status == "partial"`, the
-  exact DEEP-001 scenario), `test_heartbeat_is_partial_for_mixed_no_read_and_quiet_batch` (one quiet + one
-  no-read), `test_discovery_heartbeat_is_partial_when_every_candidate_ai_call_fails` (discovery side). All
-  drive the REAL `run_hourly.main()`/`run_discovery.main()` entry points, not reimplemented logic.
-- **AC4** (`tests/test_notify.py`) — `test_ntfy_notifier_returns_false_without_raising_on_non_2xx_response`
-  (mocked 500, asserts `push()` returns `False` without raising, exactly as AC4 names), plus
-  `test_dry_run_notifier_push_returns_none_explicitly`.
-- **AC5/AC6/AC7** (`tests/test_state.py`) — see §3 above plus
-  `test_discovery_candidate_dry_run_excluded_from_recent_pushed_dedup`,
-  `test_discovery_candidate_failed_push_excluded_from_recent_pushed_dedup` (AC7, both undelivered paths),
-  and `test_discovery_candidate_successful_push_is_deduped` (regression guard: a genuinely delivered push
-  still IS deduped — proves the exclusion is delivery-status-driven, not a broken filter).
-- **AC3** (`tests/test_dashboard_pill_logic.py`, new file) — see §5 below.
-- **AC2/AC8** — verified by direct `grep`/`git diff` (matches dev's self-check; independently re-run, not
-  taken on account).
+### 5. Regression suite & methodology
 
-### 5. AC3 — what could and could not be verified
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **236 passed, 1 failed** (229 baseline +
+  8 new INC-9 tests, 1 failing — BUG-005, not a regression, see below).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` (run from repo root —
+  `tests/admin_portal/`, not `admin-portal/tests/`) → **63 passed, 0 failed**, matching the last recorded
+  baseline exactly; `admin-portal/node_modules` is present this session (the prior INC-8 run's 6
+  `build_bundle.test.ts` environment failures are gone). INC-9 touches zero `admin-portal/` files.
+- Old-vs-new discrimination (§2 table): for each new test, the production files under test
+  (`scripts/ai_judge.py`, `scripts/ingest.py`) were swapped for their `f66d693` (pre-INC-9) content via
+  `git show f66d693:<path> > <path>`, the specific new tests re-run, then restored via the session's own
+  saved copies and confirmed `git diff` clean before continuing. This is stronger evidence than reasoning
+  from the diff — every regression test named above was directly proven to fail on the pre-fix code.
 
-No browser-automation tooling (playwright/puppeteer/selenium) is available in this environment (checked).
-**The AC's own "manual/qa browser check" half — a real synthetic `call_log` row rendered and visually
-confirmed in an actual browser — was NOT performed and remains genuinely unverified**, same posture as this
-project's other environment-blocked live checks (e.g. INC-4 AC6). What was done instead, more rigorously
-than dev's own throwaway (uncommitted) scratch script: `tests/test_dashboard_pill_logic.py` brace-matches
-and extracts the REAL, current `botBlock()` function verbatim out of `pages/dashboard.html` and executes it
-under real Node against synthetic rows for every relevant `parse_status`, asserting the actual rendered
-HTML — not a source-text grep. Covers: `no_data`/`failed`/`api_error` all render the "no data" pill and
-never a `Hold` pill; a genuine `parse_status="ok"` Hold/Buy/Sell still renders its real verdict pill
-(regression guard the other direction); no `call_log` row renders nothing (FR21, pre-existing, guarded so
-an INC-8 edit to the shared function can't silently break it); `pages/detail.html`'s pre-existing
-`failed`/`api_error` special-case text is still present (confirms "no change needed there").
+### 6. Shippability
 
-### 6. Regression suite
+Real entry point, not reimplemented logic: `run_hourly.main()` driven end-to-end with only `yf.Ticker`
+faked (`ingest.get_market_data` itself REAL, so the DEEP-004 structural check actually executes inside
+the real pipeline) and `ai_judge.judge_batch` mocked (no live Gemini call). Watchlist of two US tickers —
+`AAPL` (normal, same-day bar) and `HOLIDAY` (stale bar, frozen weekday/live clock). Confirmed: `HOLIDAY`
+is skipped-with-log (`state.log_skip`, `parse_status="no_data"`, `alerted=False`) **before** it ever
+reaches `ai_judge.judge_batch` (only `AAPL` is in the batch); `AAPL` resolves a normal `cold-start`
+outcome; `run_heartbeat.status == "partial"` (the skip is visible, not silently absorbed into "ok"),
+matching FR17/NFR2. Script not committed (session-scratchpad only), reproducible from this description.
 
-- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **229 passed, 0 failed** (207 pre-INC-8
-  baseline, 0 net regressions, +22 new INC-8 test cases: 9 new functions in `tests/test_state.py`, 2 in
-  `tests/test_notify.py`, 3 in `tests/test_run_orchestration.py`, and `tests/test_dashboard_pill_logic.py`
-  — new file, 6 functions / 8 test cases, one parametrized ×3 — the 8 pre-existing old-contract assertions
-  were fixed in place, not added/removed, so the count doesn't include them).
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **57 passed, 6 failed.** All 6
-  failures are in `tests/admin_portal/build_bundle.test.ts` (`next build` fails in this environment:
-  "Turbopack build failed... couldn't find the Next.js package... from the project directory"). **Confirmed
-  pre-existing and unrelated to INC-8**, not a regression: re-ran the identical file against the pre-INC-8
-  commit (`087f5dd`, before stashing/restoring dev's diff) and got the identical 6 failures with the
-  identical error text — INC-8 touches zero `admin-portal/` files (confirmed by `git diff --name-only`
-  above), so this is an environment/build-tooling issue in this execution sandbox, not a code defect from
-  this increment. Not filed as an INC-8 bug (out of scope); flagged here for release/dev to investigate
-  separately if it recurs outside this sandbox, since it diverges from the last recorded 63/63 baseline.
+### Verdict — INC-9
 
-### 7. Shippability
-
-- All three Python entry points (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`) import cleanly
-  under `SKIP_TUNABLES_FETCH=true`.
-- `run_hourly.main()`/`run_discovery.main()` — the real entry-point functions, not reimplemented logic —
-  driven end-to-end through `tests/test_run_orchestration.py`'s `wire_main`/`wire_discovery` fixtures
-  (patches only the true I/O seams: Supabase client, notifier), including the new AC1 all-failed-batch
-  scenarios above.
-- `pages/dashboard.html` and `pages/detail.html`'s inline `<script>` blocks both pass `node --check` (no
-  syntax error introduced).
-
-### Verdict — INC-8
-
-**PASS.** Python suite: 229 passed, 0 failed (207 baseline + 21 new, 0 regressions). TypeScript/admin-portal
-suite: 57 passed, 6 failed — all 6 pre-existing and environment-caused, independently confirmed unrelated to
-this increment's zero-`admin-portal/`-file diff. All 8 originally-failing tests were old-contract
-assertions (not real defects); each fixed with its production-behavior classification recorded above, not
-papered over. AC1, AC2, AC4, AC5, AC6, AC7, AC8 independently verified with new permanent tests or direct
-grep/diff re-checks. AC3 is **partially** verified: the JS logic itself is proven correct against real
-runtime execution (not just source grep), but the AC's own "actual browser" rendering check could not be
-performed in this environment and remains open, consistent with this project's existing posture on
-environment-blocked live checks — not treated as a silent PASS.
-
-No bugs filed against production code — no defect was found in `scripts/state.py`, `scripts/notify.py`,
-`scripts/run_hourly.py`, `scripts/run_discovery.py`, or `pages/dashboard.html`.
+**Bugs filed.** ACs 1–6 all independently verified PASS (§3). Python suite: 236 passed, 1 failed (229
+baseline + 8 new, 0 regressions — the 1 failure is a newly-written test documenting a genuine pre-existing
+defect, not a broken assertion). TypeScript suite: 63 passed, 0 failed, unaffected. Shippability confirmed
+via the real `run_hourly.main()` entry point. Timezone assumption dev flagged: verified safe for NSE, not
+a latent bug (§4). One bug filed against production code — **BUG-005** (below); the DEEP-003 fix ships as
+designed and closes the exact scenario in DEEP-003's evidence and increment-plan.md's AC1, but does not
+close a related, narrower cross-market collision the fix's own `_normalize_ticker` mechanism introduces.
 
 ---
 
 ## Open bugs
 
-None filed against INC-8. One environment observation carried forward (not a bug, not blocking): the
-admin-portal TypeScript suite's `build_bundle.test.ts` (6 tests) fails in this execution sandbox on a
-Turbopack workspace-root inference error, confirmed pre-existing (reproduces identically on the pre-INC-8
-commit) and unrelated to any code this increment touched — see §6 above. Worth a release/dev look if it
-recurs in CI, since it diverges from the last recorded 63/63 baseline.
+**BUG-005 — `_normalize_ticker`'s `.TO`/`.NS` suffix-stripping creates a cross-market misattribution
+`_parse_batch`'s narrowed positional-fallback check doesn't catch — major — INC-9, FR17/DEEP-003 residual.**
+
+**Where:** `scripts/ai_judge.py`, `_parse_batch` (`:239–250`), via `_normalize_ticker` (`:184–192`).
+
+**Repro (`tests/test_ai_judge.py::test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_market`):**
+request `["ABC.TO", "ABC.NS"]`; model response `[{no ticker field, verdict/rationale A}, {"ticker":
+"ABC.TO", verdict/rationale B}]`. `ABC.TO` resolves correctly via its own direct label (rationale B).
+`ABC.NS` has no object of its own — falls to the positional-fallback check at its own array index (1),
+which is `ABC.TO`'s own already-consumed labeled object. `_normalize_ticker("ABC.TO")` and
+`_normalize_ticker("ABC.NS")` both strip their suffix to `"ABC"` and compare equal, so the check accepts
+it: `ABC.NS` silently inherits `ABC.TO`'s verdict/rationale (rationale B) under `parse_status="ok"`.
+
+**Expected (FR17/DEEP-003's own invariant, restated in `ai_judge.py`'s corrected docstring, "never
+fabricate, only miss"):** `ABC.NS` has no object of its own in the response and must fail safe
+(`parse_status="failed"`), not borrow a different, already-attributed ticker's verdict.
+
+**Actual:** `ABC.NS` gets `parse_status="ok"`, `rationale="abc-to-reason"` (identical to `ABC.TO`'s row) —
+a genuine fabrication under a status that downstream (`state.py`'s `parse_status in ("failed",
+"api_error")` guard) is treated as trustworthy enough to fire a real alert if it crosses a verdict change.
+
+**Not a new regression from INC-9** — reproduced identically against the pre-INC-9 commit (`f66d693`),
+where the unconditional (unnarrowed) fallback has the same symptom for the same reason (no ticker-field
+check existed at all pre-fix). INC-9's narrowing fix closes DEEP-003's own named scenario (a misaligned
+array within one market) but does not close this adjacent case, because `_normalize_ticker`'s suffix
+stripping — added specifically to make the narrowing fix work — treats two *different*, real watchlist
+tickers as if they corroborate each other whenever they share a base symbol across markets. Realistic
+whenever a watchlist holds the same base symbol cross-listed on two of US/TSX/NSE (FR20 groups tickers by
+market but nothing prevents this).
+
+**Suggested fix (dev's/tech-lead's call, not prescribed here):** the positional-fallback corroboration
+check should also confirm the candidate hasn't already been consumed by another ticker's direct-label
+match in the same `by_ticker` build pass — e.g. track consumed array indices, or require an exact
+(non-normalized) match when the candidate object DOES carry an explicit `ticker` field, reserving
+normalization only for candidates with no `ticker` field at all (the "model forgot the label" case
+`_normalize_ticker` was designed for, which never needs cross-suffix comparison because there's no
+foreign label to compare against in the first place).
+
+**Owner:** dev (with tech-lead recording the corroboration-check decision in `components.md` §4.4a, same
+pattern as the original DEEP-003 fix).

@@ -165,3 +165,84 @@ def test_judge_batch_every_model_failing_fails_safe_to_hold_with_api_error_statu
         assert result[t]["parse_status"] == "api_error"
     assert "primary-model:" in result["AAPL"]["fallback_from"]
     assert "backup-model:" in result["AAPL"]["fallback_from"]
+
+
+# --- DEEP-003 / §4.4a: positional-fallback attribution contract --------------
+# _parse_batch is exercised directly (not via judge_batch/mock_gemini) since
+# these are unit-level tests of the attribution logic itself, matching
+# increment-plan.md INC-9 AC1's own framing ("a qa test feeds _parse_batch...").
+
+def test_parse_batch_misattributed_shifted_array_fails_safe_not_borrowed(capsys):
+    """The exact DEEP-003 evidence shape: request [AAPL, MSFT, TSLA], the model
+    drops TSLA and hallucinates an extra ticker in its slot -> response
+    [AAPL, XOM, MSFT]. TSLA's positional slot (index 2) actually holds MSFT's
+    own labeled object -- accepting it would misattribute MSFT's verdict/
+    rationale onto TSLA under parse_status='ok'. TSLA must fail safe instead;
+    MSFT (which has its own direct label) must still resolve correctly."""
+    raw = json.dumps([
+        {"ticker": "AAPL", "verdict": "Buy", "confidence": "high", "rationale": "aapl-reason"},
+        {"ticker": "XOM", "verdict": "Sell", "confidence": "low", "rationale": "xom-reason (hallucinated)"},
+        {"ticker": "MSFT", "verdict": "Hold", "confidence": "medium", "rationale": "msft-reason"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["AAPL", "MSFT", "TSLA"], "test-model")
+
+    # TSLA must NOT come back as MSFT under parse_status="ok".
+    assert out["TSLA"]["parse_status"] == "failed"
+    assert out["TSLA"]["verdict"] == "Hold"
+    assert out["TSLA"]["rationale"] != "msft-reason"
+    assert "msft-reason" not in out["TSLA"]["rationale"]
+    # MSFT itself still resolves normally via its own direct label.
+    assert out["MSFT"]["parse_status"] == "ok"
+    assert out["MSFT"]["verdict"] == "Hold"
+    assert out["MSFT"]["rationale"] == "msft-reason"
+    assert out["AAPL"]["parse_status"] == "ok"
+    # No fallback was legitimately used for TSLA -- the candidate was rejected,
+    # not accepted, so the log line must not fire for it.
+    assert "positional fallback used for TSLA" not in capsys.readouterr().out
+
+
+def test_parse_batch_legitimate_fallback_missing_ticker_label_still_resolves(capsys):
+    """A same-order response where one object simply has no 'ticker' label at
+    all (the model forgot the label, not a misaligned array) is the
+    legitimate case the fallback exists to serve -- that ticker must still
+    resolve positionally with parse_status='ok', and the log line must fire."""
+    raw = json.dumps([
+        {"ticker": "AAPL", "verdict": "Buy", "confidence": "high", "rationale": "aapl-reason"},
+        {"verdict": "Sell", "confidence": "low", "rationale": "msft-reason-unlabeled"},
+        {"ticker": "TSLA", "verdict": "Hold", "confidence": "medium", "rationale": "tsla-reason"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["AAPL", "MSFT", "TSLA"], "test-model")
+
+    assert out["MSFT"]["parse_status"] == "ok"
+    assert out["MSFT"]["verdict"] == "Sell"
+    assert out["MSFT"]["rationale"] == "msft-reason-unlabeled"
+    assert "positional fallback used for MSFT" in capsys.readouterr().out
+
+
+def test_parse_batch_normalize_ticker_suffix_stripping_must_not_collide_cross_market():
+    """_normalize_ticker strips a trailing .TO/.NS before comparing (§4.4a), so
+    two DIFFERENT watchlist tickers that share a base symbol across markets
+    (e.g. ABC.TO and ABC.NS) normalize to the identical string 'ABC'. Here
+    ABC.TO has its own direct label at array index 1; ABC.NS has no object of
+    its own and falls to the positional-fallback check at its own index (1),
+    which is ABC.TO's already-consumed object. If the normalized-ticker
+    corroboration check treats that as a match, ABC.NS would silently inherit
+    ABC.TO's verdict/rationale under parse_status='ok' -- a cross-market
+    fabrication the DEEP-003 fix's own invariant ("never fabricate, only
+    miss") forbids just as much as the single-market case AC1 covers.
+    ABC.NS has no object of its own; it must fail safe, not borrow ABC.TO's."""
+    raw = json.dumps([
+        {"verdict": "Buy", "confidence": "high", "rationale": "unlabeled-object"},
+        {"ticker": "ABC.TO", "verdict": "Sell", "confidence": "low", "rationale": "abc-to-reason"},
+    ])
+
+    out = ai_judge._parse_batch(raw, ["ABC.TO", "ABC.NS"], "test-model")
+
+    assert out["ABC.TO"]["parse_status"] == "ok"
+    assert out["ABC.TO"]["rationale"] == "abc-to-reason"
+    assert out["ABC.NS"]["parse_status"] == "failed", (
+        "BUG: ABC.NS resolved parse_status='ok' by borrowing ABC.TO's verdict/"
+        "rationale via _normalize_ticker's .TO/.NS-stripping collision -- see "
+        "docs/test-report.md open bugs")
