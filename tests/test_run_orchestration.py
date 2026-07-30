@@ -293,3 +293,82 @@ def test_zero_candidates_with_all_screens_errored_is_still_partial(monkeypatch, 
     run_discovery.main()
 
     assert sb.run_heartbeat["daily-discovery"]["status"] == "partial"
+
+
+# --- INC-8 / DEEP-001 / NFR2 / Decision #31: heartbeat must reflect an
+# all-AI-failure run as degraded, not 'ok' -----------------------------------
+# increment-plan.md AC1: "A qa test that drives every ticker in a batch to
+# parse_status='failed' ... asserts run_heartbeat.status == 'partial' -- the
+# exact case DEEP-001 found reading 'ok'. Same assertion for a mixed batch
+# (some no-read, some quiet)."
+
+def test_heartbeat_is_partial_when_every_ticker_ai_call_fails(monkeypatch, wire_main):
+    """DEEP-001's exact reproduction: every requested ticker's AI call fails
+    (parse_status='failed', e.g. an expired key / provider outage / bad model
+    string) -- pre-fix, none of these hit 'skip' or 'error', so the run wrote
+    status='ok' despite zero verdicts being produced. Must be 'partial'."""
+    sb = wire_main
+    sb.watchlist = [_wl_row("AAPL", "US"), _wl_row("MSFT", "US")]
+    monkeypatch.setattr(config, "is_market_open", lambda now: True)
+    monkeypatch.setattr(config, "is_nse_open", lambda now: False)
+    monkeypatch.setattr(config, "FORCE_RUN", False)
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
+    monkeypatch.setattr(run_hourly.ingest, "get_market_data",
+                         lambda ticker: {**_data(ticker), "has_price": True, "is_new": False})
+    monkeypatch.setattr(run_hourly.ai_judge, "judge_batch",
+                         lambda items, models=None: {
+                             "AAPL": _ai("Hold", parse_status="failed"),
+                             "MSFT": _ai("Hold", parse_status="api_error"),
+                         })
+
+    run_hourly.main()
+
+    assert sb.run_heartbeat["hourly-watchlist"]["status"] == "partial"
+    # And it's for the right reason: every row is a no-read, not a skip/error.
+    assert all(row["data_snapshot"]["parse_status"] in ("failed", "api_error")
+               for row in sb.call_log)
+
+
+def test_heartbeat_is_partial_for_mixed_no_read_and_quiet_batch(monkeypatch, wire_main):
+    """A batch where some tickers no-read and others are genuinely quiet
+    (verdict unchanged) must still report 'partial' overall -- the no-read
+    count alone must drive it, not just an all-failed batch."""
+    sb = wire_main
+    sb.watchlist = [_wl_row("AAPL", "US"), _wl_row("MSFT", "US")]
+    monkeypatch.setattr(config, "is_market_open", lambda now: True)
+    monkeypatch.setattr(config, "is_nse_open", lambda now: False)
+    monkeypatch.setattr(config, "FORCE_RUN", False)
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
+    # AAPL already has an established Buy verdict (no change -> quiet);
+    # MSFT's AI call fails this cycle (no-read).
+    sb.verdict_state["AAPL"] = {"ticker": "AAPL", "current_verdict": "Buy"}
+    monkeypatch.setattr(run_hourly.ingest, "get_market_data",
+                         lambda ticker: {**_data(ticker), "has_price": True, "is_new": False})
+    monkeypatch.setattr(run_hourly.ai_judge, "judge_batch",
+                         lambda items, models=None: {
+                             "AAPL": _ai("Buy"),
+                             "MSFT": _ai("Hold", parse_status="failed"),
+                         })
+
+    run_hourly.main()
+
+    assert sb.run_heartbeat["hourly-watchlist"]["status"] == "partial"
+
+
+def test_discovery_heartbeat_is_partial_when_every_candidate_ai_call_fails(monkeypatch, wire_discovery):
+    """DEEP-001's discovery-side equivalent: every shortlisted candidate's AI
+    call fails -- must not report 'ok' just because screens themselves ran
+    cleanly and candidates were found."""
+    sb = wire_discovery
+    monkeypatch.setattr(config, "TUNABLES_DEGRADED", False)
+    monkeypatch.setattr(run_discovery.prefilter, "find_candidates",
+                         lambda exclude, region: (
+                             [{"ticker": "NEWCO", "signals": ["gainer"]}], 5, 0, _EMPTY_FUNNEL))
+    monkeypatch.setattr(run_discovery.ingest, "get_market_data",
+                         lambda ticker: {**_data(ticker), "has_price": True})
+    monkeypatch.setattr(run_discovery.ai_judge, "judge_batch",
+                         lambda items, models=None: {"NEWCO": _ai("Hold", parse_status="failed")})
+
+    run_discovery.main()
+
+    assert sb.run_heartbeat["daily-discovery"]["status"] == "partial"

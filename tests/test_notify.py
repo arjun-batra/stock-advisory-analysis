@@ -9,6 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+import requests as requests_module
 
 import notify
 
@@ -129,12 +130,19 @@ def test_ntfy_notifier_posts_to_correct_topic_url_mocked(monkeypatch):
         calls.append(dict(url=url, data=data, headers=headers, timeout=timeout))
         class R:
             status_code = 200
+            def raise_for_status(self):
+                pass   # a real 2xx response: raise_for_status is a no-op
         return R()
 
     monkeypatch.setattr(notify.requests, "post", fake_post)
     n = notify.NtfyNotifier(topic="us-topic", detail_base="https://example.test/d", nse_topic="nse-topic")
-    n.push("AAPL", "Sell", "reversal confirmed", kind="change", log_id="log-1", market="US")
+    result = n.push("AAPL", "Sell", "reversal confirmed", kind="change", log_id="log-1", market="US")
 
+    # FR34/DEEP-002 (AC4): a genuine 2xx must report delivery as True, not just
+    # "requests.post was called" -- the old mock (a bare status_code, no
+    # raise_for_status) would have silently returned False here once push()
+    # started calling raise_for_status(), and nothing would have noticed.
+    assert result is True
     assert len(calls) == 1
     assert calls[0]["url"] == "https://ntfy.sh/us-topic"
     assert calls[0]["headers"]["Title"] == "AAPL - Changed to Sell"
@@ -147,5 +155,34 @@ def test_ntfy_notifier_swallows_network_errors_without_crashing(monkeypatch, cap
 
     monkeypatch.setattr(notify.requests, "post", fake_post)
     n = notify.NtfyNotifier(topic="us-topic")
-    n.push("AAPL", "Sell", "reversal", kind="change", log_id="log-1", market="US")   # must not raise
-    assert "[notify error]" in capsys.readouterr().out
+    result = n.push("AAPL", "Sell", "reversal", kind="change", log_id="log-1", market="US")   # must not raise
+    # FR34/DEEP-002 (AC4): a network exception must report False (not raise, not None).
+    assert result is False
+    out = capsys.readouterr().out
+    assert "[notify] ERROR push failed for AAPL: ConnectionError: network down" in out
+
+
+def test_ntfy_notifier_returns_false_without_raising_on_non_2xx_response(monkeypatch, capsys):
+    """AC4's own explicit named test: mock requests.post to return a 500 and
+    assert push() returns False without raising."""
+    def fake_post(*a, **kw):
+        class R:
+            status_code = 500
+            def raise_for_status(self):
+                raise requests_module.HTTPError("500 Server Error")
+        return R()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    n = notify.NtfyNotifier(topic="us-topic")
+    result = n.push("AAPL", "Sell", "reversal", kind="change", log_id="log-1", market="US")   # must not raise
+
+    assert result is False
+    assert "[notify] ERROR push failed for AAPL" in capsys.readouterr().out
+
+
+def test_dry_run_notifier_push_returns_none_explicitly():
+    """AC4: DryRunNotifier.push() returns None unconditionally -- a third,
+    explicit state distinct from True (delivered) and False (failed)."""
+    n = notify.DryRunNotifier(topic="t1")
+    result = n.push("AAPL", "Buy", "breakout", kind="change", log_id="abc", market="US")
+    assert result is None

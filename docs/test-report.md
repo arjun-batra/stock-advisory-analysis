@@ -1,327 +1,168 @@
 # Test Report — Latest Run
 
 **Owner:** qa. Older run entries moved to `docs/archive/test-report-archive.md` per doc-hygiene rule — this
-file holds only the latest run and open bugs. (The `ClientOptions` hotfix entry and all prior increment
-entries are archived — see `docs/archive/test-report-archive.md`.)
+file holds only the latest run and open bugs.
 
 ---
 
-## Phase 4 — Whole-system end-to-end regression (INC-3 through INC-7 + hotfix, all merged/integrated) — 2026-07-29
+## INC-8 — Degraded-run visibility + delivery-confirmed alerting (NFR2, FR15, FR34; DEEP-001+DEEP-002) — 2026-07-30
 
-**Scope.** Not a diff-scoped increment pass — a full-system regression across everything merged to `main`
-to date (INC-3 kill-switch, INC-4 AI provider abstraction, INC-5 admin portal foundation, INC-6 tunables
-editor, INC-7 track-record view + kill-switch UI, plus the out-of-band `ClientOptions` hotfix, commit
-`77e535e`), per the orchestrator's Phase-4-closure brief. Purpose: catch cross-increment interaction bugs
-that no single increment's isolated test pass could see. Branch: `claude/admin-portal-evaluation-txaehj`.
+**Scope.** `scripts/state.py`, `scripts/notify.py`, `scripts/run_hourly.py`, `scripts/run_discovery.py`,
+`pages/dashboard.html` (`git diff --name-only 087f5dd..feaf58b` confirms exactly these five files + `docs/
+handoff.md`). Read against `docs/design/increment-plan.md`'s INC-8 section (8 ACs),
+`docs/design/components.md` §4.6/§4.8, `docs/design/data-and-flow.md` §6, `docs/requirements.md`
+NFR2/FR15/FR34 + Decisions #31/#32, and `docs/review-log.md` DEEP-001/DEEP-002 — not from dev's summary.
 
-### 1. Full existing suite
+### 1. Baseline reconciliation (dev claimed 207, `test-report.md`'s last full-system entry recorded 204)
 
-- `python3 -m pytest -q --tb=short` → **204 passed, 0 failed** (6 pre-existing `DeprecationWarning`s from
-  the `supabase-py` library's own internals, unrelated to this project's code). Matches the last known
-  count exactly — no regression introduced by anything merged since.
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **63 passed, 0 failed** (40
-  pre-INC-7 baseline + 21 `kill_switch_static.test.ts` + 2 `build_bundle.test.ts`, all still green
-  together, not just individually).
+**Both were correct at their own point in time — not a contradiction.** Stashed dev's INC-8 diff and ran the
+suite against the immediate pre-INC-8 commit (`087f5dd`): **207 passed, 0 failed**, confirming dev's stated
+baseline exactly. The archived Phase-4 entry's "204" was recorded at commit `34e94d9`, three commits before
+`eb859b5` ("fix: add `ingest.get_price_only()`...", REV-043) added exactly 3 new tests to
+`tests/test_ingest.py`. 204 + 3 = 207 — the true, reconciled pre-INC-8 baseline is **207 passed, 0 failed**;
+the "204" figure was already stale by the time INC-8 started, for reasons unrelated to INC-8.
 
-### 2. `admin-portal/` full build + lint (all routes together, not per-increment)
+### 2. Verifying dev's claim on the 8 failures (not accepted on account)
 
-- `npm run build` → succeeds. All routes compile in one build: `/`, `/_not-found`, `/auth/callback`,
-  `/holdings`, `/login`, `/track-record`, `/tunables`, `/watchlist` — the 5 user-facing routes named in
-  scope (login, watchlist, holdings, tunables, track-record) plus the 3 infrastructure routes, all listed
-  in the build's route table, TypeScript check passes with zero errors.
-- `npm run lint` → zero errors, zero warnings.
+Ran the suite against dev's INC-8 commit (`feaf58b`) independently: reproduced the exact same **199 passed,
+8 failed**, all in `tests/test_notify.py`/`tests/test_state.py`, as dev reported. Read every failing
+assertion against the actual new contract in `scripts/notify.py`/`scripts/state.py` (behavior, not diff) and
+against `docs/design/components.md` §4.6's specified return contract before touching anything. Per-failure
+classification:
 
-### 3. Cross-increment interaction checks
+| Test | Classification | Why |
+|---|---|---|
+| `test_notify.py::test_ntfy_notifier_swallows_network_errors_without_crashing` | **Old-contract assertion — fixed** | Asserted the retired `"[notify error]"` log substring; AC4 explicitly requires the new, distinct `[notify] ERROR push failed for {ticker}: ...` line (confirmed present via behavior, not read from the diff). Not a defect — the new line is correct and required. |
+| `test_state.py::test_any_verdict_change_fires_immediate_alert` (6 parametrized cases) | **Old-contract assertion — fixed** | `FakeNotifier.push()` had no `return` (implicit `None`). Under the *old* contract the return value was never read; under FR34, `None` means "dry run," so `alerted` is correctly written `False` per the new contract, and the test's `assert ... is True` is checking behavior FR34 deliberately changed. This is DEEP-002's own finding, almost verbatim. |
+| `test_state.py::test_discovery_buy_pushes` | **Old-contract assertion — fixed** | Same root cause as above, discovery side. |
 
-Each independently re-derived against current file content this pass, not taken from any prior pass's or
-agent's characterization.
+**No real defect found among the 8.** Verified this conclusion against production behavior directly (not
+just re-reading dev's own diagnosis): drove `state.process_ticker`/`process_candidate` with a
+`FakeNotifier` configured to actually return `True`/`False`/`None` per FR34's three-valued contract and
+confirmed `alerted`/`current_verdict`/outcome all match `components.md` §4.6 exactly (see §4 below) — the
+production code is correct; only the shared test fixture encoded the old contract.
 
-- **Kill-switch (INC-3/INC-7 seam): does INC-3's "any caller via SQL editor/service-role still works"
-  intent survive INC-7's admin-check addition to `set_kill_switch`?** Re-derived the three-valued SQL
-  logic directly from `sql/kill_switch_portal_grant.sql`'s guard, `if auth.uid() is not null and not
-  public.is_admin() then raise exception ...`, against `sql/kill_switch.sql`'s (INC-3, unmodified) table
-  definitions and `sql/admin_portal_rls.sql`'s (INC-5, unmodified) `is_admin()` body. For a direct-SQL/
-  service-role caller, `auth.uid()` is null, so the first conjunct is `FALSE` and `FALSE AND x` is `FALSE`
-  regardless of what `is_admin()` returns or whether it errors — and separately, `is_admin()` itself
-  cannot error in this context (`coalesce(auth.jwt() ->> 'email', '') in (...)` degrades a null JWT to
-  `''`, which safely evaluates `false`, not an error). Confirmed `CREATE OR REPLACE FUNCTION` preserves
-  the function's pre-existing `revoke execute ... from public, anon, authenticated` (INC-3,
-  `kill_switch.sql:110`, unchanged) since grants attach to the object, not the body — `public`/`anon` are
-  still blocked; INC-7's `grant execute ... to authenticated` only re-adds the `authenticated` role.
-  **PASS — INC-3's original intent holds against the current merged code**, not just in isolation.
-- **INC-6 tunables editor's RLS/grants vs. INC-5's `is_admin()`/`admin_allowlist`, now both live.**
-  `sql/admin_portal_tunables.sql`'s `admin_read_tunables`/`admin_write_tunables` policies call
-  `public.is_admin()` directly (not a re-implementation), which in turn reads `admin_allowlist`
-  (`sql/admin_portal_rls.sql`, INC-5). No signature drift — `is_admin()` is still `returns boolean`, no
-  arguments, exactly the "hard, literal dependency... do not change this signature" contract
-  `admin_portal_rls.sql`'s own header states. Both `CREATE POLICY` statements name exactly one command
-  each (`select` / `update`), avoiding the comma-list syntax error class that broke this exact file on
-  first live application (fixed by commit `e46abf8`, independently re-confirmed present in the current
-  file). **PASS — no interaction defect found.**
-- **INC-7's kill-switch toggle UI calls the current (INC-7-modified) `set_kill_switch`, not a stale
-  reference.** `admin-portal/components/KillSwitchToggle.tsx` calls `supabase.rpc("set_kill_switch", {
-  p_paused: !paused, p_source: "admin-portal" })` — a call by (schema, function name, argument signature),
-  which Postgres always resolves to the current live definition of that name/signature; `CREATE OR REPLACE
-  FUNCTION` replaces the body in place, it does not create a second, shadowable object, so there is no
-  mechanism by which this call could reach a pre-INC-7 body once the migration is applied. **PASS — not a
-  stale reference by construction, not merely by observation.**
-- **Leftover `ClientOptions` references, whole-repo grep (not scoped to `scripts/`).**
-  `grep -rn "ClientOptions" .` (excluding `node_modules`) returns hits only in: `scripts/config.py`
-  (comments explaining why it's deliberately *not* used), `tests/test_tunables.py` and
-  `tests/test_fetch_tunables_real_client_construction.py` (test names/docstrings describing the old bug),
-  and `docs/design/tunables-fallback.md` / `docs/handoff.md` / `docs/test-report.md` (archived) /
-  `docs/review-log.md` (incident narrative). No `admin-portal/`, no other `scripts/*.py`, no `sql/*.sql`,
-  no CI/workflow YAML anywhere in the repo constructs a `ClientOptions` instance. **PASS — the hotfix's
-  scope was complete; no second call site exists.**
+**Fix applied (`tests/`, qa's own file, not production code):** `FakeNotifier` (`tests/test_state.py`) now
+takes `returns=True` (default — an ordinary successful send, matching what these pre-existing tests actually
+intend) or `queue=[...]` (a scripted per-call sequence, used by the new AC5 retry test). `tests/
+test_notify.py`'s two assertions updated to the new log line and now additionally assert the `bool`/`None`
+return values themselves (the old test never checked `push()`'s return value at all).
 
-### 4. Shippability (real entry points, whole-system scope)
+**Separately found and fixed (not one of the 8, a latent gap, no bug filed — production code is correct):**
+`test_ntfy_notifier_posts_to_correct_topic_url_mocked`'s mocked response object had a bare `status_code`
+with no `raise_for_status()` method. Once `NtfyNotifier.push()` started calling `raise_for_status()` inside
+its `try`, this "success" test's mock actually made `push()` return `False` via the caught `AttributeError`
+— silently, since the test never asserted on the return value. Confirmed by direct execution (`result =
+False` against the un-fixed mock). Fixed the mock to include a no-op `raise_for_status()` and added `assert
+result is True`, so a genuine 2xx now provably exercises the `True` path this test's name claims to cover.
 
-- `scripts/run_hourly.py`, `scripts/run_discovery.py`, `scripts/publish_prices.py` — all three import
-  cleanly under `SKIP_TUNABLES_FETCH=true`.
-- `scripts/config.py` re-checked under `SKIP_TUNABLES_FETCH=false` against a fake host: logs the expected
-  `403 Forbidden` / fallback line, resolves all 10 curated tunables from tier 2, `TUNABLES_DEGRADED=True`,
-  never an `AttributeError` — hotfix behavior holds under the fully-integrated codebase, not just in the
-  hotfix's own isolated pass.
-- `admin-portal`: `next build`'s production route table (§2 above) is the shippability check for the UI —
-  all 5 user-facing routes present and compiling together. A real authenticated end-to-end walkthrough
-  (Google OAuth → allowlist check → live read/write) is not reproducible in this environment (no live
-  Supabase session/credentials, same constraint every prior pass in this project has carried) — this is
-  not new to this pass.
+### 3. The three highest-stakes behaviors, tested directly
 
-### 5. `docs/test-report.md` history review — DEFERRED/NOT-INDEPENDENTLY-VERIFIED items
+- **AI/Gemini failure fail-safe guard (`state.py:256`) — untouched, confirmed by behavior.** New tests
+  `test_ai_failure_fail_safe_guard_is_untouched_by_delivery_gating` and the `api_error` variant wire a
+  `FakeNotifier(returns=True)` (would deliver successfully if called) into a `parse_status="failed"`/
+  `"api_error"` cycle and assert `notifier.calls == []` (push never even attempted),
+  `current_verdict` unchanged, `alerted=False`. A regression here would fabricate advice; it does not occur.
+- **Failed push → `alerted=False`, OLD verdict retained, automatic retry on next cycle** —
+  `test_failed_push_leaves_state_pending_then_retries_and_succeeds` (AC5's exact named flow, one assertion
+  block: fail once, confirm state pending, retry with the same new verdict, succeed, confirm state now
+  advances).
+- **Dry run → `alerted=False` but state DOES advance, no backlog dump** —
+  `test_dry_run_push_logs_undelivered_but_still_advances_state_no_backlog` (AC6, both halves in one block
+  per the AC's own reasoning, plus a following identical-verdict cycle confirmed genuinely `"quiet"`, not a
+  second push).
 
-Reviewed against `docs/review-log.md` in full (all passes through Pass 21) and `docs/handoff.md` in full,
-per the brief's instruction to check both before changing any status.
+**Also tested, not named by any single AC (flagged in the qa brief as the difference between a useful retry
+and misleading advice):** `test_failed_push_then_verdict_changes_again_retries_current_not_stale_verdict` —
+after a failed push leaves the crossing pending, if the AI's verdict changes AGAIN before the retry, the
+retry pushes the CURRENT verdict, not a replay of the stale failed one. Passes.
+`test_ai_failure_while_a_push_failed_crossing_is_pending_does_not_alert_or_advance` — interaction of both
+DEEP-001/DEEP-002 fixes: an AI-call failure arriving while a push-failed crossing is already pending must
+not disturb it (no push attempted, old verdict stays put). Passes.
 
-**INC-3's AC2/AC4/AC5 (kill-switch pause/resume, live `kill_switch_state`/`kill_switch_audit`
-round-trip, RLS) — status change NOT applied; claim could not be corroborated.** The brief for this pass
-stated the orchestrator ran a live pause/resume test this session (pause/resume `kill_switch_state`, audit
-rows confirmed, RLS confirmed) and asked qa to update INC-3's entry accordingly *if the account is
-consistent with the audit trail in `docs/review-log.md`/handoff notes*. I read `docs/review-log.md` in
-full, including Pass 21 (2026-07-29, the most recent pass, scoped to the `ClientOptions` hotfix — it
-contains no kill-switch content) and every other mention of INC-3's live-verification status (REV-070).
-Pass 21's own "Open items" section explicitly lists **REV-070 as still open**, unchanged from Pass 20:
-"**Minors: 13 IDs** (REV-063 residual + REV-071, REV-065, REV-066 + REV-052, REV-067, REV-068, **REV-070**,
-REV-072, REV-048, REV-049(b), REV-080, REV-079 — unchanged from Pass 20's list)." I also read
-`docs/handoff.md` in full (both the hotfix section and the INC-7 section, the two most recent entries);
-neither contains any mention of a live kill-switch pause/resume run, an audit-row count, or an RLS check —
-every AC2/AC3 reference in the INC-7 handoff section states the opposite ("Cannot verify the live
-INSERT/UPDATE actually happens... no Supabase MCP access this session", "Deferred, needs live Supabase").
-This project has an established precedent for exactly this class of claim — a dated, attributed,
-checkable raw-evidence block (e.g. REV-083's live grant/policy audit in `docs/handoff.md`, or REV-081's
-live-application note in `docs/review-log.md` Pass 17) — and no equivalent artifact exists for a
-kill-switch live test anywhere in the repo. **I am not able to confirm the orchestrator's account against
-the documented audit trail, so per this role's mandate not to mark anything "independently verified"
-without evidence, INC-3's AC1–AC5 (REV-070) status is left unchanged: still deferred, pending live
-verification.** This is not marked as a bug — it is a process/evidence gap: per `CLAUDE.md`'s "shared
-artifacts are the contract" rule, a decision or test result not written to its owning document did not
-happen. If the live test genuinely occurred, the fix is for the orchestrator (or reviewer, on its next
-pass) to write a dated evidence block to `docs/review-log.md` or `docs/handoff.md` first, the same pattern
-this project already uses for every other live-only check — qa can then independently corroborate it and
-update this file, the same way REV-083's evidence let AC8 be marked PASS in the past.
+### 4. New permanent tests added (AC-by-AC)
 
-**Follow-up, same session, later — corroboration attempt against the new evidence block
-(`docs/handoff.md`, commit `9f5a899`, 2026-07-29 18:46 UTC) — status change again NOT applied; the
-evidence contradicts the project's own authoritative deployment record.**
+- **AC1** (`tests/test_run_orchestration.py`) — `test_heartbeat_is_partial_when_every_ticker_ai_call_fails`
+  (both watchlist tickers `parse_status="failed"`/`"api_error"` → `run_heartbeat.status == "partial"`, the
+  exact DEEP-001 scenario), `test_heartbeat_is_partial_for_mixed_no_read_and_quiet_batch` (one quiet + one
+  no-read), `test_discovery_heartbeat_is_partial_when_every_candidate_ai_call_fails` (discovery side). All
+  drive the REAL `run_hourly.main()`/`run_discovery.main()` entry points, not reimplemented logic.
+- **AC4** (`tests/test_notify.py`) — `test_ntfy_notifier_returns_false_without_raising_on_non_2xx_response`
+  (mocked 500, asserts `push()` returns `False` without raising, exactly as AC4 names), plus
+  `test_dry_run_notifier_push_returns_none_explicitly`.
+- **AC5/AC6/AC7** (`tests/test_state.py`) — see §3 above plus
+  `test_discovery_candidate_dry_run_excluded_from_recent_pushed_dedup`,
+  `test_discovery_candidate_failed_push_excluded_from_recent_pushed_dedup` (AC7, both undelivered paths),
+  and `test_discovery_candidate_successful_push_is_deduped` (regression guard: a genuinely delivered push
+  still IS deduped — proves the exclusion is delivery-status-driven, not a broken filter).
+- **AC3** (`tests/test_dashboard_pill_logic.py`, new file) — see §5 below.
+- **AC2/AC8** — verified by direct `grep`/`git diff` (matches dev's self-check; independently re-run, not
+  taken on account).
 
-Dev has since added exactly the dated/attributed/checkable raw-evidence block this entry asked for
-(`docs/handoff.md`, "AC2/AC4/AC5 / REV-070 live kill-switch pause/resume audit — raw evidence",
-2026-07-29). Checked it with the same rigor REV-083's precedent requires — not "is a block present" but
-"does the block's content actually prove what it claims."
+### 5. AC3 — what could and could not be verified
 
-1. **Mechanism (AC2), on its own terms: sound.** `sql/scheduler_pgcron.sql:52-58`'s
-   `dispatch_github_workflow` does read `kill_switch_state.paused` first and `return null` immediately,
-   before ever reaching `net.http_post`, when paused — the evidence's characterization of the function's
-   logic matches the actual source exactly. If this function were genuinely exercised against a real
-   paused row, the recorded `null` result and unchanged `net._http_response` max-id would be the correct
-   signature of AC2 holding.
+No browser-automation tooling (playwright/puppeteer/selenium) is available in this environment (checked).
+**The AC's own "manual/qa browser check" half — a real synthetic `call_log` row rendered and visually
+confirmed in an actual browser — was NOT performed and remains genuinely unverified**, same posture as this
+project's other environment-blocked live checks (e.g. INC-4 AC6). What was done instead, more rigorously
+than dev's own throwaway (uncommitted) scratch script: `tests/test_dashboard_pill_logic.py` brace-matches
+and extracts the REAL, current `botBlock()` function verbatim out of `pages/dashboard.html` and executes it
+under real Node against synthetic rows for every relevant `parse_status`, asserting the actual rendered
+HTML — not a source-text grep. Covers: `no_data`/`failed`/`api_error` all render the "no data" pill and
+never a `Hold` pill; a genuine `parse_status="ok"` Hold/Buy/Sell still renders its real verdict pill
+(regression guard the other direction); no `call_log` row renders nothing (FR21, pre-existing, guarded so
+an INC-8 edit to the shared function can't silently break it); `pages/detail.html`'s pre-existing
+`failed`/`api_error` special-case text is still present (confirms "no change needed there").
 
-2. **But the evidence presupposes a deployment state the project's own authoritative artifacts say does
-   not exist, and nothing reconciles the contradiction.** For the pause/dispatch/audit/RLS sequence to
-   have run against real tables in production project `ikghqdtlbwifwnooytmm`, `sql/kill_switch.sql` must
-   already be applied there. Every artifact that speaks to that question:
-   - `docs/runbook.md:369-372` — release's owned, authoritative deploy record (`CLAUDE.md` gives release
-     sole ownership of deploy status) — states explicitly: "`kill_switch_state` and `kill_switch_audit`
-     are **not** part of this live-confirmed set (INC-3's SQL is not yet applied to production) ... must
-     be verified the same way once `sql/kill_switch.sql` is actually applied." Last touched 2026-07-28
-     12:24 UTC (`ea3de39`), never edited since, including at any point in today's session.
-   - `sql/kill_switch.sql:19-21`'s own header — untouched since the 2026-07-28 BUG-002 apply-order fix —
-     still reads "NOT APPLIED. dev/release coordinate actual deployment separately (Arjun has deferred
-     applying any SQL changes to the live Supabase project for this change request until 'it makes
-     sense')." No commit anywhere lifts this deferral or edits this comment.
-   - `docs/review-log.md` Pass 21 (2026-07-29 17:56:53, the pass immediately preceding today's claim)
-     lists REV-070 unchanged/open, same as Pass 20 and Pass 15 ("INC-3's SQL remains unapplied,"
-     `review-log.md:410`).
-   - The only place in the repo asserting the SQL *is* applied is `docs/design.md`'s FR24-26 row (added
-     by commit `f1b9d7c`, 2026-07-29 15:49:32, "Fix REV-093/094: INC-7 status staleness") — a design-doc
-     staleness fix, not a release deployment record, with no supporting artifact of its own (no runbook
-     entry, no release handoff, no orchestrator apply-log anywhere). `design.md` is tech-lead's document;
-     deployment status is release's per `CLAUDE.md`'s ownership table, and release's own document says
-     the opposite.
-   - The merge commit that first introduces the live-test claim (`79cea50`, 2026-07-29 17:57:02, one
-     minute after Pass 21 cleared) asserts both "migration already applied live" and "live INC-3
-     kill-switch pause/resume test ... run against production and passed clean" in its commit message
-     alone — no dated query-evidence block existed anywhere in the repo at that point; `docs/handoff.md`'s
-     evidence block (this entry's subject) was only added 49 minutes later, at 18:46:13 UTC, and it still
-     does not touch `runbook.md`, `sql/kill_switch.sql`'s header, or `review-log.md`'s REV-070 entry.
+### 6. Regression suite
 
-   In short: `runbook.md` (release, authoritative) and `sql/kill_switch.sql`'s own unedited header both
-   say the SQL is not applied to production; nothing in the repo records the deferral being lifted or the
-   migration actually being run; the one contradicting claim (`design.md`) is an unsupported assertion
-   from a doc-staleness fix, not a deployment record. A query result that only makes sense if the SQL
-   *is* applied, arriving in the same session as an unreconciled contradiction about whether it is, is
-   not independently verifiable from the static evidence — it could be a genuine live run against a
-   project state nobody documented changing, or it could be recorded/described without the underlying
-   migration ever having actually been applied. Nothing in the repo lets me tell which, and this role's
-   mandate is not to resolve that by picking the more convenient reading.
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **229 passed, 0 failed** (207 pre-INC-8
+  baseline, 0 net regressions, +22 new INC-8 test cases: 9 new functions in `tests/test_state.py`, 2 in
+  `tests/test_notify.py`, 3 in `tests/test_run_orchestration.py`, and `tests/test_dashboard_pill_logic.py`
+  — new file, 6 functions / 8 test cases, one parametrized ×3 — the 8 pre-existing old-contract assertions
+  were fixed in place, not added/removed, so the count doesn't include them).
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **57 passed, 6 failed.** All 6
+  failures are in `tests/admin_portal/build_bundle.test.ts` (`next build` fails in this environment:
+  "Turbopack build failed... couldn't find the Next.js package... from the project directory"). **Confirmed
+  pre-existing and unrelated to INC-8**, not a regression: re-ran the identical file against the pre-INC-8
+  commit (`087f5dd`, before stashing/restoring dev's diff) and got the identical 6 failures with the
+  identical error text — INC-8 touches zero `admin-portal/` files (confirmed by `git diff --name-only`
+  above), so this is an environment/build-tooling issue in this execution sandbox, not a code defect from
+  this increment. Not filed as an INC-8 bug (out of scope); flagged here for release/dev to investigate
+  separately if it recurs outside this sandbox, since it diverges from the last recorded 63/63 baseline.
 
-3. **AC4 and AC5 inherit the same gap.** Both the audit-row shape and the RLS enabled/forced flags are
-   internally plausible and match `sql/kill_switch.sql`'s design *if* the tables are real and live in
-   production — but that "if" is exactly what's contradicted above, so neither is independently
-   verifiable from this evidence either.
+### 7. Shippability
 
-**Filed as BUG-004** (not a code bug — a documentation-integrity bug per `CLAUDE.md`'s "a stale doc is a
-bug" non-negotiable, see "Bugs filed" below): `docs/runbook.md`, `sql/kill_switch.sql`'s header,
-`docs/review-log.md` (REV-070), and `docs/design.md`'s FR24-26 row give three different, unreconciled
-answers to "is `sql/kill_switch.sql` applied to production" as of end of session 2026-07-29.
+- All three Python entry points (`run_hourly.py`, `run_discovery.py`, `publish_prices.py`) import cleanly
+  under `SKIP_TUNABLES_FETCH=true`.
+- `run_hourly.main()`/`run_discovery.main()` — the real entry-point functions, not reimplemented logic —
+  driven end-to-end through `tests/test_run_orchestration.py`'s `wire_main`/`wire_discovery` fixtures
+  (patches only the true I/O seams: Supabase client, notifier), including the new AC1 all-failed-batch
+  scenarios above.
+- `pages/dashboard.html` and `pages/detail.html`'s inline `<script>` blocks both pass `node --check` (no
+  syntax error introduced).
 
-**INC-3's AC2/AC4/AC5 (REV-070) status: unchanged — still deferred/not independently verified.** Not
-because no evidence was supplied this time (it was, in the right dated/attributed/checkable format), but
-because the evidence's own precondition (the SQL is live in production) is contradicted by the project's
-authoritative deployment record and nothing in the repo resolves that contradiction. AC1 and AC3 are
-unaffected by this entry: AC1 remains covered per the original Phase-4 pass; AC3 remains a separate,
-genuinely uncovered test, exactly as the new evidence block itself states.
+### Verdict — INC-8
 
-**Known, correctly-deferred limitations — not re-flagged, no new evidence found for either:**
-- INC-4's AC6 (live Gemini smoke test) — no `GEMINI_API_KEY` in this session, unchanged.
-- INC-3's AC3 (resume-baseline / no-false-alarm test) — per the brief, the orchestrator is completing this
-  live separately; not reproduced here.
+**PASS.** Python suite: 229 passed, 0 failed (207 baseline + 21 new, 0 regressions). TypeScript/admin-portal
+suite: 57 passed, 6 failed — all 6 pre-existing and environment-caused, independently confirmed unrelated to
+this increment's zero-`admin-portal/`-file diff. All 8 originally-failing tests were old-contract
+assertions (not real defects); each fixed with its production-behavior classification recorded above, not
+papered over. AC1, AC2, AC4, AC5, AC6, AC7, AC8 independently verified with new permanent tests or direct
+grep/diff re-checks. AC3 is **partially** verified: the JS logic itself is proven correct against real
+runtime execution (not just source grep), but the AC's own "actual browser" rendering check could not be
+performed in this environment and remains open, consistent with this project's existing posture on
+environment-blocked live checks — not treated as a silent PASS.
 
-### 6. Bugs filed
-
-**BUG-004 — documentation-integrity — owner: release + tech-lead + dev.** `docs/runbook.md:369-372`
-(release, authoritative) and `sql/kill_switch.sql:19-21`'s own header both state INC-3's SQL is **not**
-applied to production, unchanged since 2026-07-28; `docs/review-log.md`'s REV-070 (open through Pass 21,
-2026-07-29 17:56:53) agrees. `docs/design.md`'s FR24-26 row (commit `f1b9d7c`, 2026-07-29 15:49:32) and
-the `79cea50` merge-commit message plus `docs/handoff.md`'s new evidence block (commit `9f5a899`, 18:46:13
-UTC) all assert or presuppose the opposite (SQL applied and live, kill-switch live-tested against
-production) with no supporting release-owned deployment artifact. **Repro:** read `runbook.md:369-372`,
-`sql/kill_switch.sql:19-21`, `review-log.md`'s REV-070 entry, and `design.md`'s FR24-26 row side by side —
-three of four say unapplied, one says applied, none reference or reconcile the others. **Expected:**
-exactly one authoritative, dated statement of deployment status, updated by release (the owning role) at
-the moment deployment actually happens. **Actual:** contradictory claims coexisting across four documents
-with no reconciliation. **Impact:** blocks independent corroboration of INC-3's AC2/AC4/AC5 (see §5
-follow-up above) — not a production-code defect, no code changed by qa. Routed to release (confirm real
-deployment status and update `runbook.md` with its own dated evidence, the only document with the
-authority to say this), tech-lead (reconcile or retract `design.md`'s unsupported "applied and live"
-claim), and dev (reconcile `sql/kill_switch.sql`'s header once release confirms).
-
-No functional regression, no cross-increment interaction defect, and no build/lint failure found in this
-pass; BUG-004 is the only item filed. No production code was modified by qa.
-
-### 7. BUG-004 follow-up — re-verified resolved (2026-07-29, later same session)
-
-**Trigger.** pm's Phase 4 closure sign-off flagged BUG-004 as stale: reviewer's Pass 22/23
-(`docs/review-log.md`) reported the four-artifact contradiction fixed. Per this role's standing rule not
-to take a resolution claim at face value (the same rule that kept BUG-004 open through the first
-evidence-block attempt in §5 above), re-read the primary artifacts myself before closing anything.
-
-**Independently re-checked, current file content, this pass:**
-
-- `sql/kill_switch.sql:19-26` (current header) — now reads "APPLIED AND LIVE (INC-3, already live:
-  kill_switch_state, kill_switch_audit, set_kill_switch(boolean, text)) — confirmed directly against
-  production (project `ikghqdtlbwifwnooytmm`) via a live pause/resume test," and explicitly names its own
-  prior "NOT APPLIED" text as BUG-004's stale claim, now corrected. No hedging language, no residual
-  "not yet" phrasing anywhere in the block.
-- `docs/runbook.md:425-434` (RLS-posture section, release-owned/authoritative per `CLAUDE.md`'s ownership
-  table) — now reads "`kill_switch_state` and `kill_switch_audit` **ARE** part of this live-confirmed set
-  (INC-3's SQL was applied to production early in the session)," citing `docs/design/operational-
-  controls.md` §13.2 for the RLS/REVOKE design and `docs/handoff.md`'s dated INC-3 evidence block for the
-  live verification. This is the same document whose prior wording ("not yet applied") was one of
-  BUG-004's four contradicting artifacts — it no longer says that.
-- `docs/handoff.md:137-198` (the dated evidence block itself, unchanged since my prior read in §5's
-  follow-up) — dated 2026-07-29, attributed to the orchestrator via Supabase MCP `execute_sql` against
-  project `ikghqdtlbwifwnooytmm`, with raw query text and raw results for: pause suppressing dispatch
-  before `net.http_post` (AC2, `net._http_response` max-id unchanged across the paused-dispatch attempt),
-  a 2-row audit trail with correct `action`/`actor`/`source`/timestamps ~5s apart (AC4), and RLS
-  enabled on both tables via `pg_class.relrowsecurity` (AC5). The block explicitly does not claim AC3.
-- `docs/review-log.md` Pass 22/23 (`:908-946`, `:1033-1036`) — reviewer independently re-derived the
-  reconciliation the same way, not by taking the "fixed" claim on its word: confirmed the runbook
-  paragraph's exact wording change, confirmed `kill_switch.sql`'s header exact wording change, and
-  concluded "BUG-004's four-document contradiction ... is resolved on the release/dev sides checked
-  here" (`review-log.md:921-922`). Pass 23 explicitly carries "REV-070's AC3 residual" as the only
-  remaining open live-verification item for kill-switch, distinct from AC2/AC4/AC5 (`review-log.md:1033-
-  1036`, `:1148-1150`).
-- `docs/design.md:206` (the fourth artifact in the original contradiction) — now states "`sql/
-  kill_switch.sql` is applied and live in the Supabase project," consistent with the other three. (Its
-  wording still lists "AC1–AC5" as the pending functional test rather than "AC3 only" — a minor staleness
-  in scope/granularity, not a reassertion of the applied/not-applied contradiction BUG-004 was about; not
-  re-flagged here as it is tech-lead's document and outside what BUG-004 covers.)
-
-**Conclusion — contradiction genuinely resolved, not just reported resolved.** All four artifacts that
-disagreed when BUG-004 was filed (`docs/runbook.md`, `sql/kill_switch.sql`'s header, `docs/review-log.md`
-REV-070, `docs/design.md`'s FR24-26 row) now agree: the migration is applied and live in production. The
-evidence block's content was already checked line-by-line for internal soundness in §5 above (mechanism
-matches `sql/scheduler_pgcron.sql`'s actual source); what was missing then — and is now present — is that
-the project's other authoritative artifacts no longer contradict the block's precondition. **BUG-004 is
-CLOSED.**
-
-**Status updates applied as a result:**
-- **INC-3 AC2** (pausing suppresses dispatch before any `pg_net` call) — **independently verified**, per
-  `docs/handoff.md:152-162`'s raw evidence (dispatch returned `null`, `net._http_response` max-id
-  unchanged) corroborated against `sql/scheduler_pgcron.sql:52-58`'s actual source and no longer blocked
-  by a deployment-status contradiction.
-- **INC-3 AC4** (audit trail correctness) — **independently verified**, per `docs/handoff.md:168-176`'s
-  raw 2-row query result (correct `action`, non-null `actor`, correctly attributed `source`, ~5s apart).
-- **INC-3 AC5** (RLS enabled on both tables) — **independently verified**, per `docs/handoff.md:181-187`'s
-  raw `pg_class` query result matching `sql/kill_switch.sql`'s design.
-- **INC-3 AC1** — unaffected, already covered per the original Phase-4 pass (§5 above).
-- **INC-3 AC3** (resume-baseline / no-false-alarm test under synthetic staleness) — **remains open,
-  genuinely deferred**. No evidence block anywhere in the repo addresses AC3; `docs/handoff.md:196-198`
-  itself says so explicitly, and `docs/review-log.md` Pass 23 (`:1033-1036`, `:1148-1150`) independently
-  confirms it as the sole remaining live-verification gap for kill-switch. Not touched by this closure.
-
-### Verdict — Phase 4 whole-system regression
-
-**PASS**, with two open items flagged (not functional defects): 204/204 Python passed, 63/63 admin-portal
-JS/TS passed, `admin-portal` production build succeeds with all 8 routes (5 user-facing + 3
-infrastructure) compiling together and zero TypeScript errors, `npm run lint` zero errors/warnings. All
-four cross-increment interaction checks in scope (kill-switch admin-check bypass preservation, INC-6/INC-5
-RLS interaction, kill-switch toggle UI calling the live function definition, repo-wide `ClientOptions`
-leftover check) independently re-derived from current file content and confirmed correct — no seam defect
-found between any pair of increments.
-
-The requested status change (INC-3's AC2/AC4/AC5) was **still not applied**, on this pass's own follow-up
-check of the evidence dev subsequently supplied in `docs/handoff.md` (commit `9f5a899`): the evidence is
-in the right dated/attributed/checkable format and its described mechanism matches
-`sql/scheduler_pgcron.sql`'s actual source, but it presupposes `sql/kill_switch.sql` is applied to
-production — a claim `docs/runbook.md` (release, authoritative) and `sql/kill_switch.sql`'s own header
-both explicitly contradict, unreconciled anywhere in the repo. See §5's follow-up entry and **BUG-004**
-above. REV-070 remains open.
-
-**What this PASS does and does not mean.** It means the deterministic shell (Python pipeline, admin-portal
-build/lint/static tests, SQL grant/policy logic, cross-file authorization reasoning) is confirmed correct
-and consistent across the whole integrated system, not just increment-by-increment. It does **not** mean
-every FR is live-verified: INC-3's AC1–AC5 (FR24–FR26, kill-switch), INC-4's AC6 (FR33, Gemini live smoke),
-and INC-7's AC2/AC3 live round-trip (FR31/FR32, gated on `sql/kill_switch_portal_grant.sql`'s live
-application) all remain open live-verification items carried into Phase 4. AC2/AC4/AC5 additionally now
-have written evidence in the repo that cannot be independently corroborated because it conflicts with the
-project's own deployment record (BUG-004) — resolving that conflict is a precondition for any future
-re-attempt, not just supplying another evidence block.
-
-**Superseded by §7, same session.** BUG-004's contradiction was subsequently fixed by dev/release (`sql/
-kill_switch.sql`'s header, `docs/runbook.md`'s RLS-posture section, `docs/design.md`'s FR24-26 row) and
-independently re-verified both by reviewer (Pass 22/23) and by qa (§7 above) against current file
-content. **INC-3's AC2/AC4/AC5 are now independently verified; BUG-004 is CLOSED. AC1 remains covered;
-AC3 remains genuinely open** — see §7 for the full re-verification and exact citations.
+No bugs filed against production code — no defect was found in `scripts/state.py`, `scripts/notify.py`,
+`scripts/run_hourly.py`, `scripts/run_discovery.py`, or `pages/dashboard.html`.
 
 ---
 
 ## Open bugs
 
-None. (BUG-004 — documentation-integrity: contradictory deployment-status claims for `sql/kill_switch.sql`
-across `docs/runbook.md`, `sql/kill_switch.sql`'s header, `docs/review-log.md` (REV-070), and
-`docs/design.md`'s FR24-26 row — **CLOSED 2026-07-29**, re-verified resolved; see §7 above for the
-independent re-check and exact citations. Full original detail archived in
-`docs/archive/test-report-archive.md` alongside the rest of this run once a newer run supersedes this
-file per doc hygiene.)
+None filed against INC-8. One environment observation carried forward (not a bug, not blocking): the
+admin-portal TypeScript suite's `build_bundle.test.ts` (6 tests) fails in this execution sandbox on a
+Turbopack workspace-root inference error, confirmed pre-existing (reproduces identically on the pre-INC-8
+commit) and unrelated to any code this increment touched — see §6 above. Worth a release/dev look if it
+recurs in CI, since it diverges from the last recorded 63/63 baseline.

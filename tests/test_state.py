@@ -133,12 +133,29 @@ class FakeSupabase:
 
 
 class FakeNotifier:
-    def __init__(self):
+    """Delivery-aware double for the FR34/DEEP-002 contract (components.md
+    §4.6): push() must report True/False/None, not just "was called".
+
+    `returns` is what a bare `FakeNotifier()` gives back on every push (default
+    True -- an ordinary successful send, which is what most of this suite's
+    pre-existing tests actually intend to exercise; a plain "was push() called"
+    test never cared about the return value before FR34 existed). `queue`, if
+    given, overrides `returns` and is consumed one value per call (for tests
+    that need a scripted fail-then-succeed sequence, e.g. AC5's retry flow) --
+    once exhausted, falls back to `returns`.
+    """
+
+    def __init__(self, returns=True, queue=None):
         self.calls = []
+        self.returns = returns
+        self.queue = list(queue) if queue is not None else None
 
     def push(self, ticker, verdict, rationale, *, kind, log_id, market=None):
         self.calls.append(dict(ticker=ticker, verdict=verdict, rationale=rationale,
                                 kind=kind, log_id=log_id, market=market))
+        if self.queue:
+            return self.queue.pop(0)
+        return self.returns
 
 
 # --- fixtures ------------------------------------------------------------------
@@ -338,3 +355,170 @@ def test_discovery_failed_parse_never_pushes(sb, notifier):
     outcome = state.process_candidate(sb, notifier, _data("NEWCO"), ai, push=True)
     assert outcome == "no-read"
     assert notifier.calls == []
+
+
+# --- INC-8 / FR34 / DEEP-002: delivery-confirmed alerting ----------------------
+# components.md §4.6, increment-plan.md INC-8 AC5/AC6/AC7.
+
+def test_ai_failure_fail_safe_guard_is_untouched_by_delivery_gating(sb):
+    """Highest-stakes assertion in this increment (per qa brief): an AI/Gemini
+    failure (parse_status in failed/api_error) must still leave current_verdict
+    UNCHANGED and fire NO alert at all, regardless of anything push() would
+    have returned -- state.py:256's pre-existing fail-safe guard (load-bearing
+    #8) is untouched by INC-8. Proven by BEHAVIOR: a notifier that would
+    deliver successfully (returns=True) is wired in, and the guard must still
+    never call it. A regression here would fabricate advice."""
+    notifier = FakeNotifier(returns=True)
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Buy"), NOW)   # cold start, Buy
+    outcome = state.process_ticker(sb, notifier, _wl_row(), _data(),
+                                    _ai("Sell", parse_status="failed"), NOW)
+
+    assert outcome == "no-read"
+    assert notifier.calls == []                                   # push() never even called
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Buy"    # state NOT advanced
+    assert sb.call_log[-1]["alerted"] is False
+
+
+def test_ai_api_error_fail_safe_guard_is_untouched_by_delivery_gating(sb):
+    """Same guard, the other fail-safe parse_status value (api_error)."""
+    notifier = FakeNotifier(returns=True)
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Hold"), NOW)  # cold start, Hold
+    outcome = state.process_ticker(sb, notifier, _wl_row(), _data(),
+                                    _ai("Buy", parse_status="api_error"), NOW)
+
+    assert outcome == "no-read"
+    assert notifier.calls == []
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Hold"
+    assert sb.call_log[-1]["alerted"] is False
+
+
+def test_failed_push_leaves_state_pending_then_retries_and_succeeds(sb):
+    """AC5, exact flow named in increment-plan.md: fail once, retry on the next
+    cycle with the SAME new verdict, succeed, and only then does state advance.
+    All three assertions belong in one flow per the AC's own framing."""
+    notifier = FakeNotifier(queue=[False, True])   # first change-push fails, retry succeeds
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Buy"), NOW)   # cold start (no push call)
+
+    # First attempt at the crossing: push fails.
+    outcome1 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), NOW)
+    assert outcome1 == "push-failed"
+    assert sb.call_log[-1]["alerted"] is False
+    assert sb.call_log[-1]["alert_type"] == "change"                # attempted, not silently dropped
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Buy"      # OLD verdict, unchanged
+    assert len(notifier.calls) == 1
+
+    # Next cycle: same new AI verdict (Sell) is re-evaluated against the still-
+    # unadvanced prior verdict (Buy) -- push is retried automatically.
+    later = NOW + _dt.timedelta(minutes=30)
+    outcome2 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), later)
+    assert outcome2 == "change-alert"
+    assert len(notifier.calls) == 2                                  # push() fired again for the SAME crossing
+    assert notifier.calls[1]["verdict"] == "Sell"
+    assert sb.call_log[-1]["alerted"] is True
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Sell"      # now advances
+
+
+def test_ai_failure_while_a_push_failed_crossing_is_pending_does_not_alert_or_advance(sb):
+    """Interaction of both DEEP-001/DEEP-002 fixes: a crossing already left
+    pending by a failed push must NOT be disturbed by a subsequent AI-call
+    failure -- the fail-safe guard fires first, no push is attempted, and the
+    still-unadvanced OLD verdict is untouched, so the genuine retry is not
+    lost or corrupted by an unrelated bad AI cycle in between."""
+    notifier = FakeNotifier(returns=False)   # every real push attempt fails
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Buy"), NOW)   # cold start, Buy
+
+    outcome1 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), NOW)
+    assert outcome1 == "push-failed"
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Buy"
+    calls_after_first = len(notifier.calls)
+
+    # Next cycle: the AI call itself fails (unrelated transient outage).
+    later = NOW + _dt.timedelta(minutes=30)
+    outcome2 = state.process_ticker(sb, notifier, _wl_row(), _data(),
+                                     _ai("Sell", parse_status="api_error"), later)
+    assert outcome2 == "no-read"
+    assert len(notifier.calls) == calls_after_first   # no push attempted this cycle
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Buy"   # still the old, unadvanced verdict
+    assert sb.call_log[-1]["alerted"] is False
+
+
+def test_failed_push_then_verdict_changes_again_retries_current_not_stale_verdict(sb):
+    """Not named by any single AC, but follows directly from FR34's "leave the
+    crossing unadvanced" contract: if a failed push leaves current_verdict at
+    the OLD value, and the AI's verdict has changed AGAIN by the next cycle,
+    the retry must push the NEW (current) verdict, not replay the stale one
+    that failed to send. Getting this backwards would mean a real 500 on a
+    Buy->Sell crossing, followed by the AI flipping to Hold before the retry,
+    silently sends a Sell alert for a company the AI no longer rates Sell --
+    the difference between a useful retry and misleading advice."""
+    notifier = FakeNotifier(queue=[False, True])   # Buy->Sell push fails; the retry (with Hold) succeeds
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Buy"), NOW)   # cold start, Buy
+
+    outcome1 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), NOW)  # Buy->Sell fails
+    assert outcome1 == "push-failed"
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Buy"
+
+    # AI's verdict has moved on to Hold by the next cycle -- NOT a replay of
+    # the stale failed "Sell" push.
+    later = NOW + _dt.timedelta(minutes=30)
+    outcome2 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Hold"), later)
+    assert outcome2 == "change-alert"
+    assert notifier.calls[-1]["verdict"] == "Hold"          # pushes the CURRENT verdict
+    assert sb.call_log[-1]["verdict"] == "Hold"
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Hold"
+
+
+def test_dry_run_push_logs_undelivered_but_still_advances_state_no_backlog(sb):
+    """AC6, both halves asserted in one block per the AC's own reasoning: a dry
+    run (delivered=None) writes alerted=False (honest -- nothing was sent) but
+    DOES advance verdict_state (no backlog buildup), and the immediately-
+    following identical-verdict check comes back 'quiet', not a second alert
+    (confirms no backlog dump)."""
+    notifier = FakeNotifier(returns=None)   # DryRunNotifier-equivalent: always None
+    state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Buy"), NOW)   # cold start, Buy
+
+    outcome = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), NOW)
+    assert outcome == "change-alert"
+    assert sb.call_log[-1]["alerted"] is False                        # honest: nothing was sent
+    assert sb.verdict_state["AAPL"]["current_verdict"] == "Sell"       # advances, no backlog
+
+    # Next cycle, same (now current) verdict -> genuinely quiet, not a re-push.
+    later = NOW + _dt.timedelta(minutes=30)
+    outcome2 = state.process_ticker(sb, notifier, _wl_row(), _data(), _ai("Sell"), later)
+    assert outcome2 == "quiet"
+    assert len(notifier.calls) == 1   # no second push fired
+
+
+def test_discovery_candidate_dry_run_excluded_from_recent_pushed_dedup(sb):
+    """AC7: a candidate pushed via a dry run (delivered=None) has alerted=False,
+    and recently_pushed_candidates() -- Decision #32's 7-day cooldown, keyed on
+    alerted=True -- does NOT include it, so it naturally resurfaces next scan."""
+    notifier = FakeNotifier(returns=None)
+    outcome = state.process_candidate(sb, notifier, _data("NEWCO"),
+                                       {"verdict": "Buy", "rationale": "breakout"}, push=True)
+    assert outcome == "candidate-pushed"
+    assert sb.call_log[0]["alerted"] is False
+    assert "NEWCO" not in state.recently_pushed_candidates(sb, days=7)
+
+
+def test_discovery_candidate_failed_push_excluded_from_recent_pushed_dedup(sb):
+    """AC7, the other half: a candidate whose real push FAILED also has
+    alerted=False and is not falsely deduped for the cooldown window."""
+    notifier = FakeNotifier(returns=False)
+    outcome = state.process_candidate(sb, notifier, _data("NEWCO"),
+                                       {"verdict": "Buy", "rationale": "breakout"}, push=True)
+    assert outcome == "candidate-push-failed"
+    assert sb.call_log[0]["alerted"] is False
+    assert "NEWCO" not in state.recently_pushed_candidates(sb, days=7)
+
+
+def test_discovery_candidate_successful_push_is_deduped(sb):
+    """Counterpart/regression guard: a genuinely delivered candidate push IS
+    included in the dedup set -- proves the exclusion above is about delivery
+    status, not a broken filter that excludes everything."""
+    notifier = FakeNotifier(returns=True)
+    outcome = state.process_candidate(sb, notifier, _data("NEWCO"),
+                                       {"verdict": "Buy", "rationale": "breakout"}, push=True)
+    assert outcome == "candidate-pushed"
+    assert sb.call_log[0]["alerted"] is True
+    assert "NEWCO" in state.recently_pushed_candidates(sb, days=7)
