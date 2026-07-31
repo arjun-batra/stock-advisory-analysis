@@ -76,10 +76,16 @@ Create a Supabase project if one doesn't exist. Then:
    - `sql/enable_monitor_alerts_rls.sql` **(added 2026-07-28, reviewer REV-033/REV-035)** — one-line RLS-enable for `monitor_alerts`, which `phase5_monitoring.sql`'s `create table` never included even though the live table has RLS enabled. Must come after `phase5_monitoring.sql` (the table doesn't exist yet before that).
    - `sql/admin_portal_rls.sql` **(added 2026-07-26, INC-5, FR27-29/NFR5/NFR6)** — creates `admin_allowlist` table, `is_admin()` authorization function, and write policies for `watchlist`/`holdings`. Must come after `schema.sql` (the tables it writes policies for must exist first). Must be applied before any portal writes can succeed; deployed to Vercel as part of INC-5.
    - `sql/admin_portal_tunables.sql` **(added 2026-07-27, INC-6, FR30/NFR5/NFR6)** — creates `tunables` table (source of truth for tunable overrides), the `tunables_stamp_update` trigger, and the write policy for the portal to edit them. Must come after `schema.sql`. Deployed as part of INC-6.
+   - `sql/admin_portal_tunables_alerts_enabled_description_fix.sql` **(added 2026-07-30, INC-10, REV-112)** — corrective UPDATE to the ALERTS_ENABLED seed row's description, to accurately reflect that the effective value is table-value AND workflow input. INC-6's own seed INSERT carries the corrected text for fresh deploys; this file brings live projects already running INC-6 in sync. Must come after `admin_portal_tunables.sql` (the row being updated must exist). Idempotent (WHERE scoped to key='ALERTS_ENABLED'); verified re-runnable. **APPLIED AND LIVE** (confirmed against production 2026-07-30).
+   - `sql/tunables_validate_trigger.sql` **(added 2026-07-30, INC-10, FR30/Decision #34)** — write-time validation trigger on `tunables` table, rejecting bad values before they are stored (DEEP-005 fix). Mirrors `scripts/config.py`'s per-key casts/domains exactly so portal edits and direct SQL edits are validated identically. Trigger named `tunables_0_validate_update` (sorts before `tunables_stamp_update` alphabetically) so it fires first and rejects before the stamp trigger runs. Must come after `admin_portal_tunables.sql` (the table must exist). Uses `create or replace trigger` (PG14+); idempotent and re-runnable. Verify correct fire order via `select tgname from pg_trigger where tgrelid = 'public.tunables'::regclass order by tgname;` — should show `tunables_0_validate_update` before `tunables_stamp_update`. **APPLIED AND LIVE** (confirmed against production 2026-07-30).
+   - `sql/holdings_currency_derivation.sql` **(added 2026-07-30, INC-10, FR11/FR29/Decision #35)** — write-time trigger on `holdings` table to derive `currency` from the held ticker's `watchlist.market`, rather than allowing free-choice currency entry (DEEP-006 fix). Unconditionally overwrites `currency` on every write, ensuring holdings reflect accurate cost-basis currency. Must come after `schema.sql` (the holdings/watchlist tables and their FK must exist). Uses `create or replace trigger` (PG14+); idempotent and re-runnable. **APPLIED AND LIVE** (confirmed against production 2026-07-30).
    - `sql/kill_switch_portal_grant.sql` **(added 2026-07-29, INC-7, FR32/NFR6)** — extends `set_kill_switch()` with an `is_admin()` authorization check for authenticated portal callers, adds the `grant execute` for authenticated role, and adds a SELECT policy so the portal can read `kill_switch_state`. Also closes a TRUNCATE-grant gap on `kill_switch_state` and `kill_switch_audit` (same class as REV-081/REV-086 found on `admin_allowlist`/`tunables`). Must come after `kill_switch.sql` (both tables must exist). Deployed as part of INC-7.
    - `sql/schema_truncate_grant_closure.sql` **(added 2026-07-29, reviewer REV-099)** — closes TRUNCATE-grant gap on the six original schema tables (`watchlist`, `holdings`, `call_log`, `verdict_state`, `run_heartbeat`, `monitor_alerts`). RLS never governs TRUNCATE in Postgres; this REVOKE is the belt-and-suspenders lockdown preventing anon/authenticated TRUNCATE access on these tables. Carefully scoped per table: `watchlist`/`holdings` retain authenticated's INSERT/UPDATE/DELETE base grants (required for INC-5's live write policies), while the other four tables lose all four DML+TRUNCATE verbs. Must come after `schema.sql` and `phase5_monitoring.sql` (both tables must exist). Applied and live on this project as of 2026-07-29.
+   - `sql/kill_switch_abort_log.sql` **(added 2026-07-30, INC-12, FR35/Decision #38)** — append-only audit table recording every deliberate kill-switch pause mid-run (causal tie: row exists iff pause was the direct cause of workflow abort). Standalone table with no interdependencies; uses `create table if not exists` + idempotent RLS/REVOKE. Does not require PG14+; applies cleanly on any Postgres version this project targets. **APPLIED AND LIVE** (verified re-runnable against local Postgres 16, confirmed against production 2026-07-30).
 
-These ten migrations set up the entire control plane and admin-portal backend (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, `admin_allowlist`/`tunables` created by the two portal-support migrations, plus the `latest_call_per_ticker` view, plus the TRUNCATE-grant closure). The cron jobs will start firing immediately on the schedules defined below.
+These fourteen migrations set up the entire control plane and admin-portal backend (`kill_switch.sql`'s two tables, `sql/schema.sql`'s five tables, `monitor_alerts` created by `phase5_monitoring.sql`, `admin_allowlist`/`tunables` created by the two portal-support migrations, plus the `latest_call_per_ticker` view, the validation/derivation triggers, the kill-switch abort audit table, plus the TRUNCATE-grant closures). The cron jobs will start firing immediately on the schedules defined below.
+
+**Postgres version floor:** Two of these migrations (`tunables_validate_trigger.sql` and `holdings_currency_derivation.sql`) use `create or replace trigger` syntax, which requires **Postgres 14 or later**. The live project runs Postgres 17.6.1. A fresh environment must meet this floor; older Postgres versions will fail on those two files with a syntax error.
 
 **Note:** `sql/drop_shadow_tables_migration.sql` is a one-time migration that was already applied to this project; it is not part of the fresh-deploy procedure (a fresh project never had those tables to drop). It remains in the repo as a historical record.
 
@@ -378,6 +384,34 @@ Refer to `docs/idea-brief.md` §"Open risks (accepted, documented)" for the full
    - Verify the `/track-record` page loads with paginated `call_log` entries (FR31, INC-7).
    - Verify the kill-switch toggle appears in the header, shows the current state (PAUSED/RUNNING), and clicking the toggle button flips it — check `kill_switch_state.paused` in Supabase to confirm the database state changed.
 
+10. **SQL migrations applied (INC-10/INC-12 additions, four new files):**
+   - **Tunables validation trigger** (`sql/tunables_validate_trigger.sql`, FR30):
+     ```sql
+     SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.tunables'::regclass ORDER BY tgname;
+     ```
+     Should return two rows: `tunables_0_validate_update` (FR30 validation, fires first) and `tunables_stamp_update` (INC-6 timestamp). Fire order is critical: 0 sorts before s, so validation always runs before stamping.
+   - **Holdings currency derivation trigger** (`sql/holdings_currency_derivation.sql`, FR11/FR29):
+     ```sql
+     SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.holdings'::regclass;
+     ```
+     Should return `holdings_derive_currency` trigger (fires before/after insert or update to derive currency from watchlist.market).
+   - **ALERTS_ENABLED description fix** (`sql/admin_portal_tunables_alerts_enabled_description_fix.sql`):
+     ```sql
+     SELECT description FROM public.tunables WHERE key = 'ALERTS_ENABLED';
+     ```
+     Should include text mentioning "Effective value is this AND the workflow's alerts_enabled input" — if it still reads only "Master switch for real pushes" without the AND clause, the fix was not applied.
+   - **Kill-switch abort audit table** (`sql/kill_switch_abort_log.sql`, FR35):
+     ```sql
+     SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'kill_switch_abort_log');
+     ```
+     Should return `true`. Then verify RLS/REVOKE posture (matching `admin_allowlist` and `kill_switch_audit`):
+     ```sql
+     SELECT grantee, privilege_type FROM information_schema.role_table_grants 
+     WHERE table_name = 'kill_switch_abort_log' AND grantee IN ('anon', 'authenticated') 
+     ORDER BY grantee, privilege_type;
+     ```
+     Should return **only** REFERENCES, SELECT, and TRIGGER privileges for both `anon` and `authenticated` — **NOT** INSERT, UPDATE, DELETE, or TRUNCATE. If any DML/TRUNCATE appears, the REVOKE was not applied or was reversed by mistake.
+
 ### Regression Test (Before Production Traffic Resumes)
 
 After backfilling configuration and before resuming scheduled production runs:
@@ -418,7 +452,7 @@ See `docs/requirements.md` §10 (Configuration audit baseline) for the full tabl
 
 ### SQL Migrations and Schema
 
-The migrations in `sql/` (ten files per §2.3's apply order) define the complete control-plane schema
+The migrations in `sql/` (fourteen files per §2.3's apply order) define the complete control-plane schema
 and admin-portal backend. No other DDL is needed; the tables and functions they create persist:
 
 **Core schema and monitoring:**
@@ -438,11 +472,17 @@ and admin-portal backend. No other DDL is needed; the tables and functions they 
 - `admin_allowlist` — list of Google email addresses authorized to access the portal (`sql/admin_portal_rls.sql`, FR27).
 - `is_admin()` — authorization function, checks if current user's email is in `admin_allowlist` (`sql/admin_portal_rls.sql`, FR27).
 - `tunables` — source of truth for tunable overrides (AI model, retry, timeout settings) (`sql/admin_portal_tunables.sql`, FR30).
+- `_validate_tunable_update()` + `tunables_0_validate_update` trigger — write-time validation rejecting bad tunable values before they are stored (DEEP-005 fix, `sql/tunables_validate_trigger.sql`, FR30/Decision #34). Verify fire order: `select tgname from pg_trigger where tgrelid = 'public.tunables'::regclass order by tgname;` should show `tunables_0_validate_update` before `tunables_stamp_update`.
+- `_derive_holdings_currency()` + `holdings_derive_currency` trigger — unconditional currency derivation from `watchlist.market` on every holdings write, replacing free-choice currency (DEEP-006 fix, `sql/holdings_currency_derivation.sql`, FR11/FR29/Decision #35).
+
+**Audit and operational control:**
+- `kill_switch_abort_log` — append-only table recording every deliberate kill-switch pause mid-run, establishing causal tie (a row's existence proves pause was the cause of abort, not coincidence) (`sql/kill_switch_abort_log.sql`, FR35/Decision #38).
 
 **Security lockdowns:**
 - TRUNCATE grant revocations on kill-switch, original schema, and admin-portal tables (`sql/kill_switch_portal_grant.sql`, `sql/schema_truncate_grant_closure.sql`, REV-081/REV-086/REV-099).
+- RLS and REVOKE on `kill_switch_abort_log` — no anon/authenticated access, same two-layer deny-all as `admin_allowlist` and `kill_switch_audit` (no INSERT/UPDATE/DELETE/TRUNCATE, even if a policy were added by mistake) (`sql/kill_switch_abort_log.sql`, Decision #37).
 
-**RLS posture (REV-035, confirmed live via `list_tables` 2026-07-28, updated for INC-5/INC-7 additions):**
+**RLS posture (REV-035, confirmed live via `list_tables` 2026-07-28, updated for INC-5/INC-7/INC-10/INC-12 additions):**
 `watchlist`, `holdings`, `verdict_state`, `call_log`, `run_heartbeat`, and `monitor_alerts` all show
 `rls_enabled: true`. `watchlist` and `call_log` have anon/authenticated SELECT policies (the
 dashboard/detail-page read path); `watchlist` and `holdings` also have authenticated-role write policies
@@ -456,7 +496,13 @@ RLS/REVOKE posture is documented in `docs/design/operational-controls.md` §13.2
 `docs/handoff.md`'s dated INC-3 evidence block (2026-07-29 kill-switch pause/resume audit, confirming both
 tables exist with RLS enabled, and `set_kill_switch()` works correctly). `kill_switch_state` has an
 authenticated-role SELECT policy gated by `is_admin()` (`admin_read_kill_switch`, added in INC-7
-`sql/kill_switch_portal_grant.sql`), permitting the portal to read the current pause state.
+`sql/kill_switch_portal_grant.sql`), permitting the portal to read the current pause state. `kill_switch_abort_log`
+(added INC-12, `sql/kill_switch_abort_log.sql`) has RLS enabled with zero policies and a two-layer deny-all REVOKE
+(no anon/authenticated INSERT/UPDATE/DELETE/TRUNCATE), matching the same posture as `admin_allowlist` and `kill_switch_audit`.
+`tunables` (added INC-6, `sql/admin_portal_tunables.sql`) has RLS enabled with authenticated-role write policies gated by
+`is_admin()` (`admin_read_tunables` and `admin_write_tunables`); the _validate_tunable_update() and _derive_holdings_currency()
+functions (`sql/tunables_validate_trigger.sql` and `sql/holdings_currency_derivation.sql`, INC-10) are `SECURITY DEFINER`
+triggers, not exposed as standalone objects to any role.
 
 All modifications to this schema must be applied as new SQL migrations (or via Supabase's migration UI), never by direct ALTER commands.
 
