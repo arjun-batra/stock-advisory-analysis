@@ -3990,49 +3990,22 @@ changelog 2026-07-31 entries) is the correct, complete provenance chain for NFR8
 
 ### NEW FINDINGS — Pass 34
 
-**REV-145 — `[STRUCTURE]` — major — owner: tech-lead.** `docs/code-map.md:22-24`'s `admin-portal/`
-component inventory ("`components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`.") does not list
-`components/NavToggle.tsx`, the new presentational component INC-13 added (`docs/handoff.md`'s INC-13
-entry, `docs/design/admin-portal.md` §16.10's allow-list). Same class of gap `CLAUDE.md` calls out
-explicitly ("a code-map that no longer matches reality (stale map = major, owner tech-lead)") and the same
-class Pass 33 already flagged once this cycle for `sql/` (REV-143, now independently confirmed RESOLVED
-below) — the `admin-portal/` component list needs the identical one-line treatment. Not a defect in
-INC-13's own code (the component itself is correctly scoped, presentational-only, confirmed in §2/§3
-above) — this is a documentation-currency gap that `CLAUDE.md`'s git-workflow rule ("If the increment
-changed structure, tech-lead refreshes docs/code-map.md before the merge commit") requires closing before
-INC-13 merges to `main`. Suggested fix: append `, `NavToggle.tsx`` to line 24's component list (one-line
-edit, no other change needed — the rest of the `admin-portal/` section's description of the auth/RLS
-boundary is unaffected by this addition).
+**REV-145 — `[STRUCTURE]` — major — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.** `docs/code-map.md`'s
+`admin-portal/` component inventory did not list `components/NavToggle.tsx`, the new presentational
+component INC-13 added — a documentation-currency gap `CLAUDE.md`'s git-workflow rule requires closing
+before merge. Full original finding + closing verification: `docs/archive/review-log-archive.md`
+("REV-145/REV-146/REV-147 — INC-13 admin-portal doc-currency findings + closure").
 
-**REV-146 — `[DESIGN-GAP]` — minor — owner: tech-lead.** `docs/design/admin-portal.md` §16.10's "Layout
-mechanism per current file" paragraph states the watchlist/holdings tables keep "the existing `<table>`
-layout" at "tablet/desktop widths," while `docs/design/increment-plan.md`'s INC-13 AC4 requires a
-**4-column card grid** at desktop specifically (1280px) — these two sentences are in direct textual
-tension for the desktop band. Dev flagged this itself as a judgment call (`docs/handoff.md`'s INC-13 entry,
-"Judgment calls" #1) and resolved it by treating AC4 (more specific, directly testable, and matching the
-approved mockup) as controlling for desktop while keeping §16.10's literal `<table>` text for tablet only —
-independently re-derived here as the correct reading (the mockup, `docs/ux-mockups/
-direction-g-compact-toggle.html`, is never a `<table>` at any breakpoint, and qa's retest confirms the
-4-column grid renders correctly at 1280px while a real `<table>` renders at 768px). **Non-blocking** — the
-resolution is sound and independently verified against the mockup and qa's live computed-style checks — but
-`docs/design/admin-portal.md` §16.10's text itself has not been corrected to remove the contradiction, so a
-future reader of that section alone would still see two conflicting instructions. Suggested fix: tech-lead
-folds the tablet-only/desktop-grid split into §16.10's mechanism paragraph, per dev's own flagged request.
+**REV-146 — `[DESIGN-GAP]` — minor — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.**
+`docs/design/admin-portal.md` §16.10's layout-mechanism text was in direct tension with the increment
+plan's desktop 4-column-grid AC. Non-blocking (dev's shipped resolution was independently verified sound);
+§16.10's text itself needed correction. Full original finding + closing verification: `docs/archive/
+review-log-archive.md`.
 
-**REV-147 — `[DESIGN-GAP]` — minor — owner: tech-lead.** Same root cause as REV-146, different aspect:
-INC-13 AC7(a) requires "flatter shadows...across watchlist, holdings, **and track-record** cards," and the
-mockup's `#trackrecord` section shows per-record cards, but `docs/design/admin-portal.md` §16.10's
-mechanism section never mentions track-record's layout treatment at all (only watchlist/holdings' `<table>`
-→card CSS mechanism and the tunables grid are described). Dev's second flagged judgment call (`docs/
-handoff.md`, "Judgment calls" #2) — keeping track-record as a real, always-sortable table/card-hybrid
-(`.tr-cards`/`.tr-card` grid wrapping real data with a `.sort-controls` bar replacing the `<th>` sort
-buttons, rather than the same data-label-stacked-`<table>` mechanism used for watchlist/holdings) —
-preserves FR31's sort-reachability requirement without inventing new interaction design, and qa's retest
-(BUG-011 retest, `docs/test-report.md`) independently confirmed both the card grid renders correctly at all
-three widths **and** sort remains functionally wired. **Non-blocking** for the same reason as REV-146 — but
-§16.10 should be updated to state track-record's layout mechanism explicitly (a `.tr-cards` grid with a
-`.sort-controls` bar, not the `data-label`/`<table>` swap used elsewhere) so this isn't left as an
-undocumented, dev-initiative-only reconciliation the next reader has to rediscover.
+**REV-147 — `[DESIGN-GAP]` — minor — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.** Same root cause as
+REV-146: §16.10 never described track-record's `.tr-cards`/`.sort-controls` layout mechanism at all.
+Non-blocking; §16.10 needed the missing description added. Full original finding + closing verification:
+`docs/archive/review-log-archive.md`.
 
 ### Previously logged items re-checked this pass
 
@@ -4098,4 +4071,46 @@ this merge.
 every substantive check (structural no-regression, traceability, hardcoding, leanness) passed independently
 this pass. It means the specific `CLAUDE.md` precondition for merging a structure-changing increment
 (code-map currency) is not yet met, which is a fast tech-lead fix, not a return to dev or qa.
+
+## Pass 35 — 2026-07-31 (INC-13 follow-up, narrow re-check of REV-145/146/147)
+
+Scope: tech-lead's fix commit `f67c54c` ("fix REV-145/146/147 - add NavToggle to code-map, accurate §16.10
+mechanism docs"), the two files it touches (`docs/code-map.md`, `docs/design/admin-portal.md`), and a
+sanity check that no INC-13 code changed since Pass 34's clearance of the code itself.
+
+**Diff-scope confirmation.** No `git show`/`git diff` shell access available this pass; confirmed the
+change is docs-only by direct content inspection of `docs/code-map.md` and `docs/design/admin-portal.md`
+against the actual `admin-portal/` source, plus a working-tree mtime-ordering cross-check (`Glob` over
+`admin-portal/app/**`, `admin-portal/components/**`, `admin-portal/lib/**`, and the relevant `docs/*`
+files): every `admin-portal/` source file's position in the combined chronological ordering falls before
+`docs/handoff.md`/`docs/test-report.md`/`docs/review-log.md`, and `docs/code-map.md` + `docs/design/
+admin-portal.md` are the two most-recently-modified files repo-wide, with no `admin-portal/` file ordered
+after them — consistent with a docs-only commit. No source file content differs in substance from what
+Pass 34 already independently verified clean.
+
+**REV-145, REV-146, REV-147 — all RESOLVED (2026-07-31), independently re-verified against current code and
+docs, not accepted on the fix commit's message alone.** `docs/code-map.md` now lists `NavToggle.tsx` with
+an accurate description matching the actual component. `docs/design/admin-portal.md` §16.10 now gives
+three non-contradictory breakpoint bands for `.crud-table`/`.crud-table-wrap` (phone data-label cards,
+tablet real `<table>` with card-styled wrapper, desktop `tbody{display:grid}`) and an explicit track-record
+`.tr-cards`/`.sort-controls` mechanism paragraph — both cross-checked line-for-line against
+`admin-portal/app/globals.css` and `admin-portal/app/(app)/track-record/page.tsx`. Full original findings
+and this closing verification's line-level detail: `docs/archive/review-log-archive.md`
+("REV-145/REV-146/REV-147 — INC-13 admin-portal doc-currency findings + closure").
+
+### Open items after Pass 35
+
+**Blockers: 0. Majors: 0 (REV-145 resolved above, none new).** Minors: 22 carried unaffected (per Pass 34,
+none of their files touched by this docs-only commit) + REV-144 carried unaffected = 23 open (REV-146/147
+resolved and removed from the open count).
+
+### Verdict — Pass 35
+
+**CLEAR.** All three findings from Pass 34 (REV-145 major, REV-146/147 minors) are independently confirmed
+resolved against the actual current state of `docs/code-map.md`, `docs/design/admin-portal.md`, and the
+underlying `admin-portal/` source (CSS + component code), not merely accepted from the fix commit's message.
+The fix commit `f67c54c` is docs-only (confirmed via content read plus mtime-ordering cross-check — no
+regression risk to INC-13's already-independently-verified code). Nothing else in INC-13's diff scope
+changed since Pass 34. **INC-13 is cleared to merge to `claude/admin-portal-ui-modernize-hhzgu5`** per
+`CLAUDE.md`'s git-workflow rule (branch merges after reviewer clears with zero blockers).
 
