@@ -3468,3 +3468,269 @@ pass.
 - **User decision, not a reviewer finding:** FR31/FR32's live admin-portal round-trip check (INC-11), timing
   is the user's call per `docs/design.md` §15 / `requirements.md` §11.
 
+---
+
+## Pass 32 — 2026-07-31 (C901 complexity-refactor audit, diff-scoped; last change before `v0.1.0`)
+
+**Scope.** Diff-scoped per `CLAUDE.md` Phase 3d, `git diff --name-only 6feee58..HEAD` reasoned from
+`.git/logs/HEAD` (no shell/diff tool bound this session — standing caveat since Pass 2 — commit graph read
+directly from the reflog instead, hashes cross-checked against the ones named in the brief: `ac7b1e6`,
+`e842791`, `6dada61`, `5b00861` (Pass 31's own fix-cycle commits, already cleared), then `bf42ad6`/`106cb80`/
+`8019c02`/`e86b611` (pm's merge-to-main and closure-decision commits, out of this role's diff-scope per the
+brief's own framing — "the refactor itself is the only production-code change since Pass 31," independently
+confirmed true by reading every file those four commits could plausibly touch: `docs/requirements.md` §'s
+FR31/FR32 closure record, read above, is dated and consistent; nothing else in that span is production code),
+then `0a24460` (dev: C901 refactor + runbook edit) and `8c6fd1f` (qa: verification tests + report). Files read
+in full this pass: `scripts/ai_judge.py` (whole file, 467 lines), `scripts/run_discovery.py` (whole file, 183
+lines), `scripts/run_hourly.py:1-130` (comparison baseline, confirmed unchanged), `scripts/state.py:27-42`
+(`KillSwitchAbort` declaration, confirmed unchanged), `docs/test-report.md` (whole file), `docs/runbook.md`
+§6's Regression Test subsection and its surrounding section headers (full `## `/`### ` grep), `.github/
+workflows/audit.yml` (whole file), `.claude/agents/dev.md` (whole file), `docs/design/operational-
+controls.md:340-410` (checkpoint 2/3 text), `docs/design.md:185-204` (checkpoint-1 rule #13),
+`docs/code-map.md` (grepped for `ai_judge`/`run_discovery`), `docs/handoff.md` (grepped for `0a24460`/`C901`
+— zero hits), `tests/test_ai_judge.py:548-596` (the five new `_positional_candidate` tests, read in full),
+`tests/test_kill_switch_boundary.py:140-420` (the new mixed-outcome test plus the surrounding checkpoint
+suite, read in full to confirm it exercises real entry points, not mocks of the seam under test).
+
+**Independent verdict on behavioural equivalence: confirmed, not accepted on qa's word.** Read the current
+`_parse_batch` decomposition (`_extract_array`, `_index_by_ticker`, `_normalized_ambiguity`,
+`_positional_candidate`, `_build_result`, `_store_result`) end to end and traced each of DEEP-003 (positional
+fallback only accepted when the candidate's own `ticker` field is absent or normalizes unambiguously),
+BUG-005 (`_normalized_ambiguity` counts DISTINCT requested tickers, not raw occurrences, so a same-ticker
+duplicate request can't collide with itself), and BUG-006 (`_store_result`'s "a later fail-safe never
+clobbers an earlier resolved ok") directly against the live source — all three guards are intact and their
+docstrings match their code exactly, not merely each other. Independently opened and read the five new
+`_positional_candidate` unit tests (`tests/test_ai_judge.py:556-595`) and confirmed each asserts the
+documented boundary precisely (length-mismatch rejection, unlabeled-in-order acceptance, wrong-label
+rejection even positionally, unambiguous-normalized acceptance, ambiguous-normalized rejection) — these are
+not shape-only assertions, each pins the exact `(candidate, used_fallback)` tuple the rule requires. Since
+this session has no `git show` access, I could not independently byte-diff `0a24460` the way qa did; my
+equivalence finding rests instead on a full read of the current source against its own docstring contract
+(which itself restates DEEP-003/BUG-005/BUG-006 in the same terms as the archived original fix write-ups)
+plus the passing new direct-unit tests — a different, not weaker, form of independent verification than qa's
+byte-diff, and one this role's tool constraints have used since Pass 2. **No branch was found moved across a
+boundary in a way no test covers** — the five new tests plus the existing `_parse_batch`-scoped suite from
+INC-9's BUG-005/BUG-006 fix cycles (still present, still passing per qa's 287/0) between them exercise every
+named guard directly.
+
+**`outcomes` mutation-by-reference — independently traced, no double-count/drop/reorder risk found.**
+`_ingest_candidates` (`run_discovery.py:57-82`) mutates `outcomes["skip"]`/`outcomes["error"]` only for
+candidates that do NOT make it into the returned `items` list; `_judge_and_process` (`:85-113`) mutates
+`outcomes[result]`/`outcomes["error"]` only for candidates IN `items`. The two candidate sets are disjoint by
+construction (a candidate is either filtered out during ingest or appended to `items`, never both), so no
+ticker can be tallied by both functions and no ticker can be tallied by neither. The two-phase order
+(ingest-all, then judge-all) is not new: it mirrors the pre-existing checkpoint-2 design ("FR24 checkpoint 2
+... after Phase-1 ingest," `operational-controls.md` §13.6.2, unchanged), so the function boundary was placed
+exactly at an already-existing conceptual phase boundary, not an arbitrary split point. Independently verified
+against qa's own new test, `tests/test_kill_switch_boundary.py::test_checkpoint3_discovery_mixed_outcomes_
+before_abort_real_rows_counts_and_orders_correctly` (read in full, `:376-420`+): four candidates spanning an
+ingest-skip, a fail-safe no-read, an ordinary logged Hold, and a checkpoint-3 abort on a Buy, asserting the
+exact `real_rows_this_cycle` tally and that the ingest-skip does NOT count. This is precisely the seam the
+brief named as riskiest, and it is the one seam qa added dedicated new coverage for beyond what a "did the
+extraction pass existing tests" check would require — agree with qa that this was the right thing to add.
+
+**`KillSwitchAbort` propagation — independently re-derived, confirmed intact.** `scripts/state.py:32-42`
+(untouched by this diff, confirmed by its content matching Pass 28/29's already-verified text exactly) still
+declares `KillSwitchAbort(BaseException)`, not `Exception`, with the docstring's own stated reason (a plain
+`Exception` subclass would be silently caught by the per-ticker `except Exception` guards and miscounted).
+Traced the new boundary directly: `_judge_and_process` raises `state.KillSwitchAbort("ai_call")` at
+`run_discovery.py:95`, BEFORE entering the per-candidate `for c, data in items:` loop whose own `try/except
+Exception` starts at `:104` — the raise is textually and structurally outside that loop's try block, so
+Python's `except Exception` there cannot intercept it (a `BaseException` wouldn't be caught by it regardless,
+but confirming the raise doesn't even reach that guard's scope removes the "moved a branch across a boundary"
+risk the brief specifically asked about). The exception then propagates out of `_judge_and_process`'s own
+frame — which has no `try/except` of its own wrapping that raise — to `main()`'s `try: _judge_and_process(...)
+except state.KillSwitchAbort as abort:` (`:164-168`), the sole catch site, unchanged in shape from the
+pre-refactor inline version. Cross-checked against `tests/test_kill_switch_boundary.py::test_checkpoint_call_
+site_counts` (still asserts exactly 2 `if state.is_paused(sb):` sites in `run_discovery.py` via a regex that
+is indentation/function-agnostic, so it validates survival of the extraction, not just literal-string
+presence) and `::test_checkpoint2_run_discovery_ai_call_abort` (still passing, unmodified). **Confirmed: the
+new function boundary does not create a path where `KillSwitchAbort` could be miscounted as
+`outcomes["error"]`.**
+
+**Decomposition judged sound as design — independently reached, agrees with qa on genuineness, adds one
+observation qa's framing understates.** Read all eleven new helpers directly (six in `ai_judge.py`, five in
+`run_discovery.py`) against dev's own `~40 lines/function` and `~300 lines/file` guidelines
+(`.claude/agents/dev.md:25`): every helper is well under 40 lines, each has exactly one named responsibility
+matching its docstring, and none is a trivial pass-through with no independent semantic content — even the
+smallest (`_normalized_ambiguity`, ~6 lines) encodes a specific, previously-bug-causing counting rule (BUG-005
+dedup-by-distinct-requested-ticker) that is independently worth naming and testing on its own, not merely
+lint-shuffled. `_positional_candidate` is, as qa says, the clearest win: it is now directly testable with a
+four-line fixture instead of requiring a full fabricated batch response threaded through `_parse_batch`'s
+entire body, and the five new tests are proof this seam was real, not decorative. **Agree: no helper found
+"doing too little to justify existing."**
+
+One nuance qa's own write-up (`docs/test-report.md:109-117`) overstates: it frames `run_discovery.py`'s split
+as "the same shape `run_hourly.py`'s pre-existing `_process_group`/`_sessions` split already established."
+Read `run_hourly.py:52-106` directly to check this: `_process_group` keeps ingest, the checkpoint-2 gate, the
+batched AI call, AND the per-ticker process loop all in ONE function (`outcomes` is mutated only within that
+single function's own scope, never handed across a function boundary mid-cycle). `run_discovery.py`'s
+decomposition is a different shape: it splits the ingest phase and the judge+process phase into TWO separate
+functions that share one `Counter` instance passed by reference across that boundary — exactly the seam this
+pass and qa's new test both had to independently verify has no double-count/drop risk. The two orchestrators
+were symmetric before this refactor (both single-function-per-phase) and are asymmetric after it, purely as a
+side effect of which one tripped C901's threshold. Not a defect — independently confirmed correct above — and
+not something dev did wrong (dev split the smallest set of complexity ruff actually flagged, which is the
+right instinct); but it is a real, current inconsistency between two structurally-parallel modules that
+happened by accident of which one got flagged, not by a deliberate call either way. Logged below as REV-141,
+minor, non-blocking, for tech-lead to decide once (either give `run_hourly.py`'s `_process_group` the same
+split for symmetry, or record the asymmetry as intentional/acceptable) rather than let it drift further next
+time either module's complexity creeps up again.
+
+**No new `[HARDCODED]`, `[BLOAT]`, or `[SECURITY]` finding in the diff.** No new literal tunable, no new
+embedded prompt/model-parameter, no dead code/unused import/commented-out code, no new trust-boundary I/O
+(no SQL, shell, file-path, or HTML construction touched by either file). `docs/runbook.md`'s addition is
+documentation-only. Confirms qa's own clean-ruff report is plausible by direct complexity estimation of the
+new functions (each has 1-3 decision points; standing caveat: no `ruff` execution available this session,
+corroborated rather than independently re-run — same evidentiary posture as every prior pass without a shell
+tool).
+
+### NEW FINDINGS — Pass 32
+
+**REV-137 — `[STRUCTURE]` — minor — owner: tech-lead. `scripts/ai_judge.py` is 467 lines against dev's own
+`~300 lines/file` guideline (`.claude/agents/dev.md:25`), and the C901 refactor made this worse, not better —
+six new named helpers each carry their own docstring, adding net lines to a file that was already long before
+this round.** Distinct from the already-carried REV-101 (which is about `judge_batch()`'s own ~95-line
+function body, unchanged by this diff) — this is the file-level guideline, not previously given its own
+REV-ID. Flagged by dev in this round's own work and explicitly left unactioned pending a design-level call
+(`docs/test-report.md:124-128`, "Dev flagged this outside the C901 fix's scope rather than making an
+unauthorized module split... owner: tech-lead"); this pass independently confirms the line count (467, read
+directly) and concurs dev was right not to unilaterally split a module on a lint-driven fix's own scope. Not
+a blocker — the file is cohesive (one module, one responsibility: the AI judgment layer) and its length is
+substantially rationale comments already calibrated as house style (Pass 4's leanness finding, re-affirmed
+this pass by direct read finding no narration comments or dead code). A genuine design-level call for
+tech-lead: split `ai_judge.py` (e.g., extract the `_parse_batch`-and-friends group into its own
+`verdict_parse.py`, or extract prompt-building) or explicitly accept the overrun as this module's nature.
+
+**REV-138 — `[DESIGN-GAP]` — minor — owner: tech-lead. `docs/design/operational-controls.md:352` now
+misdescribes where checkpoint 2 lives in `run_discovery.py`.** Text reads: "In `run_discovery.py::main`,
+placed the same way, after Phase 1 ingest and immediately before its own `judge_batch(...)` call." Since
+`0a24460`, the `if state.is_paused(sb): raise state.KillSwitchAbort("ai_call")` check and the
+`judge_batch(...)` call both now live inside `_judge_and_process` (`run_discovery.py:94-100`), called FROM
+`main()`, not textually inside `main()` itself — confirmed by direct read of both files. Behaviorally
+unaffected (independently re-verified above: the checkpoint still fires at the identical logical point,
+still propagates correctly) — this is a documentation-accuracy gap, not a code defect, of the same class this
+log has flagged repeatedly (REV-073/079/084/090/093-094/108/110/111/115/121/122/126). Fix: one clause, "...now
+inside the extracted `_judge_and_process` helper, called from `main()` right after Phase 1 ingest completes."
+Not a blocker.
+
+**REV-139 — process — minor — owner: dev. Commit `0a24460` has no corresponding `docs/handoff.md` entry.**
+`.claude/agents/dev.md` rule 6 ("Write a short handoff note in `docs/handoff.md`: increment ID, files
+touched, how to run it, known limitations") was not followed for this fix round — grepped `docs/handoff.md`
+for `0a24460` and `C901`, zero hits, confirmed by direct read that the file's last section is still INC-12's
+"Known limitations" from the prior round. qa's own scope note (`docs/test-report.md:13`, "Read
+`docs/handoff.md`'s commit-adjacent context") implies qa expected to find one and worked from the commit
+message and current source instead. Not a blocker — the commit message and qa's independent verification
+together substitute adequately for this round, and every fact a handoff note would have carried (files
+touched, how to verify, known limitations) is recoverable from `docs/test-report.md`'s own thorough writeup —
+but the process step was skipped, and `docs/handoff.md` is dev's own owned artifact per `CLAUDE.md`'s table,
+so this is squarely dev's gap to close on the next round, not a design or reviewer question.
+
+**REV-140 — process — minor — owner: orchestrator (routing) + release (artifact ownership) + dev (placement).
+The runbook fix (`docs/runbook.md:423-428`, adding `ruff check --select C90 .` to the local-check
+instructions) has two separable problems: an ownership question and an effectiveness question.**
+
+*Ownership:* `docs/runbook.md` is release's owned artifact per `CLAUDE.md`'s agent table ("release | owns:
+docs/runbook.md, CI/CD config"); dev is not listed as an owner and its own row's "owns" column is `src/,
+config file, docs/handoff.md`. This commit has dev editing release's file directly rather than flagging the
+gap for release to fix, or being explicitly directed to by the orchestrator. The edit itself is low-risk and
+factually correct (independently confirmed above and cross-checked against `.github/workflows/audit.yml`'s
+actual two `ruff` invocations, which do match what the runbook now says) — this is not a correctness finding
+— but the multi-agent contract's own stated principle ("a decision not written to its owner's artifact did
+not happen... Agents communicate ONLY through these documents") is exactly what this bypasses. Recommend the
+orchestrator confirm release ratifies this edit after the fact (a one-line sign-off), or adjust the routing
+so a future CI/runbook-adjacent fix goes through release first.
+
+*Effectiveness — this is the substantive judgment the brief asked for:* the new line was added under §6
+"Testing and Verification of a Fresh Deploy" → "Regression Test (Before Production Traffic Resumes)"
+(confirmed by direct read of the full `## `/`### ` header structure, `docs/runbook.md:319-441`) — a
+release-owned, fresh-deploy/incident-recovery checklist, not a step in the routine per-increment dev/qa loop
+`CLAUDE.md` Phase 3a defines (dev writes a build plan, implements, "runs full suite," writes handoff; qa
+tests). `.claude/agents/dev.md` rule 5 ("run the FULL existing test suite... smoke-test... verify against
+acceptance criteria") and the "Output format" line ("full test suite result") say nothing about lint, and
+`CLAUDE.md`'s own instruction ("Run tests quietly (`pytest -q --tb=short` or equivalent)") likewise never
+mentions `ruff`. **The actual failure mode this fix was meant to prevent — an agent in the normal
+build-implement-test-handoff loop running `pytest` but not both `ruff` invocations, then reporting "lint
+passes" — is not touched by this edit at all**, since nothing in that loop's own governing instructions
+(`dev.md`, `CLAUDE.md`) points at `runbook.md` §6 during routine increment work; that section is read by
+release during a fresh clone or post-incident resume, a materially different moment. The mechanism that
+actually caught this violation — CI running both `ruff` invocations on every push — was already true before
+this fix and remains the only thing that will catch a recurrence; this edit does not change the detection
+point, it only helps a future disaster-recovery operator remember the two-command distinction, which is a
+real but narrower value than "prevents recurrence." **Judgment: documents, does not prevent.** A fix that
+would actually close the loop belongs in `dev.md` rule 5 (add "and both `ruff check .` / `ruff check --select
+C90 .`" to the full-test-suite step) or a repo-level enforcement (`pyproject.toml`/`Makefile`/pre-commit
+hook, none of which exist per dev's own prior note) — both out of this role's write scope (`dev.md` is
+config, not `docs/`; a `Makefile` is implementation) and out of dev's edit scope for `dev.md` itself
+(agent-config files aren't listed as any pipeline agent's owned artifact) — routed to the orchestrator to
+decide who updates the actual routine-loop instruction. Not a blocker to `v0.1.0`: the currently-shipped
+code passes both `ruff` invocations right now (independently corroborated above), so no live risk exists
+today — this is a recurrence-prevention gap for the NEXT increment, not a defect in this one.
+
+**REV-141 — `[STRUCTURE]` — minor — owner: tech-lead. The two orchestrators' phase-boundary shapes have
+diverged: `run_hourly._process_group` keeps ingest+checkpoint-2+AI-call+per-ticker-process in one function;
+`run_discovery.py` now splits the equivalent flow into `_ingest_candidates` + `_judge_and_process`, sharing
+one `Counter` across the new function boundary.** See the "Decomposition judged sound" discussion above for
+the full reasoning. Not a defect (independently verified no double-count/drop/reorder risk, and qa's new test
+pins the exact seam) — a design-consistency call worth making deliberately rather than by accident of which
+module's complexity ruff flagged first. Owner: tech-lead, non-blocking, batch with REV-137/138 at the next
+housekeeping pass.
+
+### Open items after Pass 32
+
+**Blockers: 0. Majors: 0.**
+
+**Minors: 22 open** — the 17 carried from Pass 31 (REV-063+071, REV-065, REV-066+052 tech-lead half, REV-067,
+REV-072, REV-048, REV-049(b), REV-080, REV-079, REV-097, REV-100, REV-101, REV-102, REV-107, REV-109,
+REV-114, REV-123 — all re-confirmed still accurate where their files were touched this pass: REV-097 and
+REV-100 both independently re-derived fresh against current `config.py`/`run_discovery.py` content above and
+found unchanged/still open; the rest carried unchanged, no file in their location touched by this diff) plus
+**5 new this pass** (REV-137, REV-138, REV-139, REV-140, REV-141). Plus **REV-136** (process, orchestrator,
+unresolved). Plus, qa-tracked not a REV-ID: **BUG-007** (unchanged, confirmed above).
+
+**Routing (additions this pass only; Pass 31's routing for carried items is unchanged):**
+- **tech-lead** — REV-137 (ai_judge.py file-length design call), REV-138 (operational-controls.md:352 stale
+  function-path text), REV-141 (orchestrator symmetry call), plus carried items unchanged from Pass 31.
+- **dev** — REV-139 (missing handoff.md entry, next round), REV-140's placement half (co-owner).
+- **release** — REV-140's ownership half (ratify or reclaim the runbook edit).
+- **orchestrator** — REV-140's routing decision (who actually updates the routine-loop instruction so the
+  fix is structural, not documentary), plus carried REV-136.
+
+### Verdict — Pass 32
+
+**CLEAR. Zero blockers, zero majors.** All five findings this pass are minor and none reopens any
+previously-closed finding: DEEP-003, BUG-005, BUG-006, and INC-12's `KillSwitchAbort` propagation/FR35
+accounting are all independently re-verified intact against the current, refactored code — not accepted on
+dev's or qa's account of the diff. The `outcomes`-by-reference seam the brief flagged as riskiest was traced
+by hand and additionally has dedicated new test coverage that did not exist before this round. The
+decomposition is sound as design on both sides (six `ai_judge.py` helpers, five `run_discovery.py` helpers),
+each with independent semantic content, none a placeholder shuffle to satisfy the linter. The process fix
+(runbook edit) is judged to document the two-invocation distinction for disaster recovery without closing the
+loop for the routine increment cycle that actually produced the incident — a real but non-blocking gap,
+routed to the orchestrator to decide the correct owner for a structural fix (`dev.md` rule 5 or a repo-level
+hook), neither of which is any pipeline agent's current write scope.
+
+**Tag-readiness statement.** Nothing in this change reopens any closed finding: REV-124/125/126/127
+(Pass 31's closures) are untouched by this diff and remain correctly resolved; DEEP-001 through DEEP-007 are
+untouched (none of their owning files besides `ai_judge.py`/`run_discovery.py` were touched, and this pass
+independently re-verified DEEP-003's guard specifically, since it lives in the file that changed); FR35's
+causal-tie accounting is independently re-verified intact via the new mixed-outcome test and my own trace of
+the `KillSwitchAbort` boundary. What remains open, restated precisely: **FR31/FR32 remain Deferred, pending
+live execution, by the user's own explicit 2026-07-31 decision** (`docs/requirements.md:610-667`, option 2 —
+tag now, close the five-step live-portal check whenever the user next has portal access; this is not a
+reviewer gate and was never one). **`ai_judge.py`'s 466/467-line length against dev's own ~300-line guideline
+was flagged by dev, left unactioned pending a tech-lead design call, and is independently confirmed accurate
+by this pass as REV-137** — a minor, non-blocking structural item, not a defect, exactly as `CLAUDE.md`'s
+Phase-4 gate (zero blockers/majors) permits forward. Every other open item (21 minors plus one process item,
+REV-136, plus qa-tracked BUG-007) is unchanged in kind from Pass 31's already-CLEAR disposition: non-blocking,
+named owner, no correctness or security defect in currently-live behavior.
+
+**Yes — `v0.1.0` remains clear to tag.** This pass's own diff-scoped audit finds zero blockers and zero
+majors, confirms behavioural equivalence of the C901 refactor independently (not on qa's or dev's word alone),
+confirms the one seam most likely to break silently (`outcomes` mutation-by-reference across the new
+`run_discovery.py` function boundary) has no double-count/drop/reorder defect, and confirms
+`KillSwitchAbort`'s `BaseException`-across-a-new-frame-boundary contract is intact. Recommend tagging proceed
+as planned; the five new minors (REV-137 through REV-141) are exactly the kind of housekeeping this project
+has consistently deferred past `v0.1.0` without incident (see Pass 30/31's own deferral pattern for
+comparable items), not a reason to hold the tag.
+
