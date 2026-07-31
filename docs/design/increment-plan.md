@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) dev-built + qa-PASS, reviewer Pass 28 NOT CLEAR (REV-116/REV-117 open, fix cycle in progress)
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -488,9 +488,9 @@ dependency on INC-8/9/10 at all and may run earlier if the user wants results so
 
 ---
 
-## 2026-07-30 — INC-12 (DEEP-007 resolution, Decisions #37/#38) — dev-built, qa-tested PASS; reviewer Pass 28 NOT CLEAR
+## 2026-07-30 — INC-12 (DEEP-007 resolution, Decisions #37/#38) — IMPLEMENTED, reviewer-CLEAR Pass 29
 
-### INC-12 — Kill-switch in-flight boundary checks + mid-run-abort classification (FR24, FR35) — **dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`); reviewer Pass 28 verdict NOT CLEAR — REV-116 (DEEP-007 residual, major) and REV-117 (SQL REVOKE gap, major) open, one fix cycle in progress; does not block INC-12's own code from being on `main`, does block treating DEEP-007 as resolved and `sql/kill_switch_abort_log.sql` as ready to apply live (`docs/review-log.md` Pass 28)**
+### INC-12 — Kill-switch in-flight boundary checks + mid-run-abort classification (FR24, FR35) — **IMPLEMENTED** (dev-built, qa-tested PASS — all 9 literal ACs, `docs/test-report.md`; reviewer Pass 29 verdict CLEAR — REV-116 and REV-117 independently re-verified RESOLVED, DEEP-007 closed, zero blockers/majors, `docs/review-log.md`). `sql/kill_switch_abort_log.sql` is applied and live in production.
 **Sequencing (Decision #37, binding):** strictly after INC-8 — designing the abort-accounting contract
 before INC-8 settled what "the run produced real work, then stopped" means for NFR2/Decision #31 would have
 meant guessing at a shape INC-8 might change out from under it. INC-8, INC-9, and INC-10 are all IMPLEMENTED

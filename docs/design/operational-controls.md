@@ -5,9 +5,9 @@ load-bearing decisions, increment plan, and requirement coverage map — read th
 orientation. Section numbers below (§13–§14) continue the pre-split numbering; §15 (coverage map)
 stays in `docs/design.md` itself, so this file skips it.
 
-**Status: §13.1–§13.5 IMPLEMENTED, §14 IMPLEMENTED, §13.6 dev-built + qa-PASS, reviewer Pass 28 NOT CLEAR
-(REV-116/REV-117 open, fix cycle in progress — see the note at the top of §13.6 below).** §13.1–§13.5 and
-§14 cover the
+**Status: §13.1–§13.5 IMPLEMENTED, §14 IMPLEMENTED, §13.6 IMPLEMENTED, reviewer-CLEAR (Pass 29) — DEEP-007
+closed, REV-116/REV-117 independently re-verified RESOLVED (see the note at the top of §13.6 below).**
+§13.1–§13.5 and §14 cover the
 2026-07-26 change request (kill-switch, FR24–FR26; AI provider abstraction, FR33). Both increments have
 shipped: INC-3 (kill-switch) and INC-4 (AI provider abstraction) were dev-built, qa-tested, and
 reviewer-cleared with zero blockers through Pass 14 (`docs/review-log.md`). Two verification items remain
@@ -17,22 +17,21 @@ pause/resume verification test (AC1–AC5), to be run as part of INC-11's live-v
 AC6 (live-Gemini smoke test) is deferred pending real credentials (`docs/handoff.md`), also part of INC-11.
 
 **§13.6 is new: INC-12 (DEEP-007 resolution, Decisions #37/#38, FR24's four in-flight boundary checkpoints
-+ FR35's mid-run-abort classification) — dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`);
-reviewer Pass 28 verdict NOT CLEAR, one fix cycle in progress.** This closes most of the gap DEEP-007 found
-(`docs/review-log.md`, "Deep review — 2026-07-29"): a run already dispatched when the kill switch flips ran
-to full completion, including a real push and a `contents: write` commit, while the portal badge already
-read PAUSED. Sequenced strictly after INC-8 (Decision #37) since it needed INC-8's degraded-accounting
-rewrite to settle what "the run produced real work, then stopped" means for NFR2 — INC-8 shipped and is
-reviewer-cleared (Pass 24), so it was unblocked; the user approved the design for build (GATE-3-equivalent,
-2026-07-30). **Not yet reviewer-clear:** Pass 28's diff-scoped audit found two new majors — **REV-116**
++ FR35's mid-run-abort classification) — IMPLEMENTED, reviewer-CLEAR (Pass 29).** This closes the gap
+DEEP-007 found (`docs/review-log.md`, "Deep review — 2026-07-29"): a run already dispatched when the kill
+switch flips ran to full completion, including a real push and a `contents: write` commit, while the portal
+badge already read PAUSED. Sequenced strictly after INC-8 (Decision #37) since it needed INC-8's
+degraded-accounting rewrite to settle what "the run produced real work, then stopped" means for NFR2 —
+INC-8 shipped and is reviewer-cleared (Pass 24), so it was unblocked; the user approved the design for build
+(GATE-3-equivalent, 2026-07-30). Reviewer's Pass 28 diff-scoped audit found two new majors — **REV-116**
 (tracing past the four named checkpoints surfaced a fifth, unguarded, pre-checkpoint-1 irreversible write in
-`run_hourly.py`'s `main()`; **DEEP-007 is not yet fully resolved** as a result — dev's code fix has landed
-and §13.1's accepted-risk note / §13.6.2's checkpoint-1 placement text are now corrected to match it, but
-reviewer has not yet re-audited the fix, so DEEP-007 stays open until that happens) and **REV-117** (the new
-SQL file's `REVOKE` omits `TRUNCATE`, fixed in §13.6.5 below as of this update; blocks only live application
-of `sql/kill_switch_abort_log.sql`, not merging INC-12's Python code). Neither blocks INC-12's own qa-passed
-code from being on `main`. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance
-criteria.
+`run_hourly.py`'s `main()`) and **REV-117** (the new SQL file's `REVOKE` omitted `TRUNCATE`) — dev fixed
+both in one fix cycle (checkpoint 1 moved ahead of the tunables-cache write; `TRUNCATE` added to the
+`REVOKE`, §13.6.5 below), and **reviewer's Pass 29 independently re-verified both RESOLVED, closing
+DEEP-007 and clearing INC-12** with zero blockers/majors. `sql/kill_switch_abort_log.sql` is now applied
+and live in production. See `docs/design/increment-plan.md`'s `### INC-12` for files and acceptance
+criteria. (Reviewer's Phase-4 whole-codebase audit, Pass 30, ran after this closure and did not reopen
+either finding — see `docs/review-log.md`.)
 
 ---
 
@@ -250,10 +249,10 @@ adjusted baseline.
 
 ### 13.6 In-flight boundary checks — FR24 checkpoints 1–4, FR35 causal-tie classification (INC-12)
 
-**Status: dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`); reviewer Pass 28 verdict
-NOT CLEAR — REV-116 (DEEP-007 residual) and REV-117 (SQL REVOKE gap, fixed in §13.6.5 below) open, one fix
-cycle in progress (`docs/review-log.md`).** Targets resolving DEEP-007 (`docs/review-log.md`) per Decision
-#37 — **not yet fully resolved**, see the top-of-file status note and REV-116 for what remains. §13.1's
+**Status: IMPLEMENTED — dev-built, qa-tested PASS (all 9 literal ACs, `docs/test-report.md`); reviewer
+Pass 29 verdict CLEAR — REV-116 and REV-117 (SQL REVOKE gap, fixed in §13.6.5 below) independently
+re-verified RESOLVED (`docs/review-log.md`).** Resolves DEEP-007 (`docs/review-log.md`) per Decision #37 —
+closed as of Pass 29, see the top-of-file status note. §13.1's
 dispatch-layer guard only stops *future* dispatches — a run already executing when the flag flips ran to
 completion (real Yahoo fetches, a real AI call, a real push, a real commit to `main`) while the portal
 badge already read PAUSED. Arjun chose option (b): add Python-layer checks so an in-flight run stops itself
