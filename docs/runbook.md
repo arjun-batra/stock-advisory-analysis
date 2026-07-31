@@ -421,7 +421,11 @@ After backfilling configuration and before resuming scheduled production runs:
    pip install -r requirements.txt
    pytest -q --tb=short
    ruff check .
+   ruff check --select C90 .
    ```
+   Both `ruff` invocations must be run — `.github/workflows/audit.yml` runs both, and `ruff check .`
+   alone (the E/F/W ruleset in `ruff.toml`) does not catch a `C901` cyclomatic-complexity violation.
+   A local check that only runs the first can pass while CI is red on the second.
 
 2. **Dry-run each workflow manually with `alerts_enabled=false`:**
    - `hourly-watchlist.yml` — manually dispatch, verify call log entries are written without sending alerts.

@@ -24,61 +24,41 @@ import state
 import notify
 
 
-def main() -> None:
-    config.require_secrets()
-    sb = state.client()
-    notifier = notify.get_notifier()
+def _resolve_region() -> tuple[str, str]:
+    """Region selects the market set (Phase 6 D5): "na" = US + Canada (the
+    22:00 UTC post-US-close dispatch); "in" = India NSE (a separate
+    NSE-close-timed dispatch, ~10:00 UTC / 15:30 IST). Defaults to "na" so the
+    existing dispatch is unchanged.
 
-    # FR24 checkpoint 1 -- earliest point a pause read is possible, before any
-    # Yahoo fetch or AI call (the screener call below is a live Yahoo fetch).
-    # Bare early return: no run_heartbeat row, no kill_switch_abort_log row
-    # (operational-controls.md §13.6.2).
-    if state.is_paused(sb):
-        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
-              "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
-        return
-
-    # Region selects the market set (Phase 6 D5): "na" = US + Canada (the 22:00 UTC
-    # post-US-close dispatch); "in" = India NSE (a separate NSE-close-timed dispatch,
-    # ~10:00 UTC / 15:30 IST). Defaults to "na" so the existing dispatch is unchanged.
+    Per-region heartbeat key (NFR2; 2026-07-03 review gap 2). The two regional
+    runs previously shared one 'daily-discovery' key, so the monitor could only
+    validate the 22:00 UTC NA run — a silently-dead NSE dispatch never alerted,
+    and its heartbeat evidence was overwritten by the NA run the same day.
+    check_pipeline_health() now watches 'daily-discovery-in' in its own window.
+    """
     region = (os.environ.get("DISCOVERY_REGION", "na") or "na").lower()
-    # Per-region heartbeat key (NFR2; 2026-07-03 review gap 2). The two regional
-    # runs previously shared one 'daily-discovery' key, so the monitor could only
-    # validate the 22:00 UTC NA run — a silently-dead NSE dispatch never alerted,
-    # and its heartbeat evidence was overwritten by the NA run the same day.
-    # check_pipeline_health() now watches 'daily-discovery-in' in its own window.
     heartbeat_key = "daily-discovery" if region == "na" else f"daily-discovery-{region}"
+    return region, heartbeat_key
 
-    watchlist = state.get_watchlist_tickers(sb)
-    candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(
-        exclude=watchlist, region=region)
-    print(f"Discovery [{region}]: {len(candidates)} candidates after screen+gate "
-          f"({screens_attempted - screens_errored}/{screens_attempted} screens ok, "
-          f"{screens_errored} errored; alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
-    # Funnel breakdown (issue #8): makes a zero-candidate day diagnosable —
-    # which stage zeroed out tells you whether to tune the quality gates or the
-    # signal thresholds (or whether it's a genuinely quiet market).
-    print(f"  funnel: raw={funnel['raw']} -> dedup/in-scope={funnel['after_dedup']} "
-          f"-> passed_quality={funnel['passed_quality']} -> tripped_signal={funnel['passed_signal']}")
 
-    if not candidates:
-        # Distinguish a genuine quiet day (all screens ran, nothing passed gates)
-        # from a silent screener failure (screens errored) — the latter must not
-        # report a clean 'ok' (issue #2 principle applied to discovery).
-        if screens_errored or config.TUNABLES_DEGRADED:
-            state.write_heartbeat(sb, heartbeat_key, "partial")
-            print(f"Done [partial]. 0 candidates but {screens_errored}/{screens_attempted} "
-                  f"screens errored — treat as screener failure, NOT a quiet day.")
-        else:
-            state.write_heartbeat(sb, heartbeat_key, "ok")
-            print("Done [ok]. No candidates today (all screens ran, nothing passed gates).")
-        return
+def _report_empty_candidates(sb, heartbeat_key: str, screens_errored: int, screens_attempted: int) -> None:
+    """Distinguish a genuine quiet day (all screens ran, nothing passed gates)
+    from a silent screener failure (screens errored) — the latter must not
+    report a clean 'ok' (issue #2 principle applied to discovery)."""
+    if screens_errored or config.TUNABLES_DEGRADED:
+        state.write_heartbeat(sb, heartbeat_key, "partial")
+        print(f"Done [partial]. 0 candidates but {screens_errored}/{screens_attempted} "
+              f"screens errored — treat as screener failure, NOT a quiet day.")
+    else:
+        state.write_heartbeat(sb, heartbeat_key, "ok")
+        print("Done [ok]. No candidates today (all screens ran, nothing passed gates).")
 
-    recently = state.recently_pushed_candidates(sb, config.DISCOVERY_PUSH_COOLDOWN_DAYS)
-    outcomes = Counter()
 
-    # --- ingest the shortlist (full per-ticker data, paced like the hourly loop) ---
-    items = []   # list of (candidate, data)
+def _ingest_candidates(sb, candidates: list[dict], outcomes: Counter) -> list[tuple[dict, dict]]:
+    """Full per-ticker ingest for the shortlist, paced like the hourly loop.
+    Mutates `outcomes` in place (skip/error tallies) and returns the
+    (candidate, data) pairs that survived ingest."""
+    items = []
     for i, c in enumerate(candidates):
         if i > 0:
             time.sleep(config.YF_PACING_SECONDS)
@@ -99,43 +79,92 @@ def main() -> None:
         except Exception as e:
             print(f"  ERROR {c['ticker']} (ingest): {type(e).__name__}: {e}")
             outcomes["error"] += 1
+    return items
+
+
+def _judge_and_process(sb, notifier, items: list[tuple[dict, dict]], recently: set,
+                        outcomes: Counter) -> None:
+    """FR24 checkpoint 2 ("ai_call") plus the one batched AI call and the
+    per-candidate log/push pass. Raises state.KillSwitchAbort("ai_call") if
+    the kill switch flips on right before the AI call — the caller owns the
+    abort bookkeeping. Mutates `outcomes` in place."""
+    # A Yahoo fetch already happened before this call (Phase 1 ingest,
+    # accepted bounded residual work); the batched AI call is the next
+    # irreversible action, so it's the boundary (operational-controls.md §13.6.2).
+    if state.is_paused(sb):
+        raise state.KillSwitchAbort("ai_call")
+
+    verdicts = ai_judge.judge_batch(
+        [{"data": d, "position": None} for (_, d) in items],
+        models=config.discovery_models(),
+    )
+
+    for c, data in items:
+        ticker = c["ticker"]
+        try:
+            ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
+            push = ticker not in recently
+            result = state.process_candidate(sb, notifier, data, ai, push=push)
+            print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
+                  f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
+            outcomes[result] += 1
+        except Exception as e:
+            print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
+            outcomes["error"] += 1
+
+
+def _handle_kill_switch_abort(sb, abort: "state.KillSwitchAbort", heartbeat_key: str,
+                               outcomes: Counter) -> None:
+    """FR35 -- same treatment as run_hourly.py's equivalent branch: no
+    run_heartbeat row, one causally-tied kill_switch_abort_log row."""
+    real_rows = sum(outcomes[k] for k in
+                     ("candidate-logged", "candidate-pushed", "candidate-push-failed", "no-read"))
+    state.write_kill_switch_abort(sb, workflow=heartbeat_key,
+                                   checkpoint=abort.checkpoint, real_rows_this_cycle=real_rows)
+    print(f"[kill-switch] paused -- aborted at checkpoint={abort.checkpoint} after "
+          f"{dict(outcomes)}. No run_heartbeat row written this cycle (FR35 expected-quiet).")
+
+
+def main() -> None:
+    config.require_secrets()
+    sb = state.client()
+    notifier = notify.get_notifier()
+
+    # FR24 checkpoint 1 -- earliest point a pause read is possible, before any
+    # Yahoo fetch or AI call (the screener call below is a live Yahoo fetch).
+    # Bare early return: no run_heartbeat row, no kill_switch_abort_log row
+    # (operational-controls.md §13.6.2).
+    if state.is_paused(sb):
+        print("[kill-switch] paused at entry -- aborting before any Yahoo fetch or AI call "
+              "(FR24 checkpoint 1). No run_heartbeat row written this cycle.")
+        return
+
+    region, heartbeat_key = _resolve_region()
+
+    watchlist = state.get_watchlist_tickers(sb)
+    candidates, screens_attempted, screens_errored, funnel = prefilter.find_candidates(
+        exclude=watchlist, region=region)
+    print(f"Discovery [{region}]: {len(candidates)} candidates after screen+gate "
+          f"({screens_attempted - screens_errored}/{screens_attempted} screens ok, "
+          f"{screens_errored} errored; alerts={'ON' if config.ALERTS_ENABLED else 'DRY-RUN'})")
+    # Funnel breakdown (issue #8): makes a zero-candidate day diagnosable —
+    # which stage zeroed out tells you whether to tune the quality gates or the
+    # signal thresholds (or whether it's a genuinely quiet market).
+    print(f"  funnel: raw={funnel['raw']} -> dedup/in-scope={funnel['after_dedup']} "
+          f"-> passed_quality={funnel['passed_quality']} -> tripped_signal={funnel['passed_signal']}")
+
+    if not candidates:
+        _report_empty_candidates(sb, heartbeat_key, screens_errored, screens_attempted)
+        return
+
+    recently = state.recently_pushed_candidates(sb, config.DISCOVERY_PUSH_COOLDOWN_DAYS)
+    outcomes = Counter()
+    items = _ingest_candidates(sb, candidates, outcomes)
 
     try:
-        # FR24 checkpoint 2 ("ai_call") -- a Yahoo fetch already happened
-        # above (Phase 1 ingest, accepted bounded residual work); the batched
-        # AI call is the next irreversible action, so it's the boundary
-        # (operational-controls.md §13.6.2).
-        if state.is_paused(sb):
-            raise state.KillSwitchAbort("ai_call")
-
-        # --- ONE batched AI call, on discovery's own models ---
-        verdicts = ai_judge.judge_batch(
-            [{"data": d, "position": None} for (_, d) in items],
-            models=config.discovery_models(),
-        )
-
-        # --- log every candidate; push Buys that aren't within the 7-day cooldown ---
-        for c, data in items:
-            ticker = c["ticker"]
-            try:
-                ai = verdicts.get(ticker) or ai_judge.missing_verdict("candidate")
-                push = ticker not in recently
-                result = state.process_candidate(sb, notifier, data, ai, push=push)
-                print(f"  {ticker:9} {ai['verdict']:4} ({ai.get('confidence') or '-'}) -> {result} "
-                      f"[{ai['parse_status']}/{ai.get('model_used', '?')}] {'+'.join(c['signals'])}")
-                outcomes[result] += 1
-            except Exception as e:
-                print(f"  ERROR {ticker}: {type(e).__name__}: {e}")
-                outcomes["error"] += 1
+        _judge_and_process(sb, notifier, items, recently, outcomes)
     except state.KillSwitchAbort as abort:
-        # FR35 -- same treatment as run_hourly.py's equivalent branch: no
-        # run_heartbeat row, one causally-tied kill_switch_abort_log row.
-        real_rows = sum(outcomes[k] for k in
-                         ("candidate-logged", "candidate-pushed", "candidate-push-failed", "no-read"))
-        state.write_kill_switch_abort(sb, workflow=heartbeat_key,
-                                       checkpoint=abort.checkpoint, real_rows_this_cycle=real_rows)
-        print(f"[kill-switch] paused -- aborted at checkpoint={abort.checkpoint} after "
-              f"{dict(outcomes)}. No run_heartbeat row written this cycle (FR35 expected-quiet).")
+        _handle_kill_switch_abort(sb, abort, heartbeat_key, outcomes)
         return
 
     # DEEP-001/DEEP-002 fix (INC-8, components.md §4.8): "no-read" (fail-safe
