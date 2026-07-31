@@ -149,28 +149,28 @@ export default function HoldingsPage() {
               <th>Shares</th>
               <th>Cost basis</th>
               <th>Currency</th>
-              <th></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) =>
               editingTicker === row.ticker ? (
                 <tr key={row.ticker}>
-                  <td>{row.ticker}</td>
-                  <td>
+                  <td data-label="Ticker">{row.ticker}</td>
+                  <td data-label="Shares">
                     <input
                       value={editForm.shares}
                       onChange={(e) => setEditForm({ ...editForm, shares: e.target.value })}
                     />
                   </td>
-                  <td>
+                  <td data-label="Cost basis">
                     <input
                       value={editForm.cost_basis}
                       onChange={(e) => setEditForm({ ...editForm, cost_basis: e.target.value })}
                     />
                   </td>
-                  <td>{row.currency} (derived from market — not editable)</td>
-                  <td>
+                  <td data-label="Currency">{row.currency} (derived from market — not editable)</td>
+                  <td data-label="Actions">
                     <button type="button" className="link" onClick={() => handleUpdate(row.ticker)}>
                       Save
                     </button>{" "}
@@ -181,11 +181,11 @@ export default function HoldingsPage() {
                 </tr>
               ) : (
                 <tr key={row.ticker}>
-                  <td>{row.ticker}</td>
-                  <td>{row.shares}</td>
-                  <td>{row.cost_basis}</td>
-                  <td>{row.currency}</td>
-                  <td>
+                  <td data-label="Ticker">{row.ticker}</td>
+                  <td data-label="Shares">{row.shares}</td>
+                  <td data-label="Cost basis">{row.cost_basis}</td>
+                  <td data-label="Currency">{row.currency}</td>
+                  <td data-label="Actions">
                     <button type="button" className="link" onClick={() => startEdit(row)}>
                       Edit
                     </button>{" "}

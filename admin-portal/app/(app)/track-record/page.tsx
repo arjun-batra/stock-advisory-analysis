@@ -174,7 +174,8 @@ export default function TrackRecordPage() {
         <p className="status-line">Loading…</p>
       ) : (
         <>
-          <table className="crud-table">
+          <div className="table-scroll">
+          <table className="log-table">
             <thead>
               <tr>
                 <th>
@@ -211,13 +212,14 @@ export default function TrackRecordPage() {
                   <td>{row.label}</td>
                   <td>{row.alerted ? "yes" : "no"}</td>
                   <td>{new Date(row.timestamp).toLocaleString()}</td>
-                  <td title={row.rationale} style={{ maxWidth: "24rem" }}>
+                  <td className="rationale-cell" title={row.rationale} style={{ maxWidth: "24rem" }}>
                     {row.rationale}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
 
           <p className="status-line">
             Page {page + 1} of {totalPages} ({totalCount} rows){" "}
