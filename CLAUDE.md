@@ -61,7 +61,8 @@ Never let dev implement a user request directly without steps 1-2.
 - pm: cap requirements changelog at 10 most recent entries; archive the rest.
 - tech-lead: once design.md exceeds ~400 lines, split per module into docs/design/<module>.md with a thin index; agents read only the modules their increment touches.
 - All docs: state anything once, reference by ID elsewhere ("covers FR-004") — never restate requirement/bug text across documents.
-- Agents never read docs/archive/.
+- **Increment status lives in exactly ONE place**: `docs/design/increment-plan.md`'s `### INC-N` heading (built / qa verdict / reviewer pass + verdict). design.md's banner and module map, module files, code-map.md and inline comments reference the increment by ID and MUST NOT restate its status in their own words. Status is the most volatile fact in the project — every duplicate is invalidated by the next reviewer pass, and a status sentence outside increment-plan.md is a bug.
+- Agents never read docs/archive/ — EXCEPT an artifact's own owner performing hygiene on its own archive (reviewer on review-log-archive.md, qa on test-report-archive.md, pm on the requirements changelog archive). An agent cannot safely maintain a file it may not read. Never archive an entry that is not RESOLVED/closed.
 
 ## Non-negotiables
 - No hardcoded tunables. All config in the config file per design.md schema.
