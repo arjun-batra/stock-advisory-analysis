@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 planned, BLOCKED on designer's `docs/ux-spec.md` + user mockup selection (not yet startable)
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 READY (Direction G selected, dev may start)
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -560,14 +560,20 @@ analytics beyond what's logged, and no requirement asks for portal exposure of t
 
 ---
 
-## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, planned, BLOCKED (not yet startable)
+## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, READY (Direction G selected 2026-07-31)
 
 pm flagged NFR8 (`requirements.md` §6, admin-portal UI/UX modernization) to tech-lead 2026-07-31, GATE 2
 already passed by the user for NFR8 itself. This is one new increment appended after INC-12; none of
 INC-3–INC-12 are marked stale by it (see the note at the end of this section).
 
-### INC-13 — Admin portal responsive & visual modernization (NFR8) — **BLOCKED, not yet startable**
-(design complete; execution gated on designer + user, not on any prior increment's code)
+**2026-07-31 update — gate cleared:** designer published `docs/ux-spec.md` with mockup directions
+(A/C/D/E/F/G active, B rejected); Arjun reviewed and selected **Direction G — "Compact Toggle"**
+(`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.4) as the final direction. INC-13
+is now **READY — dev may start a build plan.** See `docs/design/admin-portal.md` §16.10 for the updated
+design content naming Direction G's exact reference files/details.
+
+### INC-13 — Admin portal responsive & visual modernization (NFR8) — **READY, dev may start**
+(design complete; Direction G selected by the user 2026-07-31 — gate cleared, no further blocker)
 **Design:** `docs/design/admin-portal.md` §16.10 (breakpoints, layout mechanism, structural
 enforcement rule, file allow-list). **Files:** `admin-portal/app/globals.css`, `admin-portal/app/
 layout.tsx`, `admin-portal/app/(app)/layout.tsx`, `admin-portal/app/login/page.tsx`, `admin-portal/app/
@@ -577,13 +583,16 @@ page.tsx`, `admin-portal/app/(app)/track-record/page.tsx`, `admin-portal/compone
 `admin-portal/components/NavToggle.tsx`) — no other file, in any directory (`sql/`, `scripts/`,
 `lib/*.ts`, `tests/`), is in scope. **No config-schema change** — presentation-layer only.
 
-**Blocking dependency (hard gate, distinct from the normal "no increment starts before the previous
-passes QA" rule):** dev may not begin a build plan for INC-13 until (a) designer has published
-`docs/ux-spec.md` with 2–3 mockup directions covering all five screens (login, watchlist, holdings,
-tunables, track-record), and (b) the user has selected one direction. **As of this writing,
-`docs/ux-spec.md` does not exist.** This increment plan entry defines the mechanism the chosen direction
-will be built through (breakpoints, responsive-table strategy, structural enforcement); it is not itself
-the visual direction and does not authorize dev to start.
+**Gate cleared 2026-07-31 (was: hard blocking dependency, distinct from the normal "no increment starts
+before the previous passes QA" rule):** designer published `docs/ux-spec.md` with mockup directions
+covering all five screens (login, watchlist, holdings, tunables, track-record), and the user (Arjun) has
+selected **Direction G — "Compact Toggle"** (`docs/ux-mockups/direction-g-compact-toggle.html`,
+`docs/ux-spec.md` §7.4, built on Direction F's density §7.3 and Direction E's toggle component §7.2).
+**Dev may now begin a build plan for INC-13.** This increment plan entry defines the mechanism Direction
+G is built through (breakpoints, responsive-table strategy, structural enforcement — unchanged by which
+direction was picked, see `docs/design/admin-portal.md` §16.10); the acceptance criteria below now
+reference Direction G specifically, per `docs/design/admin-portal.md` §16.10's detail on the exact
+reference files dev implements against.
 
 **Structural "no functional regression" enforcement:** every file above may only change CSS, JSX/TSX
 markup, className/`data-label` attributes, and purely-presentational local component state. A `git diff`

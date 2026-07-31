@@ -28,10 +28,12 @@ all (the workflows use the Supabase secret key server-side). This is the **first
 human-authenticated surface. NFR6 asks for this explicitly: design the auth/RLS/secrets handling
 carefully, not by analogy to the read-only surfaces.
 
-**2026-07-31 addendum (NFR8, Decision #39, INC-13 — BLOCKED, not yet startable):** §16.10 below adds the
+**2026-07-31 addendum (NFR8, Decision #39, INC-13 — READY, dev may start):** §16.10 below adds the
 responsive/visual-modernization design for the five screens covered by §16.1–§16.6. This is a
 presentation-layer-only addition — it changes no auth/RLS/schema/data-fetching content in §16.1–§16.9,
-which remain as-built/IMPLEMENTED exactly as documented above and require no revision for NFR8.
+which remain as-built/IMPLEMENTED exactly as documented above and require no revision for NFR8. The
+user has selected **Direction G** ("Compact Toggle") as the final visual/interaction direction — see
+§16.10's updated content below for the exact reference files and details dev builds against.
 
 ---
 
@@ -314,17 +316,50 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
-| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **BLOCKED**, pending `docs/ux-spec.md` + user direction selection, INC-13 (`increment-plan.md`) |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **READY**, Direction G selected, INC-13 (`increment-plan.md`) |
 
-### 16.10 Responsive & visual design system (NFR8, INC-13) — BLOCKED pending `docs/ux-spec.md` + user selection
+### 16.10 Responsive & visual design system (NFR8, INC-13) — READY, Direction G selected
 
-**Blocking dependency (hard gate, per `requirements.md` §6 NFR8 — not the normal "previous increment
-passed QA" sequencing rule, an additional requirements-level gate):** dev may not start INC-13 until (a)
-designer has produced `docs/ux-spec.md` with 2–3 mockup directions covering all five screens, and (b) the
-user has picked one direction. As of this writing `docs/ux-spec.md` does not exist yet. This section
-defines the **technical mechanism** (breakpoints, layout system, structural enforcement) the chosen
-mockup direction will be implemented through — it does not itself pick a visual direction; that is
-designer's + the user's call, not tech-lead's.
+**Gate cleared 2026-07-31:** designer published `docs/ux-spec.md` with mockup directions covering all
+five screens, and the user (Arjun) selected **Direction G — "Compact Toggle"**
+(`docs/ux-mockups/direction-g-compact-toggle.html`; design detail in `docs/ux-spec.md` §7.4, built on
+Direction F's density §7.3 and Direction E's toggle component §7.2). INC-13 is now **READY — dev may
+start a build plan.** This section defines the **technical mechanism** (breakpoints, layout system,
+structural enforcement) that Direction G is implemented through; the visual/interaction language itself
+is designer's + the user's call and is specified in `docs/ux-spec.md`, not restated here.
+
+**Direction G — what dev implements (reference files, not restated in full — read the sources):**
+- **Visual baseline — Direction F's compact density** (`docs/ux-spec.md` §7.3, mockup
+  `docs/ux-mockups/direction-f-compact-cards.html`, since Direction G reuses F's tokens/layout verbatim
+  except the kill-switch control): flatter single-layer card shadow (`shadow-card` per §7.3.1, not C's
+  layered shadow), smaller corner radii (`radius-md` 8px / `radius-lg` 14px vs. C's 12px/20px), tighter
+  spacing scale (`space-1`…`space-8`: 4/6/10/14/18/24/36/48px), smaller type scale (11/13/15/17/22/28px),
+  and higher grid density at each breakpoint: watchlist/holdings **4-col** card grid desktop / 3-col
+  tablet / 2-col phone; tunables editor renders all 10 keys as **always-visible compact cards** (no
+  accordion/expand-collapse — value input and Save visible without a tap, `docs/ux-spec.md` §7.3.2);
+  track-record **3-col** card grid desktop / 2-col tablet / 1-col phone. Accent color emerald
+  (`color-accent` `#059669`).
+- **Kill-switch control — Direction E's sliding toggle-switch** (`docs/ux-spec.md` §7.4.2, component
+  structure from §7.2's `.killswitch`/`.toggle` markup in `docs/ux-mockups/direction-e-hybrid.html`,
+  resized to Direction G's compact scale — track 30×17px, thumb 13px circle): markup is a label
+  (`<span>System: Running</span>` / `"System: Paused"`, no emoji) plus a separate `.toggle` element
+  (track + thumb), **not** Direction F's static `<span class="pill">` badge. Running: track
+  `background: var(--color-accent)`, thumb slid right (`::after{ right:2px }`). Paused: `.toggle.paused`
+  — track `background: var(--color-border)` (grey), thumb slid left (`::after{ right:auto; left:2px }`).
+  **Interaction (no new backend logic — purely a visual-control swap):** clicking/tapping the toggle
+  element calls the exact same `set_kill_switch(..., p_source:='admin-portal')` Supabase RPC that INC-7's
+  `components/KillSwitchToggle.tsx` already calls (§16.6) — dev changes only the rendered markup/CSS and
+  the click target (the toggle div instead of the pill span), not the `onClick` handler's body or the RPC
+  call itself. Loading/in-flight/error/success states are governed unchanged by the shared UX contract
+  (`docs/ux-spec.md` §2.5): loading = toggle muted/disabled; in-flight = toggle disabled, label
+  "Pausing…"/"Resuming…"; error = toggle snaps back to prior position + inline message; success = toggle
+  position updates immediately, label/sub-label update to the new `updated_at`/`updated_by`.
+- **Tunables friendly labels — all 10 keys** (`docs/ux-spec.md` §2.3's mapping table is authoritative):
+  each tunable card's primary heading is the friendly label (e.g. "Primary AI model", "Alerts on/off
+  switch") with the raw `SNAKE_CASE` key demoted to a small monospace subtitle directly beneath it (never
+  dropped — Arjun still needs to map a field back to `scripts/config.py`). This is a label-only change:
+  no change to validation, storage, or which key maps to which input type (`ALERTS_ENABLED` still a
+  true/false select, etc. — INC-10's validation, §16.3/`admin-portal-tunables.md` §16.4, untouched).
 
 **Scope boundary (structural, not just stated intent):** every change in INC-13 is presentation-layer —
 CSS, JSX/TSX markup, className/data-attribute additions, and purely-presentational local component state
