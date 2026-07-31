@@ -7,8 +7,12 @@ authorization model, and the data model are untouched (see `docs/design/admin-po
 states, copy, and responsive behavior.
 
 **Gate:** per NFR8, Arjun selects exactly one direction below before any implementation starts. No
-speculative screens are proposed — every screen here maps 1:1 to an existing FR. Direction B has been
-reviewed and rejected (§5); the live candidate set is A, C, D, E, F, G (§4, §6, §7).
+speculative screens are proposed — every screen here maps 1:1 to an existing FR.
+
+**GATE CLEARED (2026-07-31): Direction G — "Compact Toggle" is SELECTED / APPROVED by Arjun.** This is
+the final direction — no further direction iteration. Dev implements Direction G (§7.4) for INC-13.
+Direction B remains rejected (§5). Directions A, C, D, E, F remain documented below as non-selected
+alternates, kept for historical/traceability record only — they are not candidates for implementation.
 
 | Screen | FR | Current content (source of truth) |
 |---|---|---|
@@ -113,11 +117,14 @@ the raw key names, as the primary on-screen label.
 | `DISCOVERY_SHORTLIST_MAX` | Max daily candidates |
 | `DISCOVERY_PUSH_COOLDOWN_DAYS` | Re-alert cooldown (days) |
 
-Note: the mockups sample only the subset of these 10 keys already present in each mockup file's
-illustrative data (varies 4–6 keys per direction, consistent with each file's existing sample-data scope);
-the table above is authoritative for **all 10** curated keys regardless of which subset a given mockup
-happens to render. The `description`/`example`/`current value` fields and their copy are unchanged from
-the rest of this section — only the primary heading and the demotion of the raw key are new.
+Note: the non-selected alternate mockups (A, C, D, E, F — historical record only, per §9) sample only a
+subset of these 10 keys in their illustrative data (varies 4–6 keys per direction, consistent with each
+file's existing sample-data scope); the table above is authoritative for **all 10** curated keys
+regardless of which subset a given non-selected mockup happens to render. **Direction G's mockup
+(`docs/ux-mockups/direction-g-compact-toggle.html`), as the SELECTED/canonical reference for INC-13, is
+the exception: it renders all 10 curated keys**, each with the friendly label from the mapping table
+above. The `description`/`example`/`current value` fields and their copy are unchanged from the rest of
+this section — only the primary heading and the demotion of the raw key are new.
 
 | State | Behavior / copy |
 |---|---|
@@ -672,7 +679,11 @@ distinct from C's violet, so the two directions are never visually confusable si
 Responsive breakpoints (phone ≤599px / tablet 600–1023px / desktop ≥1024px) match §1's illustrative
 pixels throughout. Mockup: `docs/ux-mockups/direction-f-compact-cards.html`.
 
-### 7.4 Direction G — "Compact Toggle" (baseline: Direction F density + Direction E's kill-switch treatment)
+### 7.4 Direction G — "Compact Toggle" (baseline: Direction F density + Direction E's kill-switch treatment) — **SELECTED / APPROVED by Arjun (2026-07-31)**
+
+> **Status: SELECTED.** This is the final, approved direction for INC-13 implementation — the NFR8 gate
+> is cleared. No further direction iteration follows this decision; any future visual change to the admin
+> portal is a change request against this selected direction, not a new candidate direction.
 
 **Visual language:** Not a new palette or layout — Direction G is Direction F (§7.3), unchanged, in
 every respect (tokens, card density, 4-col watchlist grid, always-visible compact tunable cards,
@@ -716,13 +727,13 @@ Resize the browser window to see the phone/tablet/desktop behavior described abo
 
 | Direction | Status | File |
 |---|---|---|
-| A — Minimal / Clean | active candidate | `docs/ux-mockups/direction-a-minimal.html` |
+| A — Minimal / Clean | non-selected alternate (historical record) | `docs/ux-mockups/direction-a-minimal.html` |
 | B — Dense / Data-forward | **rejected** (Arjun, 2026-07-31) | `docs/ux-mockups/direction-b-dense.html` |
-| C — Card-based / Friendly SaaS | active candidate | `docs/ux-mockups/direction-c-cards.html` |
-| D — Warm Minimal (baseline: A) | active candidate | `docs/ux-mockups/direction-d-warm-minimal.html` |
-| E — Minimal / Card Hybrid (baseline: A + C) | active candidate | `docs/ux-mockups/direction-e-hybrid.html` |
-| F — Compact Cards (baseline: C) | active candidate | `docs/ux-mockups/direction-f-compact-cards.html` |
-| G — Compact Toggle (baseline: F density + E's kill-switch toggle) | active candidate | `docs/ux-mockups/direction-g-compact-toggle.html` |
+| C — Card-based / Friendly SaaS | non-selected alternate (historical record) | `docs/ux-mockups/direction-c-cards.html` |
+| D — Warm Minimal (baseline: A) | non-selected alternate (historical record) | `docs/ux-mockups/direction-d-warm-minimal.html` |
+| E — Minimal / Card Hybrid (baseline: A + C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-e-hybrid.html` |
+| F — Compact Cards (baseline: C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-f-compact-cards.html` |
+| G — Compact Toggle (baseline: F density + E's kill-switch toggle) | **SELECTED / APPROVED by Arjun (2026-07-31) — dev implements this for INC-13** | `docs/ux-mockups/direction-g-compact-toggle.html` |
 
 Each file includes: Login, Watchlist & Holdings CRUD (with an open Add/Edit form example), Tunables
 editor, Track-record view, and the kill-switch toggle in its header — all five FR27–FR32 screens, with
@@ -732,14 +743,22 @@ sample data matching the rows used in the wireframes above (AAPL, VOO, TD, MSFT,
 
 ## 9. Selection & next steps
 
-Per NFR8, Arjun reviews the mockup files (and this spec) and selects exactly one direction — this
-selection is the GATE; dev may not start implementing any visual/responsive change before it happens.
-B is already eliminated; the live candidate set is A, C, D, E, F, G. Once selected:
-- tech-lead records the chosen direction, the exact breakpoint pixel values, and the token→theme-config
-  mapping in `docs/design.md` (or a module file) before INC start.
-- This spec's §2 (states/copy) applies unchanged regardless of which direction is picked — it is not a
-  per-direction choice.
-- Any deviation between the implemented UI and the selected direction's mockups is logged by reviewer in
+**GATE 3 (NFR8 direction selection) is CLEARED.** Arjun reviewed the mockup files (and this spec) and
+selected **Direction G — "Compact Toggle" (§7.4), approved 2026-07-31**. This is the single source of
+truth dev implements for INC-13 — no other direction (A, C, D, E, F — non-selected alternates kept for
+historical record; B — rejected, §5) is a candidate for implementation. No further direction iteration
+follows this decision.
+
+Canonical reference for INC-13: `docs/ux-spec.md` §7.4 (Direction G spec) + §7.3 (Direction F density,
+which G inherits unchanged except the kill-switch component per §7.4.2) + §2 (shared states/copy, applies
+to every direction identically) + `docs/ux-mockups/direction-g-compact-toggle.html` (canonical HTML
+reference, all 10 FR30 tunable keys represented per §2.3's friendly-label mapping table).
+
+Next steps now that the gate is cleared:
+- tech-lead records Direction G, the exact breakpoint pixel values, and the token→theme-config mapping
+  (§7.3.1 tokens, unchanged for G) in `docs/design.md` (or a module file) before INC-13 starts.
+- This spec's §2 (states/copy) applies unchanged — it was never a per-direction choice.
+- Any deviation between the implemented UI and Direction G's mockup/spec is logged by reviewer in
   `docs/review-log.md` tagged `[UX-GAP]`, per this agent's standing responsibility.
 
 ## 10. Requirement traceability
