@@ -101,7 +101,8 @@
   /* Tunables — compact, always-visible mini-cards, no accordion collapse (denser than C's expand/collapse) */
   .tunable-grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:var(--space-3); }
   .tun-card{ background:var(--color-surface); border-radius:var(--radius-md); box-shadow:var(--shadow-card); padding:var(--space-3); }
-  .tun-card .key{ font-weight:700; font-size:var(--font-size-sm); margin-bottom:2px; }
+  .tun-card .friendly{ font-weight:700; font-size:var(--font-size-sm); margin-bottom:2px; }
+  .tun-card .key{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-weight:400; font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-bottom:2px; }
   .tun-card .desc{ color:var(--color-text-secondary); font-size:var(--font-size-xs); margin-bottom:var(--space-2); line-height:1.35; }
   .tun-card .example{ color:var(--color-text-secondary); font-size:var(--font-size-xs); margin-bottom:var(--space-1); }
   .tun-card .row{ display:flex; gap:var(--space-2); align-items:center; }
@@ -261,6 +262,7 @@
       <h2>Tunables editor (FR30)</h2>
       <div class="tunable-grid">
         <div class="tun-card">
+          <div class="friendly">Primary AI model</div>
           <div class="key">GEMINI_MODEL</div>
           <div class="desc">Primary Gemini model used for AI judgment calls.</div>
           <div class="example">e.g. gemini-2.0-flash</div>
@@ -268,6 +270,7 @@
           <div class="updated">Upd 07-20 &middot; arjun</div>
         </div>
         <div class="tun-card">
+          <div class="friendly">Backup AI model</div>
           <div class="key">GEMINI_MODEL_BACKUP</div>
           <div class="desc">Fallback model. Leave empty to disable.</div>
           <div class="example">e.g. gemini-1.5-flash (or blank)</div>
@@ -275,6 +278,7 @@
           <div class="updated">Upd 07-20 &middot; arjun</div>
         </div>
         <div class="tun-card">
+          <div class="friendly">Alerts on/off switch</div>
           <div class="key">ALERTS_ENABLED</div>
           <div class="desc">Master alert switch (AND-gated with workflow input).</div>
           <div class="example">true / false</div>
@@ -282,6 +286,7 @@
           <div class="updated">Upd 07-20 &middot; arjun</div>
         </div>
         <div class="tun-card">
+          <div class="friendly">Gainer threshold (%)</div>
           <div class="key">DISCOVERY_GAINER_PCT</div>
           <div class="desc">Min % gain to trip the gainer signal.</div>
           <div class="example">e.g. 5.0</div>
@@ -290,6 +295,7 @@
           <div class="updated">Upd 07-15 &middot; arjun</div>
         </div>
         <div class="tun-card">
+          <div class="friendly">Loser threshold (%)</div>
           <div class="key">DISCOVERY_LOSER_PCT</div>
           <div class="desc">Min % loss to trip the loser signal.</div>
           <div class="example">e.g. 5.0</div>
@@ -297,6 +303,7 @@
           <div class="updated">Upd 07-15 &middot; arjun</div>
         </div>
         <div class="tun-card">
+          <div class="friendly">Max daily candidates</div>
           <div class="key">DISCOVERY_SHORTLIST_MAX</div>
           <div class="desc">Max candidates passed to the AI per run.</div>
           <div class="example">e.g. 20</div>

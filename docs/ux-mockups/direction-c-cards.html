@@ -100,7 +100,9 @@
   .accordion{ display:flex; flex-direction:column; gap:var(--space-3); }
   .acc-card{ background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); padding:var(--space-4); }
   .acc-card .head{ display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
-  .acc-card .head .key{ font-weight:700; }
+  .acc-card .head .head-label{ display:flex; flex-direction:column; }
+  .acc-card .head .friendly{ font-weight:700; }
+  .acc-card .head .key{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-weight:400; font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-top:2px; }
   .acc-card .head .val{ color:var(--color-text-secondary); font-size:var(--font-size-sm); }
   .acc-card .body{ margin-top:var(--space-3); display:none; }
   .acc-card.open .body{ display:block; }
@@ -257,7 +259,7 @@
       <h2>Tunables editor (FR30)</h2>
       <div class="accordion">
         <div class="acc-card open">
-          <div class="head"><span class="key">GEMINI_MODEL</span><span class="val">gemini-2.0-flash &#9662;</span></div>
+          <div class="head"><span class="head-label"><span class="friendly">Primary AI model</span><span class="key">GEMINI_MODEL</span></span><span class="val">gemini-2.0-flash &#9662;</span></div>
           <div class="body">
             <div class="desc">Primary Gemini model used for AI judgment calls.</div>
             <div class="example">Example: gemini-2.0-flash</div>
@@ -266,10 +268,10 @@
           </div>
         </div>
         <div class="acc-card">
-          <div class="head"><span class="key">ALERTS_ENABLED</span><span class="val">true &#9656;</span></div>
+          <div class="head"><span class="head-label"><span class="friendly">Alerts on/off switch</span><span class="key">ALERTS_ENABLED</span></span><span class="val">true &#9656;</span></div>
         </div>
         <div class="acc-card open">
-          <div class="head"><span class="key">DISCOVERY_GAINER_PCT</span><span class="val">5.0 &#9662;</span></div>
+          <div class="head"><span class="head-label"><span class="friendly">Gainer threshold (%)</span><span class="key">DISCOVERY_GAINER_PCT</span></span><span class="val">5.0 &#9662;</span></div>
           <div class="body">
             <div class="desc">Minimum % gain to trip the gainer signal in discovery's prefilter.</div>
             <div class="example">Example: 5.0</div>
@@ -279,7 +281,7 @@
           </div>
         </div>
         <div class="acc-card">
-          <div class="head"><span class="key">DISCOVERY_SHORTLIST_MAX</span><span class="val">20 &#9656;</span></div>
+          <div class="head"><span class="head-label"><span class="friendly">Max daily candidates</span><span class="key">DISCOVERY_SHORTLIST_MAX</span></span><span class="val">20 &#9656;</span></div>
         </div>
       </div>
     </section>

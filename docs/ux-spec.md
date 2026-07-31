@@ -88,8 +88,36 @@ for rows where `status = held`.
 `DISCOVERY_MIN_MARKET_CAP_INR`, `DISCOVERY_SHORTLIST_MAX`, `DISCOVERY_PUSH_COOLDOWN_DAYS`) — the set is
 fixed, never add/remove rows in this UI.
 
-Each row/card shows: **key name**, **description**, **example value**, **current value** (editable),
-**last updated** (`updated_at` + `updated_by`).
+Each row/card shows: **friendly label** (primary heading), **raw key name** (demoted — small monospace
+subtitle directly under the friendly label, so Arjun can still map a field back to `scripts/config.py`),
+**description**, **example value**, **current value** (editable), **last updated** (`updated_at` +
+`updated_by`).
+
+**Friendly-label mapping (2026-07-31, presentation-layer refinement of FR30 — labels only, no change to
+the underlying keys, validation, or storage):** every mockup that renders the tunables editor (directions
+A, C, D, E, F, G — all active candidates) leads with the friendly label below and demotes the raw
+`SNAKE_CASE` key to a small monospace line beneath it, never dropping the raw key entirely. This table is
+the single source of truth for the mapping — dev implements these exact strings verbatim in INC-13, not
+the raw key names, as the primary on-screen label.
+
+| Raw key (`scripts/config.py` / `tunables` table) | Friendly label (primary heading) |
+|---|---|
+| `GEMINI_MODEL` | Primary AI model |
+| `GEMINI_MODEL_BACKUP` | Backup AI model |
+| `ALERTS_ENABLED` | Alerts on/off switch |
+| `DISCOVERY_GAINER_PCT` | Gainer threshold (%) |
+| `DISCOVERY_LOSER_PCT` | Loser threshold (%) |
+| `DISCOVERY_VOL_SPIKE` | Volume spike multiple |
+| `DISCOVERY_MIN_MARKET_CAP` | Min. market cap — US/CA |
+| `DISCOVERY_MIN_MARKET_CAP_INR` | Min. market cap — NSE |
+| `DISCOVERY_SHORTLIST_MAX` | Max daily candidates |
+| `DISCOVERY_PUSH_COOLDOWN_DAYS` | Re-alert cooldown (days) |
+
+Note: the mockups sample only the subset of these 10 keys already present in each mockup file's
+illustrative data (varies 4–6 keys per direction, consistent with each file's existing sample-data scope);
+the table above is authoritative for **all 10** curated keys regardless of which subset a given mockup
+happens to render. The `description`/`example`/`current value` fields and their copy are unchanged from
+the rest of this section — only the primary heading and the demotion of the raw key are new.
 
 | State | Behavior / copy |
 |---|---|
@@ -231,38 +259,44 @@ Currency label appears directly under the Market select once chosen.
 
 ### 4.3 Tunables editor — responsive
 
-**Desktop:** two-column table-like layout — key/description on the left (40%), example + current value +
-last-updated + save on the right (60%), one row per key, hairline dividers between rows (no heavy card
-borders, consistent with the calm aesthetic).
+**Desktop:** two-column table-like layout — friendly label + demoted raw key + description on the left
+(40%), example + current value + last-updated + save on the right (60%), one row per key, hairline
+dividers between rows (no heavy card borders, consistent with the calm aesthetic). The friendly label is
+the bold primary heading; the raw key renders directly beneath it as a small monospace-secondary line
+(never removed — see the friendly-label mapping table above).
 
 ```
 ┌──────────────────────────────┬────────────────────────────────────────┐
-│ GEMINI_MODEL                 │ e.g. "gemini-2.0-flash"                │
-│ Primary Gemini model used    │ [ gemini-2.0-flash            ] [Save] │
-│ for AI judgment calls.       │ Last updated 2026-07-20 by arjun@…      │
+│ Primary AI model              │ e.g. "gemini-2.0-flash"                │
+│ GEMINI_MODEL                  │ [ gemini-2.0-flash            ] [Save] │
+│ Primary Gemini model used     │ Last updated 2026-07-20 by arjun@…      │
+│ for AI judgment calls.        │                                         │
 ├──────────────────────────────┼────────────────────────────────────────┤
-│ ALERTS_ENABLED                │ true / false                          │
-│ Master alert switch (AND-    │ [ true ▾ ] [Save]                      │
-│ gated with workflow input).  │ Last updated 2026-07-20 by arjun@…      │
+│ Alerts on/off switch          │ true / false                          │
+│ ALERTS_ENABLED                │ [ true ▾ ] [Save]                      │
+│ Master alert switch (AND-     │ Last updated 2026-07-20 by arjun@…      │
+│ gated with workflow input).   │                                         │
 └──────────────────────────────┴────────────────────────────────────────┘
 ```
 
 **Tablet:** same two-column idea, narrower — description text wraps more; input width shrinks but
 never below a usable ~120px.
 
-**Phone:** each key becomes its own stacked card: key name (bold, monospace-accent), description (wraps
-full width), example as a small helper line, input full-width, Save as a full-width or right-aligned
-small button, last-updated as a small caption below.
+**Phone:** each key becomes its own stacked card: friendly label (bold, primary heading), raw key name
+demoted directly beneath it (small monospace, secondary color), description (wraps full width), example
+as a small helper line, input full-width, Save as a full-width or right-aligned small button,
+last-updated as a small caption below.
 
 ```
-┌ GEMINI_MODEL ───────────────┐
-│ Primary Gemini model used   │
-│ for AI judgment calls.      │
-│ e.g. "gemini-2.0-flash"     │
-│ [ gemini-2.0-flash        ] │
-│              [ Save ]       │
-│ Updated 2026-07-20 · arjun  │
-└──────────────────────────────┘
+┌ Primary AI model ────────────┐
+│ GEMINI_MODEL                 │
+│ Primary Gemini model used    │
+│ for AI judgment calls.       │
+│ e.g. "gemini-2.0-flash"      │
+│ [ gemini-2.0-flash         ] │
+│              [ Save ]        │
+│ Updated 2026-07-20 · arjun   │
+└───────────────────────────────┘
 ```
 
 ### 4.4 Login / Track-record / Kill-switch — responsive summary
@@ -474,18 +508,20 @@ derived Currency shown as a pill badge next to the Market field once selected, e
 
 ### 6.3 Tunables editor — responsive
 
-**Desktop:** an accordion-of-cards, one card per key, collapsed by default showing key + current value +
-a "modified" pill if changed from the seed; expand to reveal description/example/save. A 2-column
-masonry layout for the 10 cards to reduce scroll on wide screens.
+**Desktop:** an accordion-of-cards, one card per key, collapsed by default showing the friendly label
+(primary, bold) with the raw key demoted beneath it (small monospace-secondary) + current value + a
+"modified" pill if changed from the seed; expand to reveal description/example/save. A 2-column masonry
+layout for the 10 cards to reduce scroll on wide screens.
 
 ```
-┌ [GEMINI_MODEL         gemini-2.0-flash        ⌄] ┌ [ALERTS_ENABLED       true            ⌄] │
-│ [GEMINI_MODEL_BACKUP  (blank)                 ⌄] ┌ [DISCOVERY_GAINER_PCT  5.0             ⌄] │
+┌ [Primary AI model              gemini-2.0-flash ⌄] ┌ [Alerts on/off switch          true    ⌄] │
+│ [ GEMINI_MODEL                                    ] │ [ ALERTS_ENABLED                        ] │
 ```
 
 Expanded card:
 ```
-┌ GEMINI_MODEL                                    ▼ ┐
+┌ Primary AI model                                ▼ ┐
+│ GEMINI_MODEL                                       │
 │ Primary Gemini model used for AI judgment calls.   │
 │ Example: gemini-2.0-flash                          │
 │ [ gemini-2.0-flash                    ]  [ Save ]  │
