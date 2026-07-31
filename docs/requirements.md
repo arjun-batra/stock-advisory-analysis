@@ -607,7 +607,7 @@ NFR2 ("completes degraded" explicitly defined so an all-tickers-failed run canno
 INC-8, reviewer Pass 24 CLEAR; code's `degraded` bucket (`skip`+`error`+`no-read`+`push-failed`) matches
 the amended definition exactly.
 
-### Deferred, pending live execution — user decision required
+### FR31, FR32 — Deferred, pending live execution (resolved by user decision, 2026-07-31)
 
 **FR31, FR32** (admin portal: read-only track-record view, kill-switch UI toggle) — INC-7 implemented,
 qa-PASS, reviewer Pass 20 CLEAR. Per Decision #36, two live checks gate these: INC-7 Step 0 (confirm
@@ -617,33 +617,70 @@ qa-PASS, reviewer Pass 20 CLEAR. Per Decision #36, two live checks gate these: I
 proof that toggling the kill switch through the portal actually suppresses dispatch — have not run.** Both
 require an authenticated admin **browser** session against the live Vercel-hosted portal (Google OAuth
 login through the deployed UI); no subagent or the orchestrator had one available in this environment.
-Note: INC-11's live pause/resume exercise (which passed, see FR24–FR26 above) used the `postgres`
-service-role credential directly via SQL — a different, already-trusted path — and does **not** substitute
-for AC2/AC3, which specifically exist to prove the portal's `is_admin()`-gated RPC path itself works
-end-to-end (`docs/handoff.md`, INC-11 evidence item 2's explicit caveat).
 
-**Status: FR31/FR32 remain Deferred, pending live execution** — they cannot be marked Delivered on the
-evidence available in this environment, per Decision #36's binding rule that a deferred live check may not
-be silently treated as terminal or waved through at closure.
+**What is and isn't verified, precisely:**
+- **Verified:** INC-7 Step 0 — the `admin_read_kill_switch` policy and the `is_admin()`-gated
+  `set_kill_switch()` RPC are confirmed live and correctly configured in production.
+- **Verified, but via a different path:** the kill-switch mechanism itself — pause suppresses dispatch,
+  resume restores it — was exercised live (INC-3 AC3, recorded in `docs/handoff.md`). That exercise ran
+  under the `postgres` service-role credential directly via SQL, so the resulting `kill_switch_audit` row
+  carries `actor='postgres'`, not an authenticated portal user.
+- **Not verified — AC2/AC3 specifically:** (1) the portal's own authenticated-browser RPC round-trip
+  through `set_kill_switch()`, and (2) dispatch suppression proven from a **portal-initiated** pause (i.e.,
+  a `kill_switch_audit` row with an authenticated admin user, not `postgres`, as `actor`). Neither has run
+  in any environment available during this build. It is the portal's own call path that is untested here —
+  not the kill switch as a whole, which is independently proven live via the service-role path above.
 
-**pm's recommendation to the user, framed as a decision only you can make (not decided here):**
-1. **Hold the `v0.1.0` tag** until you can log into the deployed admin portal yourself (a two-minute check:
-   toggle the kill switch via the portal UI, confirm the `kill_switch_audit` row shows `source='admin-portal'`,
-   and confirm no scheduled dispatch fires while paused), then tag once that passes — this is the option
-   Decision #36 was written to force, and it closes the loop with the same standard every other deferred
-   check in this project was held to (INC-3 AC3, INC-4 AC6, both closed the same way).
-2. **Tag `v0.1.0` now with FR31/FR32 explicitly recorded as "deferred, pending live execution"** in the
-   release notes/runbook, on the reasoning that: the code is reviewer-cleared with zero blockers/majors,
-   the underlying RPC (`set_kill_switch`) and its authorization gate are independently confirmed live and
-   correctly configured (Step 0 passed), and the only unverified step is the portal UI's own call path to
-   an RPC that is already proven safe via the identical service-role exercise — a materially smaller risk
-   than the other two checks Decision #36 named, both of which are now closed.
-I recommend **option 1** if a two-minute manual check is acceptable to you before tagging — it is cheap,
-it is the standard this project has held every other deferred live check to, and it removes the one
-remaining assumption in an admin control surface for a system that pauses real AI/push/commit
-side-effecting work. If you'd rather not block the tag on portal access being available right now,
-**option 2** is a defensible, explicitly-labeled fallback — but the choice is yours, not mine, per
-Decision #36's own rationale for existing.
+**pm's recommendation, offered to the user as a decision only they could make (not decided by pm):**
+1. **Hold the `v0.1.0` tag** until the user could log into the deployed admin portal themselves (a
+   two-minute check: toggle the kill switch via the portal UI, confirm the `kill_switch_audit` row shows an
+   authenticated admin user as `actor`, and confirm no scheduled dispatch fires while paused), then tag once
+   that passes — the option Decision #36 was written to force, closing the loop with the same standard every
+   other deferred check in this project was held to (INC-3 AC3, INC-4 AC6, both closed the same way).
+2. **Tag `v0.1.0` now with FR31/FR32 explicitly recorded as "deferred, pending live execution,"** on the
+   reasoning that the code is reviewer-cleared with zero blockers/majors, the underlying RPC and its
+   authorization gate are independently confirmed live (Step 0 passed), and the only unverified step is the
+   portal UI's own call path to an RPC already proven safe via the identical service-role exercise — a
+   materially smaller risk than the other two checks Decision #36 named, both of which are closed.
+
+pm recommended **option 1** as the option that removes the one remaining assumption in an admin control
+surface for a system that pauses real AI/push/commit side-effecting work, while noting **option 2** is a
+defensible, explicitly-labeled fallback if portal access wasn't available before tagging. This
+recommendation is retained here as part of the record — that option 1 was offered and consciously
+declined, not omitted or overlooked.
+
+**Decision (final): the user chose option 2, 2026-07-31.** FR31 and FR32 are tagged in `v0.1.0` as
+**Deferred, pending live execution**, by the user's explicit choice, not by default or by pm's
+recommendation. This is not an open-ended deferral: it closes on the concrete steps below, whenever the
+user next has portal access.
+
+**Steps to close FR31/FR32 (unchanged scope, no new design/code required unless a step fails):**
+1. Sign in to the deployed admin portal as an allowlisted admin (Google OAuth).
+2. Toggle the kill-switch UI to pause.
+3. Confirm a new `kill_switch_audit` row appears with the authenticated admin user as `actor` (not
+   `postgres`).
+4. Confirm `run_heartbeat.last_run_at` does not advance past the pause — i.e., no new scheduled run
+   executes while paused.
+5. Resume via the same portal UI, and confirm `run_heartbeat.last_run_at` advances again on the next cycle.
+
+On all five passing, a future changelog entry moves FR31/FR32 from Deferred to Delivered; a failure at any
+step routes back through the normal qa/reviewer path, not a silent status change.
+
+### Deployment status (added 2026-07-31 — does not change any FR/NFR status above)
+
+The fix round behind INC-8 through INC-12 (the `/big-guns` DEEP-001–007 fixes several "Delivered"
+determinations above cite by reviewer clearance and regression test) has been **merged to `main`**
+(fast-forward `ef254d1..bf42ad6`, 2026-07-31). Before this merge, production ran pre-fix code:
+`dispatch_github_workflow` dispatches scheduled runs with `ref: 'main'`, so INC-8 through INC-12's code
+changes take effect starting with the **next scheduled dispatch after the merge**, not before it. This
+does not revise any "Delivered" determination above — none of them rested on the application code being
+live on `main`. The live-verification claims for FR11/FR29, FR30, and FR35 rest on the four SQL files
+associated with this fix round (`sql/holdings_currency_derivation.sql`, `sql/tunables_validate_trigger.sql`,
+`sql/admin_portal_tunables_alerts_enabled_description_fix.sql`, `sql/kill_switch_abort_log.sql`), which
+were applied to production **ahead of** the code merge and independently verified harmless in that
+ahead-of-code pairing; the FR24–FR26 and FR33 live-verification claims rest on the pre-existing
+service-role/production-data paths described above, not on INC-8–12's code. No FR/NFR status changes as a
+result of this note; it exists so a later reader of this closure record has the correct deploy timeline.
 
 ---
 
@@ -651,7 +688,6 @@ Decision #36's own rationale for existing.
 
 | Date | Change | Reason |
 |---|---|---|
-| 2026-07-27 | **Reversal — FR30 tunables editor moves from GitHub-Variables-proxy to a Supabase `tunables` table.** During design, tech-lead found Decision #24's premise false: only 2 of the 10 curated keys (`GEMINI_MODEL`, `GEMINI_MODEL_BACKUP`) are actually wired from GitHub Variables into the running workflows — `ALERTS_ENABLED` is a `workflow_dispatch` input on scheduled runs (not read from a Variable) and the 7 `DISCOVERY_*` keys aren't wired in at all. "Don't touch the production config-loading path" was never achievable, so closing that gap requires touching it regardless of mechanism. Revised FR30 to describe the new mechanism: a `tunables` Supabase table (key, value, description, example, updated_at, updated_by) seeded via migration at current defaults (no behavior change at cutover); `scripts/config.py` fetches these 10 keys from the table at run start with a fallback to hardcoded Python defaults on fetch failure; the portal writes directly to the table under an admin-scoped RLS policy (same mechanism as FR28/29/32) — no GitHub PAT or proxy. Revised NFR6 to drop the GitHub-PAT-specific line, replaced with the general RLS-write-policy requirement. Marked Decision #24 SUPERSEDED and added Decision #27 recording the new decision and rationale. Updated the §10 Configuration note under FR30 to describe the table-based mechanism. The other ~18 non-curated tunables are unaffected — they remain GitHub Variables/code defaults, since the portal doesn't touch them. Archived the next-oldest changelog entry (2026-07-12, Experimental Tracks section) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Arjun approved this direction after discussion with tech-lead once the wiring-gap discovery invalidated Decision #24's original premise; recorded here per the change-request/reversal process, not a fresh discovery round. |
 | 2026-07-27 | **Refinement — FR30 tunables editor fail-safe now falls back to a last-known-good cache, not a fixed hardcoded literal.** On a failed Supabase fetch, `scripts/config.py` now falls back to the last successfully-fetched value per curated key, read from a repo-committed cache file (`config/tunables_cache.json`), rather than a fixed hardcoded Python default. The cache file is seeded on day one with the then-current hardcoded defaults, and is updated (diff-checked, committed only if changed) on every successful Supabase fetch, reusing the same commit-on-change pattern `.github/workflows/publish-prices.yml` already uses for `pages/prices.json`. Decision #27's core reversal (Supabase table remains source of truth) is unchanged; this refines only the failed-fetch fallback. Added Decision #28 (refines #27). Updated FR30's fail-safe clause and the §10 Configuration note under FR30 accordingly. Flagged as an open note for tech-lead: which workflow(s) own writing back to the cache vs. read-only-consuming it — proposed shape is `hourly-watchlist.yml` as sole writer (most frequent run) with the two discovery-region workflows and `publish-prices.yml` as read-only consumers, pending Arjun's one-line confirmation if he expects a different shape (e.g. every workflow writing back independently). No new FR/NFR IDs — refinement recorded via Decision #28 per this project's established pattern (see #27). Archived the oldest changelog entry (2026-07-12, §11→§10 tunables-baseline sync) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Arjun approved this direction in discussion: a fixed hardcoded literal can silently drift weeks/months stale from what's actually been curated in practice via the portal, defeating the purpose of a portal-editable source of truth; a rolling last-known-good cache stays close to actual practice and reuses a mechanism already proven working in this exact codebase rather than inventing a new one. |
 | 2026-07-28 | Doc-sync: added `AI_PROVIDER` (default `gemini`) to the §10 config audit baseline table (Core system), per reviewer finding REV-074 (Pass 14). INC-4's AC5 had only directed dev to add it to `design/non-functional-ops.md` §9; §10 in this document — the table both the runbook and that design doc cite as the actual authoritative baseline — was missed. Same class of gap as REV-019 (2026-07-15). No FR/NFR text changed. | Reviewer finding REV-074: every tunable must appear in the config audit baseline (§10), not only the design-doc mirror. |
 | 2026-07-28 | **Reviewer Pass 11 findings routed to pm (REV-040, REV-058, REV-059(b)).** (1) REV-040: Decision #28's confirmed cache-writer shape (`hourly-watchlist.yml` sole writer) was re-opened pending Arjun's reconfirmation — added Decision #29 laying out reviewer's race/privilege findings and the two options (keep `hourly-watchlist.yml` with mitigations, or switch to `publish-prices.yml` per reviewer's recommendation). **Same-day resolution:** Arjun confirmed `hourly-watchlist.yml` stays the sole writer (natural owner — it's the workflow that reads/triggers off the Supabase-scheduled jobs), conditioned on both of reviewer's mitigations shipping: a `concurrency` group shared with `publish-prices.yml`, and a bounded retry around the `git push` step. Decision #29 updated to RESOLVED; the §10 Configuration note under FR30 updated to state the settled shape and its two binding conditions. (2) REV-058: added **NFR7 — Core security posture** (§6) covering RLS, Vault/secrets-never-in-code, no brokerage credentials/execution, and UUID-only detail-page URLs (Decision #17) — content previously mis-cited under NFR3 (Disclaimer) in `design/non-functional-ops.md` and `design.md`'s coverage map. NFR6 now cross-references NFR7 instead of NFR3; Decision #17's rationale column updated to add the NFR7 citation alongside its existing NFR3 one. Added Decision #30 recording the choice and rationale. (3) No FR/NFR text changed beyond the new NFR7; no IDs renumbered. Archived the oldest changelog entry (2026-07-13, NSE shadow wallet pilot) to `docs/archive/requirements-changelog-archive.md` to hold the 10-most-recent cap. | Reviewer's Pass 11 audit (`docs/review-log.md` REV-040, REV-058, REV-059(b)) routed items to pm per CLAUDE.md's reviewer-finding-routing rule; REV-040 was an open question for Arjun (trade-offs go to the user, not decided silently by pm), resolved same-day by his explicit answer; REV-058's ID choice was pm's call per reviewer's routing note; REV-059(b) resolved as part of the same pass since it interacted directly with REV-040's re-opening. |
