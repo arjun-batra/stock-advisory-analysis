@@ -142,6 +142,7 @@ export default function HoldingsPage() {
       {loading ? (
         <p className="status-line">Loading…</p>
       ) : (
+        <div className="crud-table-wrap">
         <table className="crud-table">
           <thead>
             <tr>
@@ -198,6 +199,7 @@ export default function HoldingsPage() {
             )}
           </tbody>
         </table>
+        </div>
       )}
 
       <h2>Add holding</h2>

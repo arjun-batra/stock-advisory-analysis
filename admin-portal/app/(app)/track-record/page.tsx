@@ -111,22 +111,27 @@ export default function TrackRecordPage() {
     setAppliedFilters({ ticker: "", label: "", verdict: "" });
   }
 
-  function toggleSort(column: SortColumn) {
+  // BUG-011 fix: sort is a <select> + direction-toggle button, not clickable
+  // <th> column headers -- a card layout (below) has no column-header row for
+  // that affordance to live in. Same underlying sortColumn/sortAscending
+  // state and .order() query as before, just a different control surface.
+  function changeSortColumn(column: SortColumn) {
     setPage(0);
-    if (sortColumn === column) {
-      setSortAscending(!sortAscending);
-    } else {
-      setSortColumn(column);
-      setSortAscending(false);
-    }
+    setSortColumn(column);
+    setSortAscending(false);
   }
 
-  function sortIndicator(column: SortColumn) {
-    if (sortColumn !== column) return "";
-    return sortAscending ? " ▲" : " ▼";
+  function toggleSortDirection() {
+    setPage(0);
+    setSortAscending((prev) => !prev);
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  function verdictClass(verdict: string): string {
+    const v = verdict.toLowerCase();
+    return v === "buy" || v === "sell" || v === "hold" ? v : "";
+  }
 
   return (
     <section>
@@ -174,51 +179,48 @@ export default function TrackRecordPage() {
         <p className="status-line">Loading…</p>
       ) : (
         <>
-          <div className="table-scroll">
-          <table className="log-table">
-            <thead>
-              <tr>
-                <th>
-                  <button type="button" className="link" onClick={() => toggleSort("ticker")}>
-                    Ticker{sortIndicator("ticker")}
-                  </button>
-                </th>
-                <th>
-                  <button type="button" className="link" onClick={() => toggleSort("verdict")}>
-                    Verdict{sortIndicator("verdict")}
-                  </button>
-                </th>
-                <th>Confidence</th>
-                <th>Price</th>
-                <th>Parse status</th>
-                <th>Label</th>
-                <th>Alerted</th>
-                <th>
-                  <button type="button" className="link" onClick={() => toggleSort("timestamp")}>
-                    Timestamp{sortIndicator("timestamp")}
-                  </button>
-                </th>
-                <th>Rationale</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.ticker}</td>
-                  <td>{row.verdict}</td>
-                  <td>{row.confidence ?? ""}</td>
-                  <td>{row.price ?? ""}</td>
-                  <td>{row.parse_status ?? ""}</td>
-                  <td>{row.label}</td>
-                  <td>{row.alerted ? "yes" : "no"}</td>
-                  <td>{new Date(row.timestamp).toLocaleString()}</td>
-                  <td className="rationale-cell" title={row.rationale} style={{ maxWidth: "24rem" }}>
-                    {row.rationale}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="sort-controls">
+            <label>
+              Sort by{" "}
+              <select
+                value={sortColumn}
+                onChange={(e) => changeSortColumn(e.target.value as SortColumn)}
+              >
+                <option value="timestamp">Timestamp</option>
+                <option value="ticker">Ticker</option>
+                <option value="verdict">Verdict</option>
+              </select>
+            </label>
+            <button type="button" className="link" onClick={toggleSortDirection}>
+              {sortAscending ? "Ascending ▲" : "Descending ▼"}
+            </button>
+          </div>
+
+          <div className="tr-cards">
+            {rows.map((row) => (
+              <div className="tr-card" key={row.id}>
+                <div className="top">
+                  <strong>{row.ticker}</strong>
+                  <span className={`verdict-pill ${verdictClass(row.verdict)}`}>{row.verdict}</span>
+                </div>
+                <p className="rationale" title={row.rationale}>
+                  {row.rationale}
+                </p>
+                <dl className="tr-fields">
+                  <dt>Price</dt>
+                  <dd>{row.price ?? ""}</dd>
+                  <dt>Confidence</dt>
+                  <dd>{row.confidence ?? ""}</dd>
+                  <dt>Parse status</dt>
+                  <dd>{row.parse_status ?? ""}</dd>
+                  <dt>Label</dt>
+                  <dd>{row.label}</dd>
+                  <dt>Alerted</dt>
+                  <dd>{row.alerted ? "yes" : "no"}</dd>
+                </dl>
+                <div className="foot">{new Date(row.timestamp).toLocaleString()}</div>
+              </div>
+            ))}
           </div>
 
           <p className="status-line">

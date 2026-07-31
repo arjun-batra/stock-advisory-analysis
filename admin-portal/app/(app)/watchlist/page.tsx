@@ -127,6 +127,7 @@ export default function WatchlistPage() {
       {loading ? (
         <p className="status-line">Loading…</p>
       ) : (
+        <div className="crud-table-wrap">
         <table className="crud-table">
           <thead>
             <tr>
@@ -206,6 +207,7 @@ export default function WatchlistPage() {
             )}
           </tbody>
         </table>
+        </div>
       )}
 
       <h2>Add ticker</h2>

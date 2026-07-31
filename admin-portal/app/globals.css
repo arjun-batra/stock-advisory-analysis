@@ -390,10 +390,31 @@ form.crud-form label {
    columns to fit without horizontal scroll at this width.
    Desktop (>=1024px): Direction G's 4-column compact card grid
    (docs/ux-mockups/direction-g-compact-toggle.html), matching Direction F's
-   density table (docs/ux-spec.md §7.3.2). See docs/handoff.md for why this
-   band split (table only at tablet, cards at phone+desktop) reconciles
-   admin-portal.md §16.10's mechanism paragraph with increment-plan.md's
-   AC4 (both are read together, not read as being in conflict). */
+   density table (docs/ux-spec.md §7.3.2).
+
+   BUG-010 fix: admin-portal.md §16.10 keeps a real <table> layout mechanism
+   at the tablet band (no <div>-based card grid, no data-label/attr(content)
+   trick) — that part is unchanged. What was missing is Direction G's card
+   *styling* (shadow/radius/background tokens) at that width: .crud-table-wrap
+   below supplies it around the table as a single card surface, since a real
+   `display:table-row` element can't reliably paint its own box-shadow. At
+   phone/desktop widths .crud-table-wrap stays transparent — each row (phone)
+   or grid cell (desktop) already carries its own card treatment, so the wrap
+   would otherwise double up. */
+
+.crud-table-wrap {
+  /* transparent by default (phone/desktop); tablet media query below adds
+     the card surface */
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .crud-table-wrap {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-3);
+  }
+}
 
 .crud-table {
   width: 100%;
@@ -556,40 +577,120 @@ form.crud-form label {
   margin-top: var(--space-2);
 }
 
-/* ---------- track-record: kept as a real, sortable/paginated table (not
-   converted to per-row cards -- see docs/handoff.md judgment-call note);
-   the card-styled scroll container supplies Direction G's flatter shadow/
-   radius tokens and guarantees no page-level horizontal scroll at any
-   width. ---------- */
+/* ---------- track-record: card grid per Direction G (docs/ux-spec.md
+   §7.3.2, docs/ux-mockups/direction-g-compact-toggle.html's .tr-cards/
+   .tr-card) -- fixes BUG-011 (previously a real sortable <table>, never
+   rendered as cards). Sort is a <select> + direction-toggle button
+   (.sort-controls) instead of clickable <th> column headers, since a card
+   layout has no column-header row for sort affordances to live in; the
+   underlying .order()-driven query/state is unchanged. Density: 3-col
+   desktop / 2-col tablet / 1-col phone, same three-tier pattern as
+   .tunable-grid above. ---------- */
 
-.table-scroll {
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sort-controls select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.tr-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+@media (min-width: 640px) {
+  .tr-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .tr-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.tr-card {
   background: var(--color-surface);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   padding: var(--space-3);
-  margin-top: var(--space-4);
-  overflow-x: auto;
-  max-width: 100%;
 }
 
-.log-table {
-  width: 100%;
-  min-width: 720px;
-  border-collapse: collapse;
+.tr-card .top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
-.log-table th,
-.log-table td {
-  text-align: left;
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
-  font-size: var(--font-size-sm);
+.tr-card .top strong {
+  font-size: var(--font-size-base);
+}
+
+.verdict-pill {
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.log-table td.rationale-cell {
-  white-space: normal;
-  min-width: 220px;
+.verdict-pill.buy {
+  background: var(--color-success-bg);
+  color: var(--color-success-fg);
+}
+
+.verdict-pill.sell {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+}
+
+.verdict-pill.hold {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+}
+
+.tr-card .rationale {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.tr-card .tr-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--font-size-xs);
+}
+
+.tr-card .tr-fields dt {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  margin: 0;
+}
+
+.tr-card .tr-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tr-card .foot {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 /* ---------- login (FR27) ---------- */
