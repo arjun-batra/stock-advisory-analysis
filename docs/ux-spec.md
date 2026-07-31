@@ -8,7 +8,7 @@ states, copy, and responsive behavior.
 
 **Gate:** per NFR8, Arjun selects exactly one direction below before any implementation starts. No
 speculative screens are proposed — every screen here maps 1:1 to an existing FR. Direction B has been
-reviewed and rejected (§5); the live candidate set is A, C, D, E, F (§4, §6, §7).
+reviewed and rejected (§5); the live candidate set is A, C, D, E, F, G (§4, §6, §7).
 
 | Screen | FR | Current content (source of truth) |
 |---|---|---|
@@ -636,6 +636,41 @@ distinct from C's violet, so the two directions are never visually confusable si
 Responsive breakpoints (phone ≤599px / tablet 600–1023px / desktop ≥1024px) match §1's illustrative
 pixels throughout. Mockup: `docs/ux-mockups/direction-f-compact-cards.html`.
 
+### 7.4 Direction G — "Compact Toggle" (baseline: Direction F density + Direction E's kill-switch treatment)
+
+**Visual language:** Not a new palette or layout — Direction G is Direction F (§7.3), unchanged, in
+every respect (tokens, card density, 4-col watchlist grid, always-visible compact tunable cards,
+flatter single-layer shadow, tighter spacing scale) **except** the kill-switch control in the shared
+header. Per Arjun's 2026-07-31 review of D/E/F ("I like System toggle in E but I like compactness of
+F"), F's static pill badge (`<span class="pill running">🟢 System: Running</span>`) is replaced with
+Direction E's interactive sliding toggle-switch component (§7.2, the `.toggle` element next to the
+"System: Running"/"System: Paused" label) — same on/off sliding mechanic and green-running /
+grey-and-shifted-left-paused color logic as E — resized down to F's tighter compact scale. No other
+screen, token, or layout changes anywhere in this direction; every other wireframe/table in §7.3
+(§7.3.1 tokens, §7.3.2 density table) applies to Direction G unchanged.
+
+#### 7.4.1 Tokens
+
+Identical to Direction F §7.3.1 — no new or changed color/spacing/type/radius/shadow tokens. This is a
+component-treatment change, not a new palette.
+
+#### 7.4.2 Kill-switch component — treatment delta from Direction F
+
+| Aspect | Direction F (§7.3, replaced) | Direction G (this) |
+|---|---|---|
+| Markup | `<span class="pill running">🟢 System: Running</span>` / `<span class="pill paused">🟠 System: Paused</span>` — a single static pill element | `<div class="killswitch"><span>System: Running</span><div class="toggle"></div></div>` — a label plus a separate sliding toggle-switch element, matching Direction E's `.killswitch`/`.toggle` structure (§7.2.1's `docs/ux-mockups/direction-e-hybrid.html` lines 62–65, 234) |
+| Interaction affordance | Pill communicates state only; the tap/click target for toggling isn't visually distinguished from a status label | Toggle-switch shape itself signals "this is the control" (thumb + track), same affordance logic as a native OS toggle — clicking/tapping the toggle (not just a surrounding pill) triggers the state change, consistent with the shared UX contract's kill-switch interaction states (§2.5) |
+| Running state | `.pill.running` — `background: var(--color-success-bg)`, `color: var(--color-success-fg)`, 🟢 emoji prefix | `.toggle` (no `.paused` class) — track `background: var(--color-accent)` (F's emerald), thumb (white circle) slid to the right via `::after{ right:2px }` |
+| Paused state | `.pill.paused` — `background: var(--color-warning-bg)`, `color: var(--color-warning-fg)`, 🟠 emoji prefix | `.toggle.paused` — track `background: var(--color-border)` (grey), thumb slid to the left via `::after{ right:auto; left:2px }` — same class-driven sliding mechanic as Direction E, just re-scaled |
+| Sizing (compact-scale adaptation) | Pill: `padding: 3px var(--space-3)`, `font-size: var(--font-size-xs)` (F's 11px) | Toggle track: 30×17px, thumb: 13px circle — scaled down from Direction E's 36×20px track / 16px thumb (built on F's `--space-1`/`--space-2` rhythm rather than E's larger `--space-2`/`--space-4`, consistent with F's overall tighter density) |
+| Label text | Embedded inside the pill string, with emoji | Separate `<span>System: Running</span>` sibling to the left of the toggle, `font-size: var(--font-size-sm)` (F's 13px), no emoji — matches Direction E's label/toggle split, dropping the emoji to fit F's flatter/icon-light visual language (F uses emoji only for nav icons, not status pills elsewhere per §7.3) |
+| States (loading/in-flight/error/success) | Governed entirely by the shared UX contract, §2.5 — unchanged by this component swap. In Direction G: loading = toggle muted/disabled (reduced opacity, no pointer events); in-flight = toggle disabled, label reads "Pausing…"/"Resuming…"; error = toggle snaps back to prior position + brief inline message below the header; success = toggle position updates immediately, label updates to match |
+
+No other screen (login, watchlist/holdings CRUD, tunables editor, track-record) differs from Direction
+F — see §7.3.2's density table, which applies unchanged. Responsive breakpoints (phone ≤599px / tablet
+600–1023px / desktop ≥1024px) match §1's illustrative pixels throughout, identical to every other
+direction's mockup. Mockup: `docs/ux-mockups/direction-g-compact-toggle.html`.
+
 ---
 
 ## 8. Mockup files
@@ -651,6 +686,7 @@ Resize the browser window to see the phone/tablet/desktop behavior described abo
 | D — Warm Minimal (baseline: A) | active candidate | `docs/ux-mockups/direction-d-warm-minimal.html` |
 | E — Minimal / Card Hybrid (baseline: A + C) | active candidate | `docs/ux-mockups/direction-e-hybrid.html` |
 | F — Compact Cards (baseline: C) | active candidate | `docs/ux-mockups/direction-f-compact-cards.html` |
+| G — Compact Toggle (baseline: F density + E's kill-switch toggle) | active candidate | `docs/ux-mockups/direction-g-compact-toggle.html` |
 
 Each file includes: Login, Watchlist & Holdings CRUD (with an open Add/Edit form example), Tunables
 editor, Track-record view, and the kill-switch toggle in its header — all five FR27–FR32 screens, with
@@ -662,7 +698,7 @@ sample data matching the rows used in the wireframes above (AAPL, VOO, TD, MSFT,
 
 Per NFR8, Arjun reviews the mockup files (and this spec) and selects exactly one direction — this
 selection is the GATE; dev may not start implementing any visual/responsive change before it happens.
-B is already eliminated; the live candidate set is A, C, D, E, F. Once selected:
+B is already eliminated; the live candidate set is A, C, D, E, F, G. Once selected:
 - tech-lead records the chosen direction, the exact breakpoint pixel values, and the token→theme-config
   mapping in `docs/design.md` (or a module file) before INC start.
 - This spec's §2 (states/copy) applies unchanged regardless of which direction is picked — it is not a
@@ -674,9 +710,9 @@ B is already eliminated; the live candidate set is A, C, D, E, F. Once selected:
 
 | FR | Screen | Covered in |
 |---|---|---|
-| FR27 | Login | §2.1, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
-| FR28 | Watchlist CRUD | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2 |
-| FR29 | Holdings CRUD (same screen) | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2 |
-| FR30 | Tunables editor | §2.3, §4.3/§5.3/§6.3/§7.1.2/§7.2.2/§7.3.2 |
-| FR31 | Track-record view | §2.4, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
-| FR32 | Kill-switch toggle | §2.5, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
+| FR27 | Login | §2.1, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
+| FR28 | Watchlist CRUD | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
+| FR29 | Holdings CRUD (same screen) | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
+| FR30 | Tunables editor | §2.3, §4.3/§5.3/§6.3/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
+| FR31 | Track-record view | §2.4, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
+| FR32 | Kill-switch toggle | §2.5, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2, §7.4.2 (Direction G's toggle-treatment delta) |
