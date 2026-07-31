@@ -386,12 +386,31 @@ one small presentational component permitted):**
   tablet breakpoint via CSS (a small presentational `NavToggle` local-state component is permitted in
   `components/` if a JS-driven open/closed toggle is needed — no data implications, no new prop touches
   any Supabase call).
-- `.crud-table` (`watchlist`/`holdings` pages) — below the tablet breakpoint, switches from `<table>`
-  layout to a stacked "card per row" layout via CSS only (`tr { display:block }`, `td::before { content:
-  attr(data-label) }`), reading a `data-label="<column header>"` attribute added to each `<td>` in markup
-  (a markup addition, not a logic change) — this satisfies "no horizontal scrolling" literally at phone
-  width rather than wrapping the table in a scroll region. At tablet/desktop widths the existing `<table>`
-  layout is kept.
+- `.crud-table` (`watchlist`/`holdings` pages) — the underlying `<table>`/`<tr>`/`<td>` DOM structure and
+  markup are unchanged at every width; only CSS `display` overrides and one added markup attribute vary
+  by breakpoint (three bands, BUG-010 fix folded in):
+  - **Phone (base, <640px):** stacked "card per row" via CSS only (`tbody{display:block}`,
+    `tr{display:block}` with its own card shadow/radius/background, `td{display:flex}`,
+    `td::before{content:attr(data-label)}`), reading a `data-label="<column header>"` attribute added to
+    each `<td>` in markup (a markup addition, not a logic change) — satisfies "no horizontal scrolling"
+    literally at phone width rather than wrapping the table in a scroll region.
+  - **Tablet (640–1023px):** the `<table>` layout is kept literally (`display:table-row-group`/
+    `table-row`/`table-cell`, header row shown, `data-label` suppressed) — no `<div>`-based card grid and
+    no `data-label`/`attr()` trick at this width. The one addition is `.crud-table-wrap`, a wrapper `<div>`
+    around the `<table>` that supplies Direction G's card *styling* (surface background, `radius-md`,
+    `shadow-card`) at this band only, since a real `display:table-row` element can't reliably paint its
+    own box-shadow. `.crud-table-wrap` stays transparent at phone/desktop, where each `<tr>` (phone) or
+    grid cell (desktop) already carries its own card treatment.
+  - **Desktop (>=1024px):** `tbody{display:grid; grid-template-columns:repeat(4,1fr)}` turns the table
+    into Direction G's 4-column compact card grid — each `<tr>` becomes a grid cell/card (own
+    shadow/radius/background), `data-label` still suppressed. This is a CSS-only transformation of the
+    same `<table>` markup, not a separate card-grid component.
+- **Track-record page** — converted from a real sortable `<table>` (BUG-011 fix) to a `.tr-cards` CSS
+  grid (3-col desktop / 2-col tablet / 1-col phone, same three-tier density pattern as the tunables
+  grid), with each record rendered as a `.tr-card`. Because a card layout has no column-header row for
+  sort affordances to live in, the old clickable `<th>` sort handlers are replaced by a `.sort-controls`
+  bar (a field `<select>` plus a direction-toggle button) driving the same underlying `.order()` query/
+  state — sort reachability (FR31) is preserved, only the control's markup changed.
 - `form.crud-form` — already single-column (fits phone as-is); gains an optional two-column
   `grid-template-columns` at the desktop breakpoint only, if the chosen mockup direction calls for it.
 - Kill-switch toggle (`components/KillSwitchToggle.tsx`) and login screen — CSS/markup sizing only; no

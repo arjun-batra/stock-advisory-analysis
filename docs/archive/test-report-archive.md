@@ -3347,3 +3347,61 @@ misattribution rejection, BUG-005 unambiguity in both directions, BUG-006 dedup/
 outcome-tally/ordering preservation) was independently exercised against the current code, not inferred
 from the diff or from dev's claim. No bugs filed. Decomposition judged genuine on both sides. No production
 code modified by qa this pass.
+
+---
+
+## Live-execution verification checklist — track-record view — 2026-07-31 (BUG-009, RESOLVED, reviewer-CLEAR Pass 33)
+
+**Scope.** `docs/requirements.md`'s "FR31, FR32 — Deferred, pending live execution" section (Decision #36)
+live-execution verification checklist, step 3: "confirm the track-record table shows real data" against
+the real deployed admin portal (`admin-portal/app/(app)/track-record/page.tsx`, FR31,
+`docs/design/admin-portal.md` §16.5), signed in as an admin via Google OAuth against the live Supabase
+project (`ikghqdtlbwifwnooytmm`).
+
+**Result: FAIL — filed as BUG-009.** Step 3 failed: the signed-in admin saw an empty track-record table,
+no error message. Root cause isolated via direct SQL against the live project: `call_log`'s sole SELECT
+policy was scoped `TO anon` only, so it didn't cover `authenticated` (post-OAuth) sessions — RLS silently
+returned zero rows. **Fix:** `sql/call_log_authenticated_read_fix.sql` adds an equivalent `authenticated`
+SELECT policy. **Retest verdict: RESOLVED** — repo-level verification (fix file's DROP/CREATE logic clean
+and idempotent, matches `sql/schema.sql`'s policy shape) plus full regression (287/0 Python, 82/0
+TypeScript, `npm run lint`/`npm run build` clean) plus two independent live confirmations (dev's local
+Postgres reproduction, orchestrator's direct `pg_policies` query against production showing the new
+policy). **Reviewer Pass 33 verdict: CLEAR** — the BUG-009 fix itself has zero blockers/majors
+(`docs/review-log.md` Pass 33); a documentation-completeness minor from that pass (BUG-009's filing not
+distinguishing "code root-caused and fixed" from "the live checklist step itself re-run") was addressed by
+pm/tech-lead separately, not a qa action item.
+
+---
+
+## INC-13 — Admin portal responsive & visual modernization (NFR8) — 2026-07-31 (first pass, superseded)
+
+**Scope.** `docs/design/increment-plan.md`'s INC-13 (9 ACs), `docs/design/admin-portal.md` §16.10,
+`docs/ux-spec.md` §7.4 (Direction G) + §7.3 (density table) + §2.3 (tunables label mapping),
+`docs/ux-mockups/direction-g-compact-toggle.html` (approved visual reference). Branch
+`inc-13-admin-portal-ui-modernization` (commit `ea68f5b`), dev handoff `docs/handoff.md`.
+
+Full real-browser Playwright pass (mocked Supabase network layer, `next build && next start`, pre-installed
+Chromium) at 375px/768px/1280px: 156/159 checks passed. AC1–AC4, AC7(b)/(c), AC8 all confirmed. AC5
+structural grep clean (one known doc-comment match). Existing suite: 82/0 TypeScript, 286/1 Python (1
+pre-existing/unrelated `test_ingest.py` date-sensitivity failure, confirmed reproducible on the pre-INC-13
+commit, outside INC-13's file allow-list).
+
+**Verdict: FAIL — 2 bugs filed.**
+- **BUG-010** — watchlist/holdings rows had zero card styling at the tablet breakpoint (640–1023px):
+  computed `background: rgba(0,0,0,0)`, `box-shadow: none`, `border-radius: 0px` on `<tr>` at 768px,
+  contradicting AC7(a)'s "flatter card shadows... across watchlist, holdings, and track-record cards" and
+  `docs/ux-spec.md` §7.3.2's density table. Owner: dev/tech-lead.
+- **BUG-011** — track-record never rendered as cards at any width (`.tr-cards`/`.tr-card` count was 0 at
+  375/768/1280px; only a real `<table class="log-table">` in a `.table-scroll` wrapper existed),
+  contradicting AC7(a)'s literal "track-record cards" text and the approved mockup's `.tr-cards` grid.
+  Owner: dev/tech-lead.
+
+Both bugs traced to dev's own flagged judgment calls in `docs/handoff.md`'s original INC-13 entry: (a)
+kept watchlist/holdings as a real `<table>` at tablet with zero card treatment, (b) kept track-record as a
+sortable `<table>` rather than a card grid. Judgment call (c) (kill-switch reusing legacy PAUSED/RUNNING
+strings as an accessible label) was accepted, no bug filed.
+
+**Superseded by:** the fix-cycle-1 retest entry (2026-07-31, same date) in `docs/test-report.md`'s history
+— dev fixed both bugs in commit `3d1cdb3`; qa's retest confirmed via a real-browser Playwright pass
+against the actual compiled app (not dev's static-harness self-check) that both are resolved with zero
+remaining bugs. See that run for the closing verdict.

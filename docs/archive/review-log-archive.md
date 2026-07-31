@@ -3914,3 +3914,51 @@ cache write (`config.write_tunables_cache_if_fetched()`) and the market-gate com
 strictly after it. No sixth unguarded path was found in any of the three entry points. Full re-verification
 detail — including the load-bearing quality of qa's two new regression tests, the SQL REVOKE fix, and one
 new residual (the `GEMINI_API_KEY` validation-delay side effect) — is in `docs/review-log.md` Pass 29.
+
+---
+
+## REV-145/REV-146/REV-147 — INC-13 admin-portal doc-currency findings + closure (archived 2026-07-31 at
+Pass 35's close)
+
+**Original findings (2026-07-31, Pass 34, INC-13 diff-scoped audit).**
+
+**REV-145 — `[STRUCTURE]` — major.** `docs/code-map.md`'s `admin-portal/` component inventory
+("`components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`.") did not list `components/NavToggle.tsx`, the
+new presentational component INC-13 added. Not a defect in INC-13's own code (the component itself was
+confirmed correctly scoped, presentational-only) — a documentation-currency gap `CLAUDE.md`'s git-workflow
+rule requires closing before merge ("If the increment changed structure, tech-lead refreshes
+docs/code-map.md before the merge commit"). This was the sole reason Pass 34 closed NOT CLEAR.
+
+**REV-146 — `[DESIGN-GAP]` — minor.** `docs/design/admin-portal.md` §16.10's "Layout mechanism" paragraph
+stated the watchlist/holdings tables kept "the existing `<table>` layout" at "tablet/desktop widths," in
+direct textual tension with the increment plan's AC4 (a 4-column card grid at desktop specifically). Dev
+flagged this itself as a judgment call in `docs/handoff.md` and resolved it in the shipped code (AC4
+controlling for desktop, literal `<table>` text for tablet only) — independently re-derived as the correct
+reading against the mockup and qa's live computed-style checks. Non-blocking, but §16.10's text itself had
+not been corrected to remove the contradiction.
+
+**REV-147 — `[DESIGN-GAP]` — minor.** Same root cause as REV-146: INC-13 AC7(a) required flatter shadows
+across watchlist/holdings/track-record cards, but §16.10's mechanism section never described track-record's
+layout treatment at all. Dev's second flagged judgment call (`.tr-cards`/`.tr-card` grid with a
+`.sort-controls` bar replacing `<th>` sort handlers, preserving FR31's sort-reachability) was independently
+confirmed correct via qa's BUG-011 retest, but left undocumented in §16.10.
+
+**Closing disposition (Pass 35, 2026-07-31, `docs/review-log.md`) — all three RESOLVED, independently
+re-verified against current code and docs, not accepted on tech-lead's fix-commit message alone.**
+Tech-lead's fix commit `f67c54c` ("fix REV-145/146/147 - add NavToggle to code-map, accurate §16.10
+mechanism docs") was confirmed docs-only (no shell `git show` access this pass; corroborated via direct
+content read of all `admin-portal/` source plus a working-tree mtime-ordering cross-check showing
+`docs/code-map.md` and `docs/design/admin-portal.md` as the two most-recently-modified files repo-wide,
+with no `admin-portal/` source file ordered after them). `docs/code-map.md:25-27` now lists `NavToggle.tsx`
+with an accurate one-line description, matching the actual component
+(`admin-portal/components/NavToggle.tsx`) — REV-145 RESOLVED. `docs/design/admin-portal.md` §16.10 now
+gives three explicit, non-contradictory breakpoint bands for `.crud-table`/`.crud-table-wrap` (phone
+data-label card stacking, tablet real `<table>` wrapped for card styling, desktop `tbody{display:grid;
+grid-template-columns:repeat(4,1fr)}`), cross-checked line-for-line against `admin-portal/app/globals.css`
+(phone `:429-457`, tablet `:464-493`, `.crud-table-wrap` `:410-417`, desktop `:495-504`) — REV-146
+RESOLVED. §16.10 now also describes track-record's `.tr-cards` grid + `.sort-controls` bar mechanism
+explicitly, cross-checked against `admin-portal/app/globals.css:580-629` and
+`admin-portal/app/(app)/track-record/page.tsx` (sort-controls markup, `.tr-cards`/`.tr-card` markup, and
+the unchanged `.order()` call) — REV-147 RESOLVED. INC-13 cleared to merge on this pass with zero blockers
+and zero open majors. Full re-verification detail is in `docs/review-log.md` Pass 34 (original audit) and
+Pass 35 (closing verification).

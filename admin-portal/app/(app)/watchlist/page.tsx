@@ -127,6 +127,7 @@ export default function WatchlistPage() {
       {loading ? (
         <p className="status-line">Loading…</p>
       ) : (
+        <div className="crud-table-wrap">
         <table className="crud-table">
           <thead>
             <tr>
@@ -134,15 +135,15 @@ export default function WatchlistPage() {
               <th>Market</th>
               <th>Type</th>
               <th>Status</th>
-              <th></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) =>
               editingTicker === row.ticker ? (
                 <tr key={row.ticker}>
-                  <td>{row.ticker}</td>
-                  <td>
+                  <td data-label="Ticker">{row.ticker}</td>
+                  <td data-label="Market">
                     <select
                       value={editForm.market}
                       onChange={(e) => setEditForm({ ...editForm, market: e.target.value })}
@@ -154,7 +155,7 @@ export default function WatchlistPage() {
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Type">
                     <select
                       value={editForm.type}
                       onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
@@ -166,7 +167,7 @@ export default function WatchlistPage() {
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <select
                       value={editForm.status}
                       onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
@@ -178,7 +179,7 @@ export default function WatchlistPage() {
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label="Actions">
                     <button type="button" className="link" onClick={() => handleUpdate(row.ticker)}>
                       Save
                     </button>{" "}
@@ -189,11 +190,11 @@ export default function WatchlistPage() {
                 </tr>
               ) : (
                 <tr key={row.ticker}>
-                  <td>{row.ticker}</td>
-                  <td>{row.market}</td>
-                  <td>{row.type}</td>
-                  <td>{row.status}</td>
-                  <td>
+                  <td data-label="Ticker">{row.ticker}</td>
+                  <td data-label="Market">{row.market}</td>
+                  <td data-label="Type">{row.type}</td>
+                  <td data-label="Status">{row.status}</td>
+                  <td data-label="Actions">
                     <button type="button" className="link" onClick={() => startEdit(row)}>
                       Edit
                     </button>{" "}
@@ -206,6 +207,7 @@ export default function WatchlistPage() {
             )}
           </tbody>
         </table>
+        </div>
       )}
 
       <h2>Add ticker</h2>
