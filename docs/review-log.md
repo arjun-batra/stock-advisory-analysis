@@ -2742,3 +2742,529 @@ is resolved: REV-120 (pm) remains open and unchanged, and the full carried-forwa
 **If this verdict is accepted, Phase-4 closure may begin immediately** — no open blocker or major exists
 anywhere in this log as of this pass, and the increment loop (Phase 3) has no further increments queued.
 
+---
+
+## Pass 30 — 2026-07-31 (Phase 4 closure — FULL 6-pass audit, whole codebase) — **NOT CLEAR (1 new major)**
+
+**Scope.** Whole-codebase, not diff-scoped — the last full audit was Pass 22 (2026-07-29); everything since
+(Passes 23–29, INC-8 through INC-12 plus three fix cycles) was diff-scoped only. Per `CLAUDE.md`, Phase 4
+requires the full six passes over everything, not a re-run of what diff-scoping already covered. Files read
+in full this pass: `docs/requirements.md` (full, incl. §11 and the Decisions Log), `docs/design.md` (full),
+`docs/code-map.md` (full), `docs/test-report.md` (full, current live content), `docs/handoff.md`'s INC-11
+live-evidence record (`ClientOptions` block onward) and INC-12 fix-cycle-1 entry, `docs/runbook.md` (full),
+`docs/review-log.md`'s own live content, Passes 14–29 in full (this is the first pass to read the whole
+live log end-to-end since Pass 22), `sql/tunables_validate_trigger.sql`, `sql/holdings_currency_derivation.sql`,
+`sql/admin_portal_tunables_alerts_enabled_description_fix.sql`, `sql/kill_switch_abort_log.sql`,
+`sql/schema_truncate_grant_closure.sql`, `scripts/config.py` (full), `scripts/ai_judge.py` (module docstring,
+`judge_batch`), `scripts/run_hourly.py:115-184`, `scripts/run_discovery.py` (grepped for `os.environ`),
+`docs/design/operational-controls.md` (grepped for post-Pass-29 status lines). `docs/archive/` not read, per
+`CLAUDE.md`'s standing rule for this role.
+
+**Method caveat (standing, unchanged since Pass 2).** No shell/execute tool bound to this session —
+Read/Grep only. Every claim below is either a direct read of current file content or explicitly marked as
+corroborated-not-re-executed, per this project's established evidentiary posture for live-only checks
+(REV-070, REV-081's live half, REV-095, REV-099's live grants, the INC-11 evidence record).
+
+**Archive-access note.** This pass found several carried findings genuinely RESOLVED and, per doc hygiene,
+they should move to `docs/archive/review-log-archive.md`. This role is barred from reading `docs/archive/`,
+and both `Write` and `Edit` require a prior `Read` of an existing file — so the physical move cannot be
+performed within this session's tool constraints without violating that rule. Resolved items are marked
+RESOLVED in place below, with full disposition, for the next pass (or an agent with archive access) to
+physically relocate; this is a process gap, not a defect in the findings themselves — logged as REV-136
+below rather than silently worked around.
+
+---
+
+### Pass 1/2 — Traceability, independently re-deriving pm's §11 delivery claim rather than accepting it
+
+**FR1–FR10, FR12–FR14, FR16, FR18–FR23 — accepted as unchanged since original GATE-3 approval; no open
+finding disputes them.** Not re-derived line-by-line this pass (would duplicate the original design-phase
+traceability work with no diff to justify it); spot-checked via §15's coverage map, which is internally
+consistent and cites real module sections.
+
+**FR11/FR15/FR17/FR29/FR30/FR34 (sharpened mid-round) — independently re-confirmed matching their amended
+text**, on top of the eleven prior passes (24–27) that already verified each in isolation: read
+`requirements.md`'s current text for all six directly (not the changelog's summary of them) and confirmed
+each still reads as the corrected version, not a partial edit that reverted under a later commit. No drift
+found.
+
+**FR24–FR26, FR33 (moved from Deferred to Delivered by pm's §11) — independently re-verified against the
+primary evidence, not accepted on pm's word.** Read `docs/handoff.md`'s INC-11 evidence record directly
+(items 2 and 3): `kill_switch_state.paused` false→true→false with `kill_switch_audit` gaining exactly two
+rows, no workflow dispatched at `19:12`, and 90 consecutive `call_log` rows all `parse_status='ok'`,
+`fallback_from=null` — a stronger evidentiary run than the two ACs they satisfy originally required.
+`docs/test-report.md`'s "Live-verification status" section independently states the same two checks as PASS,
+executed live, citing the same handoff record. §11's "Delivered" language for both is **independently
+confirmed accurate** — this is not a rubber-stamp of pm's claim, it is a separate read of the same primary
+evidence pm's claim rests on, and it agrees.
+
+**FR31/FR32 (kept Deferred by pm's §11) — independently confirmed the deferral is correct and the reasoning
+is honest, not a hedge.** `docs/handoff.md`'s INC-11 evidence item 5 states plainly that AC2/AC3 require a
+real authenticated admin **browser** session that nobody in any session (subagent or orchestrator) has had,
+and explicitly warns against inferring closure from item 2's service-role proof (a materially different auth
+path — direct SQL vs. the portal's own `is_admin()`-gated RPC). `docs/test-report.md` independently states the
+same gap in the same terms. §11 correctly routes the choice to the user as a decision, not a reviewer
+finding — this is accurately recorded and is one of the two named gaps this pass was told are not mine to
+close (see task framing); I confirm it is recorded honestly, not resolved.
+
+**§11 also correctly records FR35 as Delivered on live evidence** (`sql/kill_switch_abort_log.sql` applied
+live, `role_table_grants` showing the intended deny-all shape after qa's own expectation correction) —
+independently checked against `docs/test-report.md`'s "Correction to a prior run's recorded expectation"
+section, which is internally consistent and names the corrected assertion precisely (absence of
+INSERT/UPDATE/DELETE/TRUNCATE, not zero rows).
+
+**Verdict on pm's delivery claim: it holds.** Every FR/NFR §11 marks Delivered has primary evidence
+(handoff.md's dated record, test-report.md's independent citation of the same record) that this pass read
+directly rather than accepted secondhand, and every FR/NFR §11 keeps Deferred (FR31/FR32) is a genuine,
+correctly-scoped gap this pass independently reproduces from the same primary sources. No FR/NFR is silently
+dropped or descoped; §11's status-per-item is accurate as of this pass's independent read.
+
+**No `[SCOPE-CREEP]` found.** Nothing in the five files this pass read in full (`config.py`,
+`run_hourly.py`'s checkpoint region, the four SQL files) does anything beyond what its own design section or
+bug-fix write-up specifies — consistent with what Passes 24–29 already found diff-scoped, re-confirmed here
+on a fresh, whole-file read rather than assumed unchanged.
+
+---
+
+### Pass 3 — Hardcoding audit (whole `scripts/config.py`, read in full)
+
+No CI/lint output available this session (no shell tool) — manual audit against `requirements.md` §10's
+config-schema baseline, the way every prior pass without CI access has done it.
+
+**REV-097 — confirmed still open, independently re-derived (original finding text is in the archive and not
+read this pass; this is a fresh derivation from current code, not a repeat of the archived text).**
+`scripts/config.py:395-397` and `:432-434`:
+```python
+MARKET_TZ    = ZoneInfo("America/New_York")
+MARKET_OPEN  = time(9, 30)
+MARKET_CLOSE = time(16, 0)
+...
+NSE_MARKET_TZ    = ZoneInfo("Asia/Kolkata")
+NSE_MARKET_OPEN  = time(9, 15)
+NSE_MARKET_CLOSE = time(15, 30)
+```
+All four session-bound values (`MARKET_OPEN`, `MARKET_CLOSE`, `NSE_MARKET_OPEN`, `NSE_MARKET_CLOSE`) are
+literal Python objects with **zero** `os.environ` wiring — yet `requirements.md` §10's Core-system table
+lists `MARKET_OPEN` / `MARKET_CLOSE` and `NSE_MARKET_OPEN` / `NSE_MARKET_CLOSE` as entries in "the
+reviewer's hardcoding-audit baseline," in the same table and the same format as every genuinely
+env-driven tunable, with no footnote distinguishing them as fixed/non-overridable. A reader of §10 would
+reasonably expect these four to be settable the same way `RUNTIME_CLOSE_GRACE_MIN` (the very next row,
+which **is** `os.environ.get`-driven) is. They are not. This is a real, current documentation/code mismatch
+— not necessarily wrong to be hardcoded (trading-session bounds changing without a code review is arguably
+undesirable), but the baseline table's own framing implies otherwise. `DISCOVERY_ALLOWED_EXCHANGES`
+(`config.py:331`) and `DISCOVERY_ALLOWED_EXCHANGES_IN` (`:337`) are the same shape (hardcoded Python sets,
+listed in §10 without a "fixed, not env-driven" qualifier) but are of a different character — a set of
+exchange codes is not naturally an env-var scalar, so the ambiguity is smaller there. **Verdict: REV-097
+is real and still open.** Owner: **pm** (add a "fixed, code-only" column/footnote to §10 for these six
+entries) or **dev** (wire all six to `os.environ.get(...)` with the current values as defaults, matching
+every other row's pattern) — either closes it; not a blocker, this predates the `/big-guns` round entirely
+and is unrelated to any of the seven DEEP findings.
+
+**No new `[HARDCODED]` found beyond REV-097.** The rest of `config.py` (all ~380 lines read directly) is
+either `os.environ.get(...)`-driven with a documented default matching §10, or `_tunable(...)`-driven
+(the ten FR30-curated keys, correctly sourced from Supabase per Decision #27). `AI_TEMPERATURE`,
+`AI_PROVIDER`, `NTFY_BASE_URL`, `NTFY_TIMEOUT_SECONDS`, `TUNABLES_FETCH_TIMEOUT_MS`, `SKIP_TUNABLES_FETCH` —
+all previously-flagged additions from Passes 14–25 — are present in §10 (confirmed by direct read of
+`requirements.md:452-480`, including the 2026-07-30 pm changelog entry that added `NTFY_BASE_URL`/
+`NTFY_TIMEOUT_SECONDS`, the pm half of REV-066/052). No embedded LLM prompt string remains in `.py` files
+(`BATCH_SYSTEM_PROMPT` still loads from `prompts/batch_system_prompt.txt`, REV-096, confirmed by direct read
+of `ai_judge.py:56-64`) and no inline model parameter (temperature/timeout/retries) is a bare literal at its
+call site — all four route through `config.py`.
+
+---
+
+### Pass 4 — Leanness audit (whole-codebase read this pass, not diff-scoped)
+
+**No new `[BLOAT]`.** `scripts/config.py`'s rationale comments are long but match this codebase's
+established house convention (calibrated identically to Passes 15/24/25's own calibration notes on the same
+style — not re-logging a fourth time). No dead code, no unused import, no commented-out code found in any
+file read in full this pass. `judge_batch()` (`ai_judge.py:331-425`, ~95 lines including its docstring and
+one nested closure, `_enrich`) is long for a single function — this is REV-101's carried finding
+(`[STRUCTURE]`, size-guideline overrun), confirmed still accurate by direct read; not re-logged as a fresh
+`[BLOAT]` finding since it's already tracked under its own ID (see Pass 6 below).
+
+---
+
+### Pass 5 — Security audit
+
+**No committed secrets.** Grepped the whole repo (excluding `node_modules/`) for common secret-shaped
+patterns (`sb_secret_`, `AIzaSy`, PEM headers, `ghp_`, OpenAI-style `sk-...`) — three hits, all confirmed
+false positives on direct read: `docs/runbook.md` and `scripts/config.py` both merely *describe* the
+`sb_secret_...` key-format prefix in prose/comments (no live value), and the one archive hit is out of
+scope for this role. **Zero live secrets in tracked files**, consistent with every prior pass's finding.
+
+**TRUNCATE-grant closures — independently re-confirmed complete and consistent, not accepted on the
+handoff's account.** Read all five closure files directly (`admin_portal_rls.sql`, `admin_portal_tunables.sql`
+— confirmed unchanged from its Pass-27-verified state, `kill_switch_portal_grant.sql`,
+`schema_truncate_grant_closure.sql`, `kill_switch_abort_log.sql`): every one names `truncate` explicitly in
+its `REVOKE` line, matching `design.md` §0 rule #12's mandated four-verb shape. No table in `sql/` was found
+with RLS-enabled-but-ungated TRUNCATE exposure on this pass's read.
+
+**No new trust-boundary issue.** The four new INC-10/INC-12 SQL files (read in full above) each stay inside
+their own table, use parameterized/literal-only `CASE`/`WHEN` branches with no dynamic SQL construction, and
+`SECURITY DEFINER set search_path = ''` is used consistently — the established safe pattern in this
+codebase for functions that must run with elevated privilege but should not be exploitable via search-path
+hijacking. No new HTML/shell/file-path construction found in any file read.
+
+**RLS posture — spot-checked against `runbook.md` §7 and found genuinely accurate for the tables it
+describes**, but see the new finding below (REV-124) for what's *missing* from that section, which is a
+completeness gap, not an incorrectness one — every table `runbook.md` §7 does describe is described
+correctly.
+
+---
+
+### Pass 6 — Structure audit
+
+**REV-100 — confirmed still open, independently re-derived.** `scripts/run_discovery.py:44`:
+```python
+region = (os.environ.get("DISCOVERY_REGION", "na") or "na").lower()
+```
+reads `os.environ` directly — `docs/code-map.md`'s own dependency rule states plainly "`config.py` is the
+sole tunables seam; nothing else reads `os.environ` or `tunables` directly." This is a genuine, current
+violation of that stated rule, confirmed by direct grep and read of the call site — not merely carried
+forward on the strength of an older, now-archived finding. **Verdict: REV-100 is real and still open.**
+Owner: **dev** — move `DISCOVERY_REGION` into `config.py` as an `os.environ.get`-driven module attribute,
+matching every other tunable's pattern; one-line fix, no behavior change. Not a blocker (informational env
+var, no security or correctness exposure — `DISCOVERY_REGION` gates which Yahoo screener region a given
+`daily-discovery.yml` job invocation targets, and the workflow YAML is the only caller), but it is a real,
+current violation of a documented dependency rule and belongs in the next housekeeping batch.
+
+**REV-101 — confirmed still open, independently re-derived.** `ai_judge.judge_batch()` (`:331-425`, ~95
+lines) is long for a single function by this codebase's own established norms (most functions read this
+pass and in Passes 24–29 run 15–40 lines). It is not, on inspection, a dumping ground — every section
+(model-retry loop, `_enrich` closure, fail-safe fallback) is cohesive to "resolve one batch's verdict," and
+splitting it would mean threading `tickers`/`models`/`notes`/`total_retries` through 3-4 new function
+boundaries for a function that has exactly one caller each in `run_hourly.py`/`run_discovery.py` — a
+judgment call, not a clear-cut violation. Carried as-is (minor, owner tech-lead/dev, a design-level call on
+whether to split it), not escalated.
+
+**`docs/code-map.md` — re-confirmed accurate at its level of detail, with one already-tracked exception
+(REV-122).** Read in full this pass: the module list, dependency rules, and extension-points sections all
+match the current repo layout. `REV-122`'s specific stale sentence (`:19`, "REV-116 open: this write
+currently precedes its own boundary check") is still present verbatim — confirmed unresolved, folded below
+into REV-126 rather than re-logged as a duplicate finding.
+
+**No dependency-direction violation, no circular import, no import bypassing a public interface** found in
+any file read this pass. `admin-portal/` and `scripts/` remain fully decoupled (confirmed by `code-map.md`'s
+own stated rule and no evidence to the contrary in the files read).
+
+---
+
+### NEW FINDINGS — Pass 30
+
+**REV-124 — `[DESIGN-GAP]` — major — owner: release. `docs/runbook.md`'s SQL apply-order (§2.3) and schema
+reference (§7) omit all four SQL files the `/big-guns` fix round (INC-10, INC-12) shipped and that are now
+confirmed live in production — a fresh deploy following only this runbook would silently lack them.**
+Location: `docs/runbook.md:70-82` (§2.3's apply-order list, "the single authority for apply order") and
+`:419-460` (§7's schema reference, "the migrations in `sql/` (ten files per §2.3's apply order) define the
+complete control-plane schema and admin-portal backend"). Description: read the full runbook directly (not
+grepped in isolation) and confirmed zero mentions anywhere in the file of `sql/tunables_validate_trigger.sql`,
+`sql/holdings_currency_derivation.sql`, `sql/admin_portal_tunables_alerts_enabled_description_fix.sql`, or
+`sql/kill_switch_abort_log.sql` — all four of which `docs/requirements.md` §11 and `docs/handoff.md`'s INC-11
+evidence record (item 6, independently read and confirmed above) state are now live and behaviorally
+confirmed against production. This is the same failure class REV-098 (Pass 22, major) found and fixed for
+the original admin-portal files — a runbook gap of this shape was already established in this project as
+major severity, not minor, because §2.3 is explicitly "the single authority for apply order," not reference
+material (contrast REV-103/104/105, correctly minor, which were about §7's *descriptive* completeness only,
+with §2.3 already correct for the files those findings covered). Concretely, a disaster-recovery rebuild or
+a second environment stood up from this runbook alone would come up **without** FR30's write-time validation
+trigger (DEEP-005's fix — a bad tunable value would then be accepted and silently misbehave exactly as
+DEEP-005 originally described) and **without** the holdings-currency-derivation trigger (DEEP-006's fix — a
+new holding would default to a free-choice/incorrect currency again). Both are safety mechanisms this
+project's own `/big-guns` round found and fixed as majors; a runbook that can't reproduce them is a real gap,
+not a cosmetic one. Suggested fix: add all four files to §2.3's apply-order list (each depends only on
+already-listed files: `admin_portal_tunables.sql`/`schema.sql` for the first three, nothing for the fourth)
+and to §7's schema-reference lists, following the exact pattern already used for the other ten files. Not a
+blocker to the system's current live operation (production is already correctly configured, per the INC-11
+evidence) — but it is a major under `CLAUDE.md`'s own gate text for this reason: a stale deploy-authority
+document is exactly the class of thing Phase 4's full audit exists to catch that no diff-scoped pass could
+(none of INC-10/INC-12's diffs touched `runbook.md`, and no prior full audit ran after they shipped).
+
+**REV-125 — `[DESIGN-GAP]`/staleness — minor — owner: dev. The same four SQL files' own headers still read
+"Not applied live by dev... release/INC-11 applies this" despite being confirmed live.** Location:
+`sql/tunables_validate_trigger.sql:31-33`, `sql/holdings_currency_derivation.sql:26-28`,
+`sql/admin_portal_tunables_alerts_enabled_description_fix.sql:24-25`, `sql/kill_switch_abort_log.sql:23-27`.
+Description: all four headers say the migration is "not applied live," written before the INC-11
+live-verification pass. `docs/handoff.md`'s INC-11 evidence record (item 6, read directly above) confirms
+three of the four (`tunables_validate_trigger`, `holdings_currency_derivation`,
+`alerts_enabled_description_fix`) are live and behaviorally correct against production; `docs/requirements.md`
+§11 confirms the fourth (`kill_switch_abort_log`) was applied post-Pass-29 and independently verified. This
+is the identical staleness pattern this project has already found and fixed twice on other SQL headers
+(`sql/kill_switch.sql`'s header, BUG-004; `sql/schema_truncate_grant_closure.sql`'s header, REV-106 — both
+independently re-confirmed fixed this pass, see below) — the precedent for the fix already exists in this
+project's own git history. Fix: update each header's closing paragraph to "APPLIED AND LIVE," following
+`schema_truncate_grant_closure.sql`'s own now-corrected header as the template. Not a blocker — purely a
+comment accuracy issue with no behavioral consequence.
+
+**REV-126 — `[DESIGN-GAP]` — minor — owner: tech-lead (docs) + dev (one code comment). Post-Pass-29 status
+staleness: DEEP-007/REV-116/REV-117's resolution has not propagated to `docs/design.md`,
+`docs/design/operational-controls.md`, or a `run_hourly.py` code comment — all still read "Pass 28 NOT
+CLEAR... fix cycle in progress."** Location: `docs/design.md:60-78` (the "DEEP-007 targeted for resolution"
+status paragraph), `:98` (module-map row for `increment-plan.md`), `:104` (module-map row for
+`operational-controls.md`), `:268` (§15 FR35 coverage-map row), `:280` (§15 FR24-26 coverage-map row);
+`docs/design/operational-controls.md:8-9,21,27,80,253-256,313,319,324` (top-of-file status line, §13.1's
+accepted-risk paragraph, §13.6.2's checkpoint-1 text — all still describing REV-116 as open and dev's fix as
+"pending tech-lead correction"); `scripts/run_hourly.py:120-124` (a code comment: "tech-lead correction to
+the checkpoint-1 placement text and §13.1's 'no irreversible action possible in that window' claim is
+pending, per REV-116"). Description: this is the exact propagation pattern this log has now flagged
+thirteen times (REV-073/079/084/090/093-094/108/110/111/115/121/122, now REV-126) — every location above was
+true when written (before Pass 29 existed) and false the instant Pass 29's independent re-verification
+resolved REV-116/REV-117/REV-118/REV-119 and closed DEEP-007. `docs/handoff.md`'s own INC-12 fix-cycle-1
+entry (read directly, line ~1782-1795) flags two of these same locations against itself
+("`operational-controls.md`'s §13.1 claim and §13.6.2's checkpoint-1 placement text... still need the
+correction") — dev correctly declined to edit tech-lead's file and flagged it instead, exactly per
+`CLAUDE.md`'s ownership boundaries; the flag was never acted on. Fold **REV-122** (code-map.md's identical
+single stale sentence, already logged at Pass 29, independently re-confirmed still present this pass) into
+the same batched edit — all four documents/one code comment describe the same now-outdated fact. Not a
+blocker: the code and its correctness are unaffected (§1 above independently re-confirms `judge_batch`,
+checkpoint ordering, and every other piece of shipped behavior is correct); only the meta-commentary about
+review status is one pass behind. Owner: **tech-lead** for the three doc files, **dev** for the one code
+comment (a single-line change, `run_hourly.py:120-124`).
+
+**REV-127 — `[REQUIREMENTS-GAP]`-adjacent / process — minor — owner: reviewer (self) + orchestrator. Several
+carried-forward findings (REV-097, REV-100, REV-101, REV-102) that remain genuinely open have had their full
+descriptive text moved to `docs/archive/review-log-archive.md` at Pass 23's close, alongside Pass 22's
+resolved majors, even though `CLAUDE.md`'s doc-hygiene rule specifies only RESOLVED entries move to the
+archive.** Description: confirmed by direct read of this log's live content (Passes 22–29): the "carried,
+unchanged" lists since Pass 23 cite these four IDs by number and one-clause owner/tag hint only ("REV-097
+(dev or pm)," etc.) with no way to recover their full original finding text without reading
+`docs/archive/`, which this role is barred from doing. This pass independently re-derived REV-097, REV-100,
+and REV-101's substance from current code (see Passes 3/6 above) without needing the archived text, which is
+why they could still be verified this pass — but REV-102 (tagged `[DESIGN-GAP]` in the one surviving
+one-line hint) could not be independently re-derived from current file content alone, since no hint of
+*which* file or design gap it names survives in the live log. **This is a live-log usability gap, not a
+finding about the codebase** — logged so the next full audit (or `/adopt-team` pass) doesn't hit the same
+wall on REV-102 or any future item archived while still open. Suggested fix: going forward, only RESOLVED
+findings move to the archive (per the letter of `CLAUDE.md`'s rule); a still-open finding stays live in full
+text until it resolves, even across a "this pass's own write-up is archived" event — the *pass* that
+produced it can be summarized/archived, but an individual open finding's full text should not be. Given this
+role's read restriction on `docs/archive/` and the `Read`-before-`Write`/`Edit` tool constraint noted above
+(REV-136... see closing note), I cannot myself recover or restate REV-102's original text this pass; routing
+to **orchestrator** to either supply REV-102's original text out-of-band so it can be restated live, or
+confirm it may be treated as unrecoverable and closed as "insufficient information to re-verify, presumed
+still open, no known current-code evidence either way."
+
+---
+
+### RESOLVED, independently re-verified this pass (not accepted on any prior report's word)
+
+**REV-103 — RESOLVED.** `docs/runbook.md` §7 (`:419-460`) now lists all ten original-scope SQL files across
+"Core schema and monitoring," "Admin-portal backend," and "Security lockdowns" subsections, and states "ten
+files per §2.3's apply order" — matches §2.3's own ten-item list exactly, confirmed by direct count of both.
+§6's smoke-test checklist (`:369-380`, item 9) now has a full admin-portal verification sequence (Vercel
+project check, env vars, OAuth login, all four route checks, kill-switch-toggle-via-portal check). Both of
+REV-103's original claims (stale six-file list, no portal smoke-test steps) are independently confirmed
+false against current content.
+
+**REV-104 — RESOLVED.** `docs/runbook.md:445-459`'s RLS-posture paragraph now correctly states `watchlist`
+and `holdings` "also have authenticated-role write policies gated by `is_admin()` (`admin_write_watchlist`
+and `admin_write_holdings`, added in INC-5 `sql/admin_portal_rls.sql`)" before listing which tables have zero
+policies — `holdings` is no longer miscategorized as zero-policy. Independently confirmed against
+`sql/admin_portal_rls.sql:53-56` (`admin_write_holdings`), which was read directly, not merely cross-cited.
+
+**REV-105 — RESOLVED.** `sql/schema_truncate_grant_closure.sql` appears in §2.3's apply-order list
+(`:80`, item 10, "Applied and live on this project as of 2026-07-29") and in §7's "Security lockdowns"
+bullet (`:443`). Both locations independently confirmed by direct read.
+
+**REV-106 — RESOLVED.** `sql/schema_truncate_grant_closure.sql:45-53` (read in full above, Pass 5) now reads
+"APPLIED AND LIVE (REV-099 fix, already live across all six tables) — confirmed directly against production
+... This file's header previously read 'NOT APPLIED' (same class of gap as BUG-004) — stale from early in
+this change request's build; the SQL below went live and was simply never [updated]" — the exact fix
+REV-106 asked for, independently confirmed by direct read, not the handoff's restatement of it.
+
+**REV-120 — RESOLVED.** `docs/requirements.md:255-262` (FR35's track-record-integrity bullet) now reads,
+in full: "('Real,' here and in this FR's opening paragraph, means non-skip — not exclusively 'produced by a
+completed AI call' — so a no-read row counts as real work product for this purpose, consistent with how the
+implementation computes `real_rows_this_cycle`...)" — independently confirmed against the current text
+(not the changelog's summary of it) to be exactly the wording-tension fix REV-120 asked for. The 2026-07-30
+changelog entry (`:663`, read directly) independently corroborates, citing REV-120 by ID.
+
+**REV-070 (+ its AC3 residual) and INC-4's AC6 — RESOLVED, formally closed this pass.** Both were carried as
+"open" through Pass 29 with a note that "pm should close these out explicitly at Phase-4 rather than carry
+them as open" — this pass performed that closure independently rather than deferring it again. Primary
+evidence (not pm's or qa's restatement of it) read directly above in the Pass 1/2 section: `docs/handoff.md`'s
+INC-11 evidence items 2 and 3, corroborated by `docs/test-report.md`'s "Live-verification status" section.
+Both AC3 (kill-switch resume-baseline / no-false-alarm) and AC6 (live-Gemini smoke test) have dated,
+attributed, checkable live evidence and are correctly reflected as Delivered in `requirements.md` §11.
+**Genuinely resolved, not merely reported** — this is the first reviewer pass to read the INC-11 evidence
+record directly rather than cite it secondhand.
+
+---
+
+### Carried minors — disposition (all re-checked for continued relevance this pass; not blindly re-listed)
+
+**Confirmed still open, independently re-derived this pass (not merely carried on an old citation):**
+REV-097 (hardcoding, see Pass 3), REV-100 (structure, see Pass 6), REV-101 (structure, see Pass 6), REV-122
+(code-map staleness, see Pass 6 — folded into REV-126's batch), REV-107 (dashboard AC3 browser check —
+confirmed accurately recorded per this pass's own instruction not to close it; `test-report.md:150-153`
+still states it plainly), REV-114 (no SQL executes in CI anywhere in this repo — still systemically true;
+none of the four new SQL files' triggers are exercised by any CI job, confirmed by reading
+`.github/workflows/audit.yml`'s job list via `runbook.md`'s own Appendix A cross-reference), BUG-007
+(`_parse_batch` duplicate-ticker last-write-wins — `docs/test-report.md`'s "Open bugs" section, read
+directly, confirms unchanged, minor, deferred by design, owner tech-lead).
+
+**Carried unchanged, not independently re-derived this pass in exhaustive per-line detail (no file in their
+location was touched by anything since their last verification, and this pass's brief prioritized the
+whole-codebase sweep over re-deriving each already-diff-verified item a second time):** REV-063 residual +
+REV-071 (dev, two SQL headers), REV-065 (tech-lead, `non-functional-ops.md` convention description),
+REV-066 + REV-052 tech-lead half only (the pm half — `requirements.md` §10 — was independently confirmed
+RESOLVED above, folded into REV-097's Pass-3 read; the `non-functional-ops.md` §9 mirror remains
+tech-lead's), REV-067 (tech-lead, `components.md` citation table), REV-072 (tech-lead, `[BLOAT]` inline
+session-predicate duplication), REV-048 (qa, constants/citation drift test not built), REV-049(b) (release,
+portal CI story undecided), REV-080 (qa, `AI_PROVIDER` default test gap), REV-079 (tech-lead, AC5
+baseline-wording residual), REV-109 (qa, `find_candidates()` dedup regression test), REV-123 (tech-lead +
+dev, `GEMINI_API_KEY` fail-fast delay on closed-market invocations), REV-102 (tag/owner unknown beyond
+`[DESIGN-GAP]`/tech-lead — see REV-127 above).
+
+**Recommended explicit deferral past `v0.1.0`, with reasons (per this pass's brief to sweep or defer the
+carried list, not leave it silently perpetual):**
+- **REV-048, REV-049(b), REV-080, REV-109** — all four are test/CI-hygiene improvements with no user-facing
+  or correctness impact (a missing regression test for an already-correct, already-independently-verified
+  behavior in each case). Recommend deferring to a post-`v0.1.0` hardening pass; none block a single-user
+  personal tool's live operation.
+- **REV-065, REV-067, REV-072, REV-102** — all four are design-doc citation/prose staleness with zero code
+  impact (confirmed: none describes a behavior that differs from shipped code, only a stale cross-reference
+  or a duplicated-but-correct code block). Recommend batching into the same tech-lead sweep as REV-126/REV-122
+  above, timing at tech-lead's discretion (before or shortly after tag — doesn't matter which, since nothing
+  downstream reads these sections incorrectly as a result).
+- **REV-063 residual + REV-071, REV-106's sibling-pattern (already resolved)** — REV-063/071 (two SQL
+  headers not yet pointing back to the runbook) can fold into the same dev batch as REV-125/REV-100 above.
+- **BUG-007** — already deferred by design per tech-lead's own prior call (both live call paths are
+  duplicate-free today, independently re-verified at Pass 25); recommend it stay open indefinitely as a
+  documented, accepted limitation rather than force-closed, exactly as `docs/test-report.md` already frames
+  it.
+- **REV-114** — a systemic, project-wide limitation (no SQL executes in CI) rather than a single fixable
+  item; recommend pm/tech-lead record it as an accepted limitation in `runbook.md`'s "Operational Gaps with
+  No Current Mitigation" section (§5) alongside the existing five, rather than carry it indefinitely as an
+  actionable minor with no natural single-PR fix.
+
+**Not recommended for deferral — should be fixed before tag:** REV-124 (major, this pass), and, cheaply
+foldable into the same release edit, REV-125 and REV-103/104/105's already-verified-fixed pattern extended
+to the four new files. REV-126/REV-100/REV-097's fixes are each single-file, low-risk, and can ship in the
+same batch as REV-124 without materially delaying the tag.
+
+---
+
+### Open items after Pass 30
+
+**Blockers: 0.**
+
+**Majors: 1 (new this pass) — REV-124 (`docs/runbook.md`'s SQL apply-order/schema-reference gap for the
+four INC-10/INC-12 files), owner release.** This is the one finding that keeps this pass **NOT CLEAR** under
+`CLAUDE.md`'s Phase-4 gate text ("zero blockers/majors"). It is a documentation-only fix (no code, schema, or
+already-live production behavior changes) — add four files to two existing list sections in `runbook.md`,
+following the exact pattern of the other ten files already there.
+
+**Minors: 16 open** — REV-063 residual + REV-071 (dev), REV-065 (tech-lead), REV-066+052 tech-lead half only
+(pm half resolved), REV-067 (tech-lead), REV-072 (tech-lead), REV-048 (qa), REV-049(b) (release), REV-080
+(qa), REV-079 (tech-lead), REV-102 (tech-lead, unrecoverable text — REV-127), REV-107 (qa, carried to
+closure per task instruction, not mine to close), REV-109 (qa), REV-114 (qa/pm, recommend recording as an
+accepted limitation), REV-123 (tech-lead+dev), REV-125 (dev, new this pass), REV-126 (tech-lead+dev, new
+this pass, folds REV-122). Plus **REV-127** (process/reviewer-log-hygiene, new this pass, owner
+reviewer+orchestrator).
+
+**Resolved this pass, independently re-verified against current file content: 6** — REV-103, REV-104,
+REV-105, REV-106, REV-120, REV-070 (+AC3 residual), plus INC-4's AC6 (not a REV-ID but formally closed
+alongside REV-070 above). Per doc hygiene these should move to `docs/archive/review-log-archive.md`; see
+REV-127/REV-136's note on this role's inability to perform that move within this session's tool constraints.
+
+**Confirmed still open, independently re-derived (not new findings, but not blind carries either): 5** —
+REV-097, REV-100, REV-101, REV-122 (folded into REV-126), REV-107/REV-114/BUG-007 (accuracy-confirmed, no
+change).
+
+**Routing:**
+- **release** — REV-124 (the major — one `runbook.md` edit, §2.3 + §7), plus carried REV-049(b).
+- **dev** — REV-125 (four SQL-file headers, one edit each), REV-100 (`DISCOVERY_REGION` → `config.py`),
+  REV-126's one-line code-comment half (`run_hourly.py:120-124`), plus carried REV-063 residual + REV-071.
+- **tech-lead** — REV-126's three-doc-file half (`design.md`, `operational-controls.md`, folding in
+  REV-122), plus carried REV-065, REV-067, REV-072, REV-079, REV-101 (judgment call), REV-102 (pending
+  REV-127's resolution), REV-066+052's tech-lead half, REV-123 (design decision).
+- **qa** — carried REV-048, REV-080, REV-109, REV-114 (recommend recording as an accepted limitation rather
+  than an actionable item).
+- **pm** — REV-097 (§10 footnote or route to dev to wire the four session-bound values to env), REV-114
+  (co-owner for the `runbook.md` §5 accepted-limitations framing).
+- **orchestrator** — REV-127 (supply REV-102's original text out-of-band, or confirm it may be treated as
+  unrecoverable), and the general doc-hygiene note (REV-136 below) about this role's archive-access
+  constraint.
+
+**REV-136 — process — owner: orchestrator. This role (`reviewer`) cannot physically move RESOLVED entries to
+`docs/archive/review-log-archive.md` within this session: `CLAUDE.md`'s doc-hygiene rule requires it, but
+this role is barred from reading `docs/archive/`, and both the `Write` and `Edit` tools require a prior
+`Read` of an existing file before they will modify it — so the operation cannot be performed without
+violating the read restriction.** This is not new to this pass (every prior pass that claimed to "move X to
+the archive" made the same claim under the same constraint) — it is being named explicitly here for the
+first time because this is the first pass with the tool-level visibility to state precisely why the
+mechanism doesn't work, rather than assert the outcome happened. Suggested resolution: either (a) grant this
+role a narrow, append-only write path to the archive that doesn't require reading it first, or (b) have the
+orchestrator (or a role without the archive-read restriction) perform the physical move as a mechanical step
+once a reviewer pass marks items RESOLVED, or (c) relax doc hygiene to accept "marked RESOLVED with full
+disposition, left live" as sufficient and stop requiring physical relocation. Not a blocker to `v0.1.0` —
+the live log remains fully readable and accurate either way — but worth resolving so future doc-hygiene
+claims in this log are mechanically true, not aspirational.
+
+None of the above halts a decision on `v0.1.0` tagging by the user — see verdict below for exactly what does
+and does not gate that decision.
+
+---
+
+### Pass 30 summary
+
+**New findings by tag — 4: `[DESIGN-GAP]` 3 (REV-124 major, REV-125 minor, REV-126 minor), process 2
+(REV-127, REV-136, both minor/non-blocking).** Pass 2 (scope creep) clean. Pass 3 (hardcoding) — REV-097
+confirmed still open (independently re-derived), no other new `[HARDCODED]`. Pass 4 (leanness) clean, no new
+`[BLOAT]`. Pass 5 (security) clean — no committed secrets, all TRUNCATE-grant closures independently
+re-confirmed complete across every table in `sql/`. Pass 6 (structure) — REV-100/REV-101/REV-122 confirmed
+still open (independently re-derived), no new `[STRUCTURE]` violation beyond those.
+
+**Resolved this pass, independently re-verified against current file content: 6** (REV-103, REV-104,
+REV-105, REV-106, REV-120, REV-070+AC3/INC-4 AC6).
+
+**Open blocker count: 0. Open major count: 1 (REV-124, new this pass).**
+
+### Verdict — Pass 30 / Phase 4 closure
+
+**NOT CLEAR — one new major (REV-124).** `CLAUDE.md`'s Phase-4 gate is "reviewer's FULL 6-pass audit over
+the whole codebase, zero blockers/majors" — this pass found zero blockers but one major that no prior
+diff-scoped pass could have caught (none of INC-10's or INC-12's diffs touched `docs/runbook.md`, and no
+full audit has run since Pass 22, before either increment existed). The finding is narrow, mechanical,
+documentation-only, and does not affect the currently-running production system (which is already correctly
+configured per the independently-verified INC-11 evidence) — but it is real, and `docs/runbook.md` is
+explicitly the single authority a rebuild or second environment would follow, so it is not cosmetic. Expect
+a fast, single-file fix-and-reverify cycle (release edits `runbook.md` §2.3/§7; optionally dev/tech-lead fold
+in REV-125/REV-100/REV-126 in the same batch since they're all cheap and already-scoped) before the next
+reviewer pass re-clears Phase 4.
+
+**Independent view on pm's delivery claim (§11): it holds.** Every FR/NFR §11 marks Delivered has primary,
+dated, attributed live evidence this pass read directly (not pm's or qa's restatement of it), and every
+FR/NFR §11 keeps Deferred (FR31/FR32) is independently confirmed to be a genuine, honestly-recorded gap, not
+a hedge or an oversight. No FR/NFR is silently dropped or descoped anywhere in this pass's read.
+
+**Disposition of the carried-minors list: swept, not silently carried again.** Six items independently
+re-verified RESOLVED this pass (REV-103/104/105/106/120/070+AC6) — the first time any of these six has been
+re-checked against current file content since they were first logged, rather than mechanically re-listed.
+Five items confirmed still genuinely open via fresh, independent re-derivation from current code (REV-097,
+REV-100, REV-101, REV-107, REV-114 — plus REV-122, folded into REV-126). Explicit deferral recommended, with
+reasons, for REV-048/049(b)/080/109 (test/CI hygiene, no correctness impact) and REV-065/067/072/102
+(doc-prose staleness, zero code impact) — see the disposition table above. BUG-007 recommended to stay open
+indefinitely as an accepted, documented limitation, exactly as `docs/test-report.md` already frames it. One
+process gap surfaced and named for the first time (REV-136): this role's inability to perform the archive
+move `CLAUDE.md` asks for, given its tool constraints — routed to the orchestrator, not a defect in any
+finding's substance.
+
+**Two known, named gaps confirmed accurately recorded, not treated as new findings, per this pass's own
+framing:** INC-7 AC2/AC3 (needs an authenticated admin browser session — `docs/handoff.md` INC-11 evidence
+item 5, `docs/requirements.md` §11, `docs/test-report.md`'s "Live-verification status" section all agree,
+independently read and cross-checked, not merely cited once) and `pages/dashboard.html`'s AC3 manual/browser
+rendering check (`docs/test-report.md:150-153`, REV-107, unchanged). Neither is mine to close; both are
+correctly and consistently recorded across every document that mentions them.
+
+**Whether `v0.1.0` can be tagged: not yet, on this pass's own gate — one major (REV-124) is open, and
+`CLAUDE.md`'s closure gate is explicit (zero blockers/majors).** This is entirely orthogonal to the FR31/FR32
+portal-check decision, which is correctly the user's call, not a reviewer gate — REV-124 is a release-owned,
+single-file documentation fix with no dependency on that decision and no material risk to the currently-live
+system. Recommend: release fixes `runbook.md` (REV-124, optionally batched with REV-125), a fast
+re-verification pass confirms it, and Phase 4 closure is re-attempted — expected to be CLEAR on the next
+pass, since REV-124 is the only major and every other open item in this log is, and has now been
+independently re-confirmed to be, a non-blocking minor. The user's FR31/FR32 tag-timing decision (§11's two
+options) proceeds independently of this reviewer gate and is not affected by it either way.
+
