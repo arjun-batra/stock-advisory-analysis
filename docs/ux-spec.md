@@ -6,8 +6,9 @@ authorization model, and the data model are untouched (see `docs/design/admin-po
 `docs/design/admin-portal-tunables.md`). This spec covers presentation only — layout, visual language,
 states, copy, and responsive behavior.
 
-**Gate:** per NFR8, Arjun selects exactly one of the three directions below before any implementation
-starts. No speculative screens are proposed — every screen here maps 1:1 to an existing FR.
+**Gate:** per NFR8, Arjun selects exactly one direction below before any implementation starts. No
+speculative screens are proposed — every screen here maps 1:1 to an existing FR. Direction B has been
+reviewed and rejected (§5); the live candidate set is A, C, D, E, F (§4, §6, §7).
 
 | Screen | FR | Current content (source of truth) |
 |---|---|---|
@@ -274,7 +275,13 @@ small button, last-updated as a small caption below.
 
 ---
 
-## 5. Direction B — "Dense / Data-forward"
+## 5. Direction B — "Dense / Data-forward" — **REJECTED by Arjun (2026-07-31)**
+
+> **Status: rejected.** Arjun reviewed directions A, B, and C and said: *"I like A and C, more ideas
+> with those as baseline."* B (dark theme, monospace, dense data-console aesthetic) is ruled out
+> entirely — no further iteration on this direction. Section kept below, unedited, for traceability
+> only (per document-hygiene: decisions are recorded, not deleted). New variations (§7–§9) build only
+> on A's and C's visual language, never reintroducing B's dark/monospace/console aesthetic.
 
 **Visual language:** Dark theme by default, monospace for all data values (tickers, numbers, timestamps),
 compact row height, information density prioritized over whitespace. Modeled on operator/data-console
@@ -501,16 +508,149 @@ one collapses the previous) to keep scroll length manageable.
 
 ---
 
-## 7. Mockup files
+## 7. New variations — siblings of A and C
+
+Per Arjun's 2026-07-31 review feedback ("I like A and C, more ideas with those as baseline"), the three
+directions below are **not** a fourth fresh concept — each is explicitly derived from Direction A's or
+Direction C's tokens/layout (§4/§6), varying accent color, typography, card density, or which specific
+screens get card treatment vs. hairline-table treatment. None reintroduce Direction B's dark theme,
+monospace, or console density (§5, rejected). The shared UX contract (§2 states/copy) is unchanged —
+these are visual/layout variations only, same as A/B/C were.
+
+### 7.1 Direction D — "Warm Minimal" (baseline: Direction A)
+
+**Visual language:** Identical structure and restraint to Direction A — light theme, hairline borders,
+single accent, generous whitespace, sidebar nav, table-first layout. The variation is the palette and
+typographic voice: a warm terracotta accent and off-white/cream background (instead of A's cool
+grey/indigo), plus a serif typeface reserved for headings only (body copy stays the same system sans as
+A) for a slightly more editorial, less corporate feel. No layout, breakpoint, or component change from
+A — every wireframe in §4.2–§4.4 applies unchanged to this direction.
+
+#### 7.1.1 Tokens (deltas from Direction A — unlisted tokens are identical to §4.1)
+
+| Token | Value | Used for |
+|---|---|---|
+| `color-bg` | `#FDF8F3` | page background (warm off-white vs. A's cool `#FAFAFA`) |
+| `color-surface` | `#FFFFFF` | cards, table rows, form panels (unchanged) |
+| `color-border` | `#E7DFD3` | hairline dividers, input borders (warm-tinted grey) |
+| `color-text-primary` | `#231B14` | body/headings (warm near-black) |
+| `color-text-secondary` | `#8A7A68` | captions, helper text, timestamps |
+| `color-accent` | `#C2410C` (orange-700, terracotta) | primary buttons, links, active nav — replaces A's indigo |
+| `color-accent-hover` | `#9A3412` | hover/pressed state |
+| `color-success` | `#15803D` | Running / Buy / saved confirmations |
+| `color-warning` | `#A16207` | Hold / paused |
+| `color-danger` | `#B91C1C` | Sell / delete / validation errors |
+| `font-family-serif` | `"Iowan Old Style","Palatino Linotype",Georgia,serif` | **new token** — section/screen headings and login title only; all body copy, labels, buttons, and table content remain the system sans stack from A |
+| `space-*` / `font-size-*` (body) / `radius-*` / `shadow-sm` | identical to Direction A §4.1 | layout rhythm, type scale, corner radii unchanged |
+
+#### 7.1.2 Layout, responsive behavior, states
+
+Identical to Direction A §4.2–§4.4 in every respect (desktop sidebar + table, tablet icon-rail +
+dropped Type column, phone stacked cards + bottom tab bar, full-screen sheet for Add/Edit). No new
+wireframes are needed — see §4 directly. Mockup: `docs/ux-mockups/direction-d-warm-minimal.html`.
+
+### 7.2 Direction E — "Minimal / Card Hybrid" (baseline: Direction A + Direction C)
+
+**Visual language:** A deliberate per-screen hybrid, not a blend of every pixel. Chrome (sidebar, header,
+kill-switch toggle), Login, the Tunables editor, and the Track-record table keep Direction A's calm
+hairline-border restraint exactly as specified in §4. The Watchlist & Holdings CRUD screen — the one
+screen that is fundamentally about individual entities (each ticker is a "thing" with its own state) —
+uses Direction C's soft-shadow card-grid treatment instead of a table, on the reasoning that cards suit
+entity browsing while tables/lists suit logs and settings. Shadow depth is toned down from C's fuller
+`shadow-card` to a lighter single-layer + soft-glow shadow, so the card screen still reads as "restrained
+A family" rather than "full C". Accent is teal (distinct from both A's indigo and C's violet) to signal
+that this is its own direction, not a re-skin.
+
+#### 7.2.1 Tokens
+
+| Token | Value | Used for |
+|---|---|---|
+| `color-bg` | `#FAFAFA` | page background (Direction A's) |
+| `color-surface` | `#FFFFFF` | cards, table rows, form panels |
+| `color-border` | `#E5E5E5` | hairline dividers, input borders (Direction A's) |
+| `color-text-primary` | `#18181B` | body/headings |
+| `color-text-secondary` | `#71717A` | captions, helper text, timestamps |
+| `color-accent` | `#0D9488` (teal-600) | primary buttons, links, active nav, watchlist card accents |
+| `color-accent-hover` | `#0F766E` | hover/pressed state |
+| `color-success` | `#16A34A` | Running / Buy / saved confirmations |
+| `color-warning` | `#CA8A04` | Hold / paused |
+| `color-danger` | `#DC2626` | Sell / delete / validation errors |
+| `space-*` / `font-size-*` | identical to Direction A §4.1 | layout rhythm, type scale |
+| `radius-sm` / `-md` | `4px / 8px` | inputs/buttons/tables (Direction A's, for hairline-treated screens) |
+| `radius-lg` | `14px` | **new token** — watchlist card corners only (between A's 8px and C's 20px, deliberately more restrained than C) |
+| `shadow-card` | `0 1px 2px rgba(15,20,20,0.04), 0 2px 8px rgba(15,20,20,0.05)` | **new token** — watchlist cards only; lighter than Direction C's `shadow-card` |
+
+#### 7.2.2 Screen-by-screen treatment
+
+| Screen | Treatment | Notes |
+|---|---|---|
+| Login (FR27) | Direction A's hairline card, no shadow flourish | Unchanged from §4.4/§2.1 |
+| Watchlist & Holdings CRUD (FR28, FR29) | **Direction C's card grid** (3-col desktop / 2-col tablet / 1-col phone, FAB on phone), toned-down shadow per §7.2.1 | Card content identical to §6.2's ticker-card anatomy (ticker, market/type pills, status pill, shares/cost-basis, edit/delete icon buttons). Add/Edit form is a centered panel (soft-shadow, matching card treatment), not a full hairline form-panel. |
+| Tunables editor (FR30) | **Direction A's hairline two-column row layout**, unchanged | Same as §4.3 — no cards, no accordion; a deliberately calmer settings screen distinct from the card-heavy watchlist |
+| Track-record view (FR31) | **Direction A's table** on tablet/desktop; verdict rendered as a small pill (light nod to C) rather than a square badge; phone collapses to simple stacked cards (lighter-weight than the watchlist's cards, no shadow) for readability at narrow widths | Filters/sort/pagination behavior unchanged from §2.4 |
+| Kill-switch (FR32) | Direction A's toggle + label in the persistent header | Unchanged from §4.4/§2.5 |
+
+Responsive breakpoints (phone ≤599px / tablet 600–1023px / desktop ≥1024px) match §1's illustrative
+pixels throughout. Mockup: `docs/ux-mockups/direction-e-hybrid.html`.
+
+### 7.3 Direction F — "Compact Cards" (baseline: Direction C, denser variant)
+
+**Visual language:** Same friendly-SaaS card language as Direction C — light theme, rounded corners,
+pill badges, card-based layout for entities — turned up in information density: a flatter single-layer
+shadow (vs. C's layered soft shadow), smaller corner radii, tighter spacing scale, and more cards per row
+at each breakpoint. The Tunables editor departs furthest from C: instead of an accordion where only the
+value peeks out until expanded, all 10 keys render as always-visible compact cards (key, description,
+example, input, and Save all visible without a tap) — because for a single power-user, an extra tap per
+key to reach the very control they're there to use is unnecessary friction; density here serves the same
+"see everything at once" goal C's Watchlist and Track-record screens already have. Accent is emerald,
+distinct from C's violet, so the two directions are never visually confusable side-by-side.
+
+#### 7.3.1 Tokens (deltas from Direction C — unlisted tokens follow the same naming scheme as §6.1)
+
+| Token | Value | Used for |
+|---|---|---|
+| `color-bg` | `#F4F5F7` | page background (same as C) |
+| `color-surface` | `#FFFFFF` | cards (same as C) |
+| `color-border` | `#E8E9ED` | rare hairlines (same as C) |
+| `color-text-primary` | `#1F2430` | headings/body (same as C) |
+| `color-text-secondary` | `#6B7280` | captions (same as C) |
+| `color-accent` | `#059669` (emerald-600) | primary buttons, active states — replaces C's violet |
+| `color-accent-hover` | `#047857` | hover |
+| `color-success-bg` / `-fg`, `color-warning-bg` / `-fg`, `color-danger-bg` / `-fg`, `color-info-bg` / `-fg` | same values as Direction C §6.1 | badge/pill backgrounds |
+| `space-1`…`space-8` | `4/6/10/14/18/24/36/48px` | **tighter than C's** `4/8/16/20/24/32/48/64px` |
+| `font-size-xs`…`2xl` | `11/13/15/17/22/28px` | **smaller than C's** `12/14/16/20/28/36px` |
+| `radius-md` | `8px` | inputs, tunable cards, track-record cards (vs. C's `12px`) |
+| `radius-lg` | `14px` | watchlist cards, modals (vs. C's `20px`) |
+| `shadow-card` | `0 1px 2px rgba(20,20,43,0.08)` | **single-layer, flatter** than Direction C's two-layer shadow |
+
+#### 7.3.2 Screen-by-screen density changes vs. Direction C
+
+| Screen | Direction C (§6) | Direction F (this) |
+|---|---|---|
+| Watchlist & Holdings CRUD | 3-col card grid desktop / 2-col tablet / 1-col phone | **4-col** desktop / 3-col tablet / 2-col phone — same card anatomy, tighter padding |
+| Tunables editor | Accordion-of-cards, collapsed by default, 2-col masonry desktop | **Always-visible compact cards** (no expand/collapse), 3-col grid desktop / 2-col tablet / 1-col phone — value input and Save visible without a tap |
+| Track-record view | 2-col card grid (all breakpoints capped there) | **3-col** card grid desktop / 2-col tablet / 1-col phone, tighter card padding |
+| Login | Centered card, ~380px, soft shadow, pill button | Same layout, narrower card (~340px), flatter shadow, smaller logo circle |
+| Kill-switch | Pill status badge + toggle in header | Same pattern, same pill/toggle components, just the emerald accent + tighter header padding |
+
+Responsive breakpoints (phone ≤599px / tablet 600–1023px / desktop ≥1024px) match §1's illustrative
+pixels throughout. Mockup: `docs/ux-mockups/direction-f-compact-cards.html`.
+
+---
+
+## 8. Mockup files
 
 Static, self-contained HTML/CSS (no build step) demonstrating each direction with realistic sample data.
 Resize the browser window to see the phone/tablet/desktop behavior described above.
 
-| Direction | File |
-|---|---|
-| A — Minimal / Clean | `docs/ux-mockups/direction-a-minimal.html` |
-| B — Dense / Data-forward | `docs/ux-mockups/direction-b-dense.html` |
-| C — Card-based / Friendly SaaS | `docs/ux-mockups/direction-c-cards.html` |
+| Direction | Status | File |
+|---|---|---|
+| A — Minimal / Clean | active candidate | `docs/ux-mockups/direction-a-minimal.html` |
+| B — Dense / Data-forward | **rejected** (Arjun, 2026-07-31) | `docs/ux-mockups/direction-b-dense.html` |
+| C — Card-based / Friendly SaaS | active candidate | `docs/ux-mockups/direction-c-cards.html` |
+| D — Warm Minimal (baseline: A) | active candidate | `docs/ux-mockups/direction-d-warm-minimal.html` |
+| E — Minimal / Card Hybrid (baseline: A + C) | active candidate | `docs/ux-mockups/direction-e-hybrid.html` |
+| F — Compact Cards (baseline: C) | active candidate | `docs/ux-mockups/direction-f-compact-cards.html` |
 
 Each file includes: Login, Watchlist & Holdings CRUD (with an open Add/Edit form example), Tunables
 editor, Track-record view, and the kill-switch toggle in its header — all five FR27–FR32 screens, with
@@ -518,11 +658,11 @@ sample data matching the rows used in the wireframes above (AAPL, VOO, TD, MSFT,
 
 ---
 
-## 8. Selection & next steps
+## 9. Selection & next steps
 
-Per NFR8, Arjun reviews the three mockup files (and this spec) and selects exactly one direction — this
+Per NFR8, Arjun reviews the mockup files (and this spec) and selects exactly one direction — this
 selection is the GATE; dev may not start implementing any visual/responsive change before it happens.
-Once selected:
+B is already eliminated; the live candidate set is A, C, D, E, F. Once selected:
 - tech-lead records the chosen direction, the exact breakpoint pixel values, and the token→theme-config
   mapping in `docs/design.md` (or a module file) before INC start.
 - This spec's §2 (states/copy) applies unchanged regardless of which direction is picked — it is not a
@@ -530,13 +670,13 @@ Once selected:
 - Any deviation between the implemented UI and the selected direction's mockups is logged by reviewer in
   `docs/review-log.md` tagged `[UX-GAP]`, per this agent's standing responsibility.
 
-## 9. Requirement traceability
+## 10. Requirement traceability
 
 | FR | Screen | Covered in |
 |---|---|---|
-| FR27 | Login | §2.1, §4.4/§5.4/§6.4 |
-| FR28 | Watchlist CRUD | §2.2, §4.2/§5.2/§6.2 |
-| FR29 | Holdings CRUD (same screen) | §2.2, §4.2/§5.2/§6.2 |
-| FR30 | Tunables editor | §2.3, §4.3/§5.3/§6.3 |
-| FR31 | Track-record view | §2.4, §4.4/§5.4/§6.4 |
-| FR32 | Kill-switch toggle | §2.5, §4.4/§5.4/§6.4 |
+| FR27 | Login | §2.1, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
+| FR28 | Watchlist CRUD | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2 |
+| FR29 | Holdings CRUD (same screen) | §2.2, §4.2/§5.2/§6.2/§7.1.2/§7.2.2/§7.3.2 |
+| FR30 | Tunables editor | §2.3, §4.3/§5.3/§6.3/§7.1.2/§7.2.2/§7.3.2 |
+| FR31 | Track-record view | §2.4, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
+| FR32 | Kill-switch toggle | §2.5, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2 |
