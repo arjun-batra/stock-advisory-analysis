@@ -3268,3 +3268,203 @@ pass, since REV-124 is the only major and every other open item in this log is, 
 independently re-confirmed to be, a non-blocking minor. The user's FR31/FR32 tag-timing decision (§11's two
 options) proceeds independently of this reviewer gate and is not affected by it either way.
 
+---
+
+## Pass 31 — 2026-07-31 (Re-verification of Pass 30's REV-124/125/126 fix cycle; one-time archive-read
+exception to repair the REV-127 doc-hygiene gap; closure verdict)
+
+**Scope.** Targeted re-verification, not a new full 6-pass sweep and not a fresh diff-scoped increment
+audit. Per the orchestrator's brief: (1) re-verify REV-124 (major, the gating finding), REV-125, and REV-126
+against current file content; (2) use a scoped, one-time exception to read `docs/archive/review-log-archive.md`
+solely to repair REV-127 (open findings REV-097/100/101/102 whose full text was improperly archived while
+still open, against `CLAUDE.md`'s archive-only-when-RESOLVED rule); (3) issue the `v0.1.0` closure verdict.
+Diff since last clearance (`54febc5..HEAD`): `docs/runbook.md`; `sql/tunables_validate_trigger.sql`,
+`sql/holdings_currency_derivation.sql`, `sql/admin_portal_tunables_alerts_enabled_description_fix.sql`,
+`sql/kill_switch_abort_log.sql` (headers only); `docs/design.md`, `docs/design/operational-controls.md`,
+`docs/code-map.md`; `scripts/run_hourly.py` (one comment). Commits: `ac7b1e6`, `e842791`, `6dada61`,
+`5b00861`.
+
+**On the archive exception.** Read `docs/archive/review-log-archive.md` once, solely to locate REV-097/
+100/101/102's original text, per the orchestrator's explicit, scoped, one-time grant. Nothing else in the
+archive was read or used. Every claim below about current code/docs was verified independently by reading
+the live file, not by trusting the archive's account — the archive was used only as a pointer to a
+location and a pre-fix description, both then re-checked against current content.
+
+### REV-124 — re-verified RESOLVED (2026-07-31)
+
+Read `docs/runbook.md` in full. §2.3's apply-order list now has all fourteen migration files (was ten),
+each with a dependency justification, in an order where every file's stated prerequisite already appears
+earlier in the list — traced this explicitly: `admin_portal_tunables_alerts_enabled_description_fix.sql`
+and `tunables_validate_trigger.sql` both correctly follow `admin_portal_tunables.sql`;
+`holdings_currency_derivation.sql` correctly follows `schema.sql` (its FK dependency); `kill_switch_abort_log.sql`
+is standalone and correctly placed last. A reader following §2.3 top-to-bottom on a fresh project would not
+hit a missing-table/missing-function error. The PG14+ version floor (`create or replace trigger`, used by
+two of the four files) is now stated explicitly (`:88`) with the live project's actual version (17.6.1)
+given as headroom, not as the floor. §7's schema reference now says "fourteen files" (`:455`) and lists
+every new table/trigger/function under correctly-labeled subsections ("Admin-portal backend," "Audit and
+operational control," "Security lockdowns"). Critically, §6 item 10's grant-verification query
+(`:403-413`) now states the **correct** expectation — REFERENCES/SELECT/TRIGGER present for `anon`/
+`authenticated` is Supabase's normal default and expected, and the assertion that actually matters is the
+**absence** of INSERT/UPDATE/DELETE/TRUNCATE — matching exactly what the four SQL files' own headers now
+independently claim (see REV-125 below) and what `kill_switch_abort_log.sql:24-33`'s own comment records as
+"one expectation correction, not a defect." Judged against the standard the finding was raised on — would a
+person rebuilding from the runbook alone succeed, in the stated order, on a fresh project — the answer is
+now yes. **RESOLVED 2026-07-31.**
+
+### REV-125 — re-verified RESOLVED (2026-07-31)
+
+Read all four SQL files in full. Each header's closing paragraph now reads "APPLIED AND LIVE" with a date
+(2026-07-30), the production project ID, the Postgres version, and a specific piece of live-behavior
+evidence beyond mere presence (a rejected malformed tunables write for the validation trigger; an
+information_schema.role_table_grants read for the abort-log table; explicit confirmation for the other two).
+Each header explicitly names REV-125 and quotes its own prior "Not applied live by dev" wording as what it
+is correcting — consistent, self-aware, and matching `docs/runbook.md`'s independent claims for the same
+four files exactly (dates, evidence, and the REFERENCES/SELECT/TRIGGER expectation-correction language all
+agree word-for-word in substance between `kill_switch_abort_log.sql` and `runbook.md` §6 item 10). On
+whether the diff was comment-only: this session has no shell/diff tool (standing caveat since Pass 2), so a
+byte-level `git diff` was not run; but every executable statement in all four files (the `UPDATE`, the two
+`CREATE OR REPLACE FUNCTION`/`CREATE OR REPLACE TRIGGER` pairs, and the `CREATE TABLE`/`REVOKE` block) reads
+identically to what `docs/runbook.md` and `docs/design/operational-controls.md`/`admin-portal-tunables.md`
+have described these files as doing since INC-10/INC-12 shipped, with no new statement, no removed
+statement, and no changed literal found on a full read. Treating that as strong (not absolute) evidence the
+diff was header-comment-only. **RESOLVED 2026-07-31.**
+
+### REV-126 — re-verified RESOLVED (2026-07-31)
+
+Checked all five named locations. `docs/design.md:78-82` now states plainly that Pass 30 found REV-124 (since
+fixed) and REV-126 (this fix), that neither reopens INC-12/DEEP-007, and that "FR31/FR32 remain Deferred
+pending a live admin-portal check only the user can run" — correctly distinguishing code-delivered
+(§15's FR31/FR32 row: IMPLEMENTED) from live-verified (deferred, user's call), not overstating either.
+`docs/design/operational-controls.md:8-9,33-34` now reads "reviewer-CLEAR (Pass 29)... Reviewer's Phase-4
+whole-codebase audit, Pass 30, ran after this closure and did not reopen either finding" — the stale "Pass
+28 NOT CLEAR... fix cycle in progress" language is gone. `scripts/run_hourly.py:110-125`'s comment now reads
+"corrected and independently re-verified; REV-116/REV-117/DEEP-007 resolved, docs/review-log.md Pass 29" —
+confirmed by direct read, no stale "pending tech-lead correction" language remains. `docs/code-map.md:36`'s
+`kill_switch_abort_log.sql` entry now reads "applied and live, REV-117 fixed" — the second stale instance I
+had not flagged is gone. Grepped all of `docs/design/` and `docs/code-map.md` for "not yet applied," "NOT
+CLEAR," and "not applied live" — zero remaining stale hits anywhere in scope. Nothing found that overstates
+release state elsewhere: no file claims `v0.1.0` is tagged (grepped for it, zero hits), and §15's FR31/FR32
+row and `design.md:81` both correctly keep the live-portal-check status Deferred. **RESOLVED 2026-07-31.**
+
+### Archive repair — REV-097/100/101/102, and closing REV-127
+
+**REV-097, REV-100, REV-101 needed no repair.** Pass 30 (the prior pass) already independently re-derived
+and wrote each of these three out in full, from current code, directly in the live log (see "Pass 3 —
+Hardcoding audit" and "Pass 6 — Structure audit," above in this file) — not a pointer into the archive.
+Re-checked this pass with a fresh spot read: `scripts/config.py:395-397,432-434` still hardcodes
+`MARKET_OPEN`/`MARKET_CLOSE`/`NSE_MARKET_OPEN`/`NSE_MARKET_CLOSE` with no `os.environ` wiring (REV-097,
+still open); `scripts/run_discovery.py:44` still reads `os.environ.get("DISCOVERY_REGION", ...)` directly,
+bypassing `config.py` (REV-100, still open); `ai_judge.judge_batch()` is unchanged since Pass 30's read
+(REV-101, still open, judgment call not a clear violation). A reader of this live log can already see all
+three findings' full text without opening the archive — no further action needed on these three.
+
+**REV-102 could not be reconstructed from the live log alone** (Pass 30's own carried-forward lines cited
+only "`[DESIGN-GAP]`/tech-lead," no location or description survived outside the archive) — this is what
+Pass 30 logged as REV-127 and routed to the orchestrator. Using the one-time exception, I located it in
+`docs/archive/review-log-archive.md:2609-2610`: "REV-102 (`[DESIGN-GAP]`, `components.md:172`'s stale
+'temperature=0.2' prose)". I then independently re-checked this against the current file — `components.md`
+has grown since the finding was first logged, so the line moved; the same prose is now at
+`docs/design/components.md:207` and is still stale today. Restored in full below, as a live open item with
+current-file evidence, not the archived text verbatim:
+
+**REV-102 — `[DESIGN-GAP]` — minor — owner: tech-lead. Restored to the live log 2026-07-31 (recovered via a
+one-time reviewer archive-read exception per the orchestrator's grant; originally logged at Pass 22,
+improperly archived while still open at Pass 23's close — REV-127's resolution).**
+Location: `docs/design/components.md:207` ("Model settings: `temperature=0.2`, `response_mime_type=
+"application/json"`, and a typed `response_schema`...").
+Description: the prose states the Gemini call's temperature as a bare literal, `temperature=0.2`, with no
+mention that this is `config.AI_TEMPERATURE` — a configurable tunable (env-var override, default `0.2`)
+promoted from a hardcoded literal at INC-4 (REV-078, `docs/review-log.md` Pass 15) and documented as
+tunable in `docs/design/operational-controls.md` §14.4 ("promote, don't exempt — temperature sits in the
+same `GenerateContentConfig` as the three keys that are already tunables"). A reader of `components.md`
+alone, without also reading `operational-controls.md` §14, would reasonably believe temperature is fixed at
+build time — false since INC-4 shipped. No behavior/code defect: `scripts/ai_provider.py:162` genuinely
+reads `config.AI_TEMPERATURE` (confirmed at Pass 15, unchanged since). Fix: one clause, e.g. "`temperature`
+(`config.AI_TEMPERATURE`, default `0.2`, tunable via env var)". Not a blocker.
+
+**REV-127 — RESOLVED 2026-07-31.** The orchestrator supplied the mechanism (a scoped, one-time read
+exception) that let REV-102's original text be recovered and restored live, satisfying REV-127's own
+routed request. Going forward, the underlying rule stands as REV-127 stated it: only RESOLVED findings
+belong in the archive; a still-open finding's full text stays live until it resolves, even across a
+pass-summarization/archival event.
+
+**REV-136 is unaffected by this pass and remains open.** The one-time exception granted was narrowly for
+*reading* the archive to locate REV-102's text, not for the archive-*write* operation REV-136 describes
+(physically moving RESOLVED entries there, which still requires a `Read` this role remains barred from
+performing on that file in the general case). REV-124/125/126/127, marked RESOLVED below, are **not**
+physically relocated to the archive this pass, for the same structural reason Pass 30 named — left live
+with full closing dispositions instead, per REV-136's own suggested fallback (c). Owner: orchestrator,
+unchanged.
+
+---
+
+### Open items after Pass 31
+
+**Blockers: 0. Majors: 0** — REV-124 (the only open major) is RESOLVED this pass; no new majors found.
+
+**Minors: 17 open, consolidated (this pass's tally corrects Pass 30's own count, which omitted REV-097/100/
+101 from its final "Minors: 16" line despite confirming them open in the body text above it):**
+REV-063 residual + REV-071 (dev — two SQL headers), REV-065 (tech-lead — `non-functional-ops.md` Variable
+convention description), REV-066 + REV-052 tech-lead half only (`non-functional-ops.md` §9 mirror; pm half
+resolved), REV-067 (tech-lead — `components.md` citation table), REV-072 (tech-lead — `[BLOAT]` inline
+session-predicate duplication), REV-048 (qa — constants/citation drift test), REV-049(b) (release — portal
+CI story undecided), REV-080 (qa — `AI_PROVIDER` default test gap), REV-079 (tech-lead — AC5
+baseline-wording residual), REV-097 (pm or dev — hardcoded market-session literals vs §10 baseline
+framing), REV-100 (dev — `run_discovery.py` reads `os.environ` directly), REV-101 (tech-lead/dev — judgment
+call, `judge_batch()` length), REV-102 (tech-lead — restored this pass, `components.md:207` stale
+`temperature=0.2` prose), REV-107 (qa — dashboard AC3 manual/browser check, carried to closure, not
+reviewer's to close), REV-109 (qa — `find_candidates()` dedup regression test), REV-114 (qa/pm — no SQL
+executes in CI; recommend recording as an accepted limitation in `runbook.md` §5), REV-123 (tech-lead+dev —
+`GEMINI_API_KEY` fail-fast delay on closed-market invocations). Plus **REV-136** (process, owner
+orchestrator — archive-write tool constraint, unresolved, non-blocking). Plus, tracked in qa's
+`docs/test-report.md` rather than this log: **BUG-007** (`_parse_batch` duplicate-ticker last-write-wins),
+recommended to stay open indefinitely as an accepted, documented limitation.
+
+**Resolved this pass, independently re-verified against current file content: 4** — REV-124, REV-125,
+REV-126, REV-127. Per doc hygiene these should move to `docs/archive/review-log-archive.md`; per REV-136
+(unresolved, this role's tool constraint), they are marked RESOLVED with date and left live instead, for
+the orchestrator/tech-lead to physically relocate as a mechanical step.
+
+**Routing (unchanged from Pass 30 for anything not resolved this pass):** release (REV-049(b)); dev
+(REV-063 residual + REV-071, REV-100); tech-lead (REV-065, REV-067, REV-072, REV-079, REV-101, REV-102,
+REV-066+052 tech-lead half, REV-123); qa (REV-048, REV-080, REV-107, REV-109, REV-114, BUG-007); pm
+(REV-097, co-owner REV-114); orchestrator (REV-136).
+
+---
+
+### Verdict — Pass 31
+
+**CLEAR.** All three findings that held Phase-4 closure NOT CLEAR at Pass 30 — REV-124 (major), REV-125,
+REV-126 — are independently re-verified RESOLVED against current file content, not accepted on the fix
+commits' own claims. Zero blockers, zero open majors. The REV-127 doc-hygiene gap (open findings' text
+improperly archived) is repaired: REV-097/100/101 already had full text live in this log since Pass 30;
+REV-102's text is now recovered and restored live, above. No archived content was permitted to influence
+this pass's assessment of the current codebase beyond locating REV-102's pointer, which was then
+independently re-verified against current files.
+
+**`v0.1.0` clears the reviewer gate.** `CLAUDE.md`'s Phase-4 gate is explicit — zero blockers/majors from
+the reviewer's full 6-pass audit — and that condition is now met. Every remaining open item (17 minors, one
+process item, one qa-tracked bug) is non-blocking, has a named owner, and carries no correctness or
+security defect in currently-live behavior. FR31/FR32's live-portal round-trip check (INC-11's remaining
+item) is, as instructed, the user's decision on timing, not a reviewer blocker — the code is IMPLEMENTED
+and reviewer-clear per `docs/design.md` §15; only the *live verification* of that one path is outstanding,
+and `docs/design.md:81` and `requirements.md` §11 both record this honestly rather than overstating it.
+Tagging `v0.1.0` is a decision for pm/release/the user to execute per the runbook and `CLAUDE.md`'s closure
+sequence (qa end-to-end → this reviewer clearance → pm confirms every FR/NFR delivered-or-deferred → release
+executes/dry-runs the deploy) — the reviewer-side precondition for that sequence is satisfied as of this
+pass.
+
+**Final open-items list and disposition, as of Pass 31 (2026-07-31):**
+- **Blockers:** none.
+- **Majors:** none.
+- **Minors (17), all non-blocking, all owned:** REV-063+071, REV-065, REV-066+052 (tech-lead half),
+  REV-067, REV-072, REV-048, REV-049(b), REV-080, REV-079, REV-097, REV-100, REV-101, REV-102, REV-107,
+  REV-109, REV-114, REV-123 — see "Open items after Pass 31" above for owners and one-line descriptions.
+- **Process (1):** REV-136 — reviewer cannot physically relocate archive entries within this session's tool
+  constraints; owner orchestrator; does not affect log accuracy or readability, only mechanical archive
+  hygiene.
+- **qa-tracked, not a REV-ID (1):** BUG-007 — accepted, documented limitation, recommended to stay open
+  indefinitely by design.
+- **User decision, not a reviewer finding:** FR31/FR32's live admin-portal round-trip check (INC-11), timing
+  is the user's call per `docs/design.md` §15 / `requirements.md` §11.
+
