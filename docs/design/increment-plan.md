@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 READY (Direction G selected, dev may start)
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -557,3 +557,104 @@ analytics beyond what's logged, and no requirement asks for portal exposure of t
    for that cycle, both while still paused (§13.4's blanket suppression) and after resuming (the existing
    `resume_baseline` guard).
 9. Full existing test suite passes; `git diff` confirms no file outside the list above changed.
+
+---
+
+## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, READY (Direction G selected 2026-07-31)
+
+pm flagged NFR8 (`requirements.md` §6, admin-portal UI/UX modernization) to tech-lead 2026-07-31, GATE 2
+already passed by the user for NFR8 itself. This is one new increment appended after INC-12; none of
+INC-3–INC-12 are marked stale by it (see the note at the end of this section).
+
+**2026-07-31 update — gate cleared:** designer published `docs/ux-spec.md` with mockup directions
+(A/C/D/E/F/G active, B rejected); Arjun reviewed and selected **Direction G — "Compact Toggle"**
+(`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.4) as the final direction. INC-13
+is now **READY — dev may start a build plan.** See `docs/design/admin-portal.md` §16.10 for the updated
+design content naming Direction G's exact reference files/details.
+
+### INC-13 — Admin portal responsive & visual modernization (NFR8) — **READY, dev may start**
+(design complete; Direction G selected by the user 2026-07-31 — gate cleared, no further blocker)
+**Design:** `docs/design/admin-portal.md` §16.10 (breakpoints, layout mechanism, structural
+enforcement rule, file allow-list). **Files:** `admin-portal/app/globals.css`, `admin-portal/app/
+layout.tsx`, `admin-portal/app/(app)/layout.tsx`, `admin-portal/app/login/page.tsx`, `admin-portal/app/
+(app)/watchlist/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, `admin-portal/app/(app)/tunables/
+page.tsx`, `admin-portal/app/(app)/track-record/page.tsx`, `admin-portal/components/AuthGuard.tsx`,
+`admin-portal/components/KillSwitchToggle.tsx`, and at most one new presentational component (e.g.
+`admin-portal/components/NavToggle.tsx`) — no other file, in any directory (`sql/`, `scripts/`,
+`lib/*.ts`, `tests/`), is in scope. **No config-schema change** — presentation-layer only.
+
+**Gate cleared 2026-07-31 (was: hard blocking dependency, distinct from the normal "no increment starts
+before the previous passes QA" rule):** designer published `docs/ux-spec.md` with mockup directions
+covering all five screens (login, watchlist, holdings, tunables, track-record), and the user (Arjun) has
+selected **Direction G — "Compact Toggle"** (`docs/ux-mockups/direction-g-compact-toggle.html`,
+`docs/ux-spec.md` §7.4, built on Direction F's density §7.3 and Direction E's toggle component §7.2).
+**Dev may now begin a build plan for INC-13.** This increment plan entry defines the mechanism Direction
+G is built through (breakpoints, responsive-table strategy, structural enforcement — unchanged by which
+direction was picked, see `docs/design/admin-portal.md` §16.10); the acceptance criteria below now
+reference Direction G specifically, per `docs/design/admin-portal.md` §16.10's detail on the exact
+reference files dev implements against.
+
+**Structural "no functional regression" enforcement:** every file above may only change CSS, JSX/TSX
+markup, className/`data-label` attributes, and purely-presentational local component state. A `git diff`
+grep across every touched file for `supabase\.|validateHoldingsRow|validateTunableValue|is_admin|
+set_kill_switch|\.rpc\(|createClient` must return **zero** matches — this is acceptance criterion 5 below,
+not a review-only convention.
+
+**Acceptance criteria (dev self-verifiable):**
+1. At three viewport widths — **375px** (phone band, ≤639px), **768px** (tablet band, 640–1023px), and
+   **1280px** (desktop band, ≥1024px) — set via Chrome DevTools' device toolbar or
+   `page.setViewportSize()` in a Playwright/qa script, each of the five screens plus the shared
+   header/nav and kill-switch toggle renders with `document.documentElement.scrollWidth <=
+   document.documentElement.clientWidth` (no page-level horizontal scrollbar) — confirmed for all five
+   screens at all three widths (15 checks total).
+2. At 375px, the watchlist and holdings `<table>`s render as a stacked card-per-row layout (no table-level
+   horizontal overflow): every column's value is visible without sideways scrolling, each row carries a
+   `data-label` attribute per cell matching its column header (grep `data-label=` in the rendered/source
+   markup), and each row's edit/delete controls remain individually clickable/tappable.
+3. At 375px and 768px, the shared nav collapses into a control that doesn't overflow the header's own
+   width; every nav item (Watchlist, Holdings, Tunables, Track Record, sign-out) and the kill-switch
+   toggle remain reachable by clicking/tapping that control — confirmed by driving each item via a qa
+   script at both widths.
+4. At 1280px, the layout is no longer capped at the pre-INC-13 fixed 900px `main` width — the watchlist
+   and holdings screens render a **4-column** card grid (Direction G/F's desktop density,
+   `docs/ux-spec.md` §7.3.2), matching `docs/ux-mockups/direction-g-compact-toggle.html` at a ≥1024px
+   viewport (visual comparison against the mockup, not a fixed-pixel assertion beyond the column count).
+5. **Structural enforcement:** `git diff --name-only main..inc-13-<slug>` contains only files from the
+   allow-list above; `git diff main..inc-13-<slug> -- admin-portal/ | grep -E "supabase\.|
+   validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` returns
+   **zero** matches.
+6. Full existing `tests/admin_portal/*.test.ts` suite passes with **zero** assertion changes. qa
+   additionally re-runs INC-5/INC-6/INC-7's manual regression checklist (auth gate + allowlist reject,
+   watchlist/holdings CRUD writes confirmed in Supabase, tunables validation error paths, track-record
+   pagination, kill-switch toggle round-trip producing a `kill_switch_audit` row) at all three viewport
+   widths, confirming identical functional outcomes to pre-INC-13 — any difference is a regression, not a
+   visual choice.
+7. **Direction G visual conformance (`docs/ux-spec.md` §7.3/§7.4, `docs/ux-mockups/
+   direction-g-compact-toggle.html`):** manual/qa visual comparison against the mockup at all three
+   widths confirms: (a) flatter single-layer card shadows and the smaller `radius-md`/`radius-lg`
+   tokens (8px/14px, not Direction C's 12px/20px) across watchlist, holdings, and track-record cards;
+   (b) the tunables editor renders all 10 keys as always-visible compact cards with no
+   expand/collapse — value input and Save visible without a tap; (c) every one of the 10 tunables cards
+   shows the friendly-label heading from `docs/ux-spec.md` §2.3's mapping table as the primary heading,
+   with the raw `SNAKE_CASE` key demoted to a small monospace subtitle directly beneath it (grep the
+   rendered markup for all 10 raw keys still present, just visually secondary — confirms the mapping is
+   presentational only, no key dropped).
+8. **Kill-switch toggle-switch interaction (`docs/ux-spec.md` §7.4.2):** the kill-switch control renders
+   as a sliding toggle-switch (track + thumb), not Direction F's static pill badge — grep
+   `components/KillSwitchToggle.tsx` for a `.toggle` element (or equivalent class) rather than a bare
+   `.pill` span. Clicking/tapping the toggle element pauses/resumes via the **existing**
+   `set_kill_switch(..., p_source:='admin-portal')` Supabase RPC call already wired in INC-7 (§16.6) — no
+   new backend logic, purely a visual-control swap (confirmed by AC5's grep showing zero
+   `set_kill_switch`/`.rpc(` diff lines — the call site itself is unchanged, only its surrounding
+   markup/CSS is). Toggling produces a new `kill_switch_audit` row exactly as INC-7 AC2 already proves;
+   this AC only confirms the click target and visual state (slid right = running/emerald track, slid left
+   = paused/grey track) match Direction G, reusing INC-7's existing round-trip proof rather than
+   re-deriving it.
+9. Best-effort accessibility (recorded, not a pass/fail gate per NFR8): keyboard-Tab reaches every
+   interactive control in DOM order at all three widths; a quick manual contrast check on body text passes
+   — recorded as a dated note in `docs/handoff.md`.
+
+**Increments NOT made stale by NFR8:** none of INC-3–INC-12 touch admin-portal visual/layout code (INC-5/
+INC-6/INC-7/INC-10 touched `admin-portal/app/**/*.tsx` for functional CRUD/validation/currency-derivation
+work only, not styling) — all twelve remain valid and IMPLEMENTED as documented above. INC-11 (live
+verification) is unrelated and unaffected. INC-13 is purely additive on top of the existing merged code.

@@ -1,19 +1,57 @@
+/*
+ * Direction G — "Compact Toggle" (docs/ux-spec.md §7.4, docs/design/admin-portal.md §16.10, INC-13).
+ * Baseline is Direction F's density (§7.3): flatter single-layer card shadow, smaller radii, tighter
+ * spacing/type scale, emerald accent. Tokens mirror docs/ux-mockups/direction-g-compact-toggle.html
+ * verbatim so the built app matches the approved mockup 1:1. Mobile-first — base rules are the phone
+ * band (<=639px); `min-width: 640px` is tablet, `min-width: 1024px` is desktop (tech-lead breakpoint
+ * decision, docs/design/admin-portal.md §16.10).
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --border: #d9d9d9;
-  --accent: #1a56db;
-  --error: #b91c1c;
-  --ok: #15803d;
+  --color-bg: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-border: #e8e9ed;
+  --color-text-primary: #1f2430;
+  --color-text-secondary: #6b7280;
+  --color-accent: #059669;
+  --color-accent-hover: #047857;
+  --color-success-bg: #dcfce7;
+  --color-success-fg: #166534;
+  --color-warning-bg: #fef3c7;
+  --color-warning-fg: #92400e;
+  --color-danger-bg: #fee2e2;
+  --color-danger-fg: #991b1b;
+  --color-info-bg: #dbeafe;
+  --color-info-fg: #1e40af;
+
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 18px;
+  --space-6: 24px;
+  --space-7: 36px;
+  --space-8: 48px;
+
+  --font-size-xs: 11px;
+  --font-size-sm: 13px;
+  --font-size-base: 15px;
+  --font-size-lg: 17px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --shadow-card: 0 1px 2px rgba(20, 20, 43, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --border: #333333;
-    --accent: #6ea8fe;
-    --ok: #4ade80;
+    --color-bg: #14161b;
+    --color-surface: #1d2027;
+    --color-border: #30333b;
+    --color-text-primary: #edeef0;
+    --color-text-secondary: #9aa0aa;
   }
 }
 
@@ -29,12 +67,15 @@ body {
 }
 
 body {
+  margin: 0;
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--font-size-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -44,82 +85,259 @@ body {
 }
 
 a {
-  color: var(--accent);
+  color: var(--color-accent);
 }
 
 main {
-  padding: 1.5rem;
-  max-width: 900px;
+  padding: var(--space-4);
+  max-width: 1400px;
   width: 100%;
   margin: 0 auto;
 }
 
-.app-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+@media (min-width: 640px) {
+  main {
+    padding: var(--space-5) var(--space-6);
+  }
 }
 
-.app-header nav {
+@media (min-width: 1024px) {
+  main {
+    padding: var(--space-6) var(--space-8);
+  }
+}
+
+/* Screen-reader-only text: visually hidden, still in the accessibility tree
+   (best-effort a11y per NFR8 -- not a WCAG gate). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- shared surfaces ---------- */
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+
+/* ---------- header / collapsible nav ---------- */
+
+.app-shell {
   display: flex;
-  gap: 1.25rem;
+  flex-direction: column;
+  min-height: 100%;
+  flex: 1;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  position: relative;
+}
+
+.app-header-brand {
+  font-weight: 700;
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+}
+
+.nav-toggle-wrap {
+  position: relative;
+}
+
+.nav-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: var(--font-size-base);
+  padding: 0;
+}
+
+/* Below desktop, the nav panel is hidden until NavToggle's local `open`
+   state says otherwise; at desktop CSS forces it open regardless of that
+   state (docs/design/admin-portal.md §16.10). */
+.nav-panel {
+  display: none;
+}
+
+.nav-panel.open {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  min-width: 200px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-2);
+  gap: var(--space-1);
+  z-index: 20;
+}
+
+.nav-panel a,
+.nav-panel button.link {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  text-align: left;
+}
+
+.nav-panel a:hover,
+.nav-panel button.link:hover {
+  background: var(--color-bg);
+}
+
+@media (min-width: 1024px) {
+  .nav-toggle-btn {
+    display: none;
+  }
+  .nav-panel {
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+    position: static;
+    box-shadow: none;
+    padding: 0;
+    gap: var(--space-4);
+    background: transparent;
+  }
+  .nav-panel a,
+  .nav-panel button.link {
+    width: auto;
+    padding: var(--space-1) var(--space-2);
+  }
 }
 
 .app-header-user {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  font-size: 0.9rem;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
 }
 
+.user-chip {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ---------- kill-switch: Direction E's sliding toggle-switch, resized to
+   Direction G's compact scale (docs/ux-spec.md §7.4.2) ---------- */
+
+.killswitch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.killswitch .toggle {
+  width: 30px;
+  height: 17px;
+  border-radius: 17px;
+  background: var(--color-accent);
+  border: none;
+  padding: 0;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.killswitch .toggle::after {
+  content: "";
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  top: 2px;
+  right: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition:
+    right 0.15s ease,
+    left 0.15s ease;
+}
+
+.killswitch .toggle.paused {
+  background: var(--color-border);
+}
+
+.killswitch .toggle.paused::after {
+  right: auto;
+  left: 2px;
+}
+
+.killswitch .toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- status / errors ---------- */
+
 .status-line {
-  padding: 2rem;
+  padding: var(--space-6);
   text-align: center;
+  color: var(--color-text-secondary);
 }
 
 .error-message {
-  color: var(--error);
+  color: var(--color-danger-fg);
+  background: var(--color-danger-bg);
   font-weight: 600;
-  margin: 0.5rem 0;
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  margin: var(--space-2) 0;
 }
 
-.crud-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 1rem;
-}
-
-.crud-table th,
-.crud-table td {
-  text-align: left;
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-form.crud-form {
-  display: grid;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-  max-width: 420px;
-}
-
-form.crud-form label {
-  display: grid;
-  gap: 0.25rem;
-  font-size: 0.9rem;
-}
+/* ---------- inputs / buttons ---------- */
 
 input,
 select,
 button {
   font: inherit;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--background);
-  color: var(--foreground);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  max-width: 100%;
 }
 
 button {
@@ -127,38 +345,406 @@ button {
 }
 
 button.primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+  border-radius: 999px;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-4);
+}
+
+button.primary:hover {
+  background: var(--color-accent-hover);
 }
 
 button.link {
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--color-accent);
   padding: 0;
+  font-size: var(--font-size-sm);
 }
 
-.kill-switch {
-  display: inline-flex;
+form.crud-form {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  max-width: 420px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+
+form.crud-form label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ---------- responsive tables -> cards (watchlist / holdings, FR28/FR29) ----------
+   Phone (base): stacked card-per-row -- each <tr> becomes a card, each <td> a
+   labelled row via its own data-label attribute, no header row shown.
+   Tablet (>=640px): a real <table> again -- these tables have few enough
+   columns to fit without horizontal scroll at this width.
+   Desktop (>=1024px): Direction G's 4-column compact card grid
+   (docs/ux-mockups/direction-g-compact-toggle.html), matching Direction F's
+   density table (docs/ux-spec.md §7.3.2).
+
+   BUG-010 fix: admin-portal.md §16.10 keeps a real <table> layout mechanism
+   at the tablet band (no <div>-based card grid, no data-label/attr(content)
+   trick) — that part is unchanged. What was missing is Direction G's card
+   *styling* (shadow/radius/background tokens) at that width: .crud-table-wrap
+   below supplies it around the table as a single card surface, since a real
+   `display:table-row` element can't reliably paint its own box-shadow. At
+   phone/desktop widths .crud-table-wrap stays transparent — each row (phone)
+   or grid cell (desktop) already carries its own card treatment, so the wrap
+   would otherwise double up. */
+
+.crud-table-wrap {
+  /* transparent by default (phone/desktop); tablet media query below adds
+     the card surface */
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .crud-table-wrap {
+    background: var(--color-surface);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-3);
+  }
+}
+
+.crud-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-4);
+}
+
+.crud-table thead {
+  display: none;
+}
+
+.crud-table tbody {
+  display: block;
+}
+
+.crud-table tr {
+  display: block;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.crud-table td {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
+  gap: var(--space-2);
+  border: none;
+  padding: var(--space-1) 0;
 }
 
-.kill-switch-badge {
+.crud-table td::before {
+  content: attr(data-label);
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.crud-table td select,
+.crud-table td input {
+  max-width: 60%;
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .crud-table thead {
+    display: table-header-group;
+  }
+  .crud-table tbody {
+    display: table-row-group;
+  }
+  .crud-table tr {
+    display: table-row;
+    background: none;
+    box-shadow: none;
+    border-radius: 0;
+    padding: 0;
+    margin-bottom: 0;
+  }
+  .crud-table th,
+  .crud-table td {
+    display: table-cell;
+    text-align: left;
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .crud-table td::before {
+    content: none;
+  }
+  .crud-table td select,
+  .crud-table td input {
+    max-width: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .crud-table tbody {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3);
+  }
+  .crud-table tr {
+    margin-bottom: 0;
+  }
+}
+
+/* ---------- tunables editor: always-visible compact cards, no accordion
+   (docs/ux-spec.md §7.3.2, §2.3) ---------- */
+
+.tunable-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+@media (min-width: 640px) {
+  .tunable-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .tunable-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.tun-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3);
+}
+
+.tun-card .friendly {
   font-weight: 700;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-sm);
+  margin-bottom: 2px;
 }
 
-.kill-switch-badge.paused {
-  color: white;
-  background: var(--error);
+.tun-card .key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
 }
 
-.kill-switch-badge.running {
-  color: white;
-  background: var(--ok);
+.tun-card .desc {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin-bottom: var(--space-2);
+  line-height: 1.35;
+}
+
+.tun-card .example {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  margin-bottom: var(--space-2);
+}
+
+.tun-card .row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tun-card .row input,
+.tun-card .row select {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+
+.tun-card .updated {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-2);
+}
+
+/* ---------- track-record: card grid per Direction G (docs/ux-spec.md
+   §7.3.2, docs/ux-mockups/direction-g-compact-toggle.html's .tr-cards/
+   .tr-card) -- fixes BUG-011 (previously a real sortable <table>, never
+   rendered as cards). Sort is a <select> + direction-toggle button
+   (.sort-controls) instead of clickable <th> column headers, since a card
+   layout has no column-header row for sort affordances to live in; the
+   underlying .order()-driven query/state is unchanged. Density: 3-col
+   desktop / 2-col tablet / 1-col phone, same three-tier pattern as
+   .tunable-grid above. ---------- */
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sort-controls select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.tr-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+@media (min-width: 640px) {
+  .tr-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .tr-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.tr-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3);
+}
+
+.tr-card .top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.tr-card .top strong {
+  font-size: var(--font-size-base);
+}
+
+.verdict-pill {
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.verdict-pill.buy {
+  background: var(--color-success-bg);
+  color: var(--color-success-fg);
+}
+
+.verdict-pill.sell {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-fg);
+}
+
+.verdict-pill.hold {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-fg);
+}
+
+.tr-card .rationale {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.tr-card .tr-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--font-size-xs);
+}
+
+.tr-card .tr-fields dt {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  margin: 0;
+}
+
+.tr-card .tr-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tr-card .foot {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* ---------- login (FR27) ---------- */
+
+.login-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+}
+
+.login-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-7);
+  max-width: 340px;
+  width: 100%;
+  text-align: center;
+}
+
+.login-card .logo-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-success-bg);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  margin: 0 auto var(--space-3) auto;
+}
+
+.login-card h1 {
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.login-card p.sub {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin: 0 0 var(--space-4) 0;
+}
+
+.google-btn {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
 }

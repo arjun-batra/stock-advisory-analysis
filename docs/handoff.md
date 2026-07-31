@@ -1990,3 +1990,351 @@ documented shape exactly, one clearly-named policy, no overlap.
 - Until the orchestrator applies this file live, the track-record view (FR31) remains empty for
   signed-in admins — BUG-009 stays open in `docs/test-report.md` until qa re-verifies against the live
   project post-apply.
+
+# Handoff — INC-13: Admin portal responsive & visual modernization (NFR8, Direction G)
+
+## Build plan (written before coding)
+
+Read `docs/design/increment-plan.md`'s INC-13 entry (scope, allow-list, 9 acceptance criteria),
+`docs/design/admin-portal.md` §16.10 (breakpoints — phone <=639px, tablet `min-width:640px`, desktop
+`min-width:1024px`; layout mechanism; structural no-regression grep rule), `docs/ux-spec.md` §7.4
+(Direction G) + §2.3 (tunables friendly-label mapping table), and
+`docs/ux-mockups/direction-g-compact-toggle.html` (canonical visual reference). This is presentation-
+layer only — CSS/JSX/data-attribute/local-component-state changes across exactly the 10 allow-listed
+files (`app/globals.css`, `app/layout.tsx`, `app/(app)/{watchlist,holdings,tunables,track-record}/
+page.tsx`, `app/login/page.tsx`, `components/{AuthGuard,KillSwitchToggle}.tsx`, plus one new
+presentational component `components/NavToggle.tsx` for the collapsible mobile nav). No `sql/`,
+`scripts/`, `lib/*.ts`, or `tests/` file touched. Verify: full `tests/admin_portal/*.test.ts` suite
+unchanged (82/82), `tsc --noEmit` + `eslint` clean, a real `next build` succeeds and every route
+prerenders, the compiled CSS's media-query bands inspected directly (extracted the actual `@media`
+blocks from the built bundle) to confirm each breakpoint's rules land where intended, and a
+`git diff`/grep pass confirming the allow-list + zero forbidden-pattern matches (acceptance criterion
+5). Two design-doc tensions surfaced during the build plan and were resolved as documented judgment
+calls below rather than stopped on, since both are reconcilable without contradicting either
+document's literal, most-specific text (see "Judgment calls" below) — flagged here for tech-lead/qa
+visibility, not silently decided.
+
+## What changed and why
+
+Reproduces Direction G ("Compact Toggle" — Direction F's density/tokens + Direction E's kill-switch
+toggle mechanic, resized to F's compact scale) across all five screens, wired to the app's existing
+real Supabase state/handlers — no new sample data, no new business logic.
+
+- **Design tokens** (`app/globals.css`): Direction G's exact `--color-*`/`--space-*`/`--font-size-*`/
+  `--radius-*`/`--shadow-card` custom properties, matching
+  `docs/ux-mockups/direction-g-compact-toggle.html` verbatim. Existing dark-mode support (pre-existing,
+  not part of NFR8) preserved with the same tokens re-mapped to darker equivalents.
+- **Responsive layout mechanism**: mobile-first. `main`'s old fixed `max-width:900px` is now fluid
+  (`max-width:1400px`, breakpoint-scaled padding) — no longer capped at 900px at 1280px (AC4).
+- **Collapsible nav** (`components/NavToggle.tsx`, new; `components/AuthGuard.tsx`): below 1024px, the
+  route nav (Watchlist/Holdings/Tunables/Track record) + Sign out collapse behind a hamburger button
+  with local open/closed state; at >=1024px CSS forces the panel open regardless of that state and hides
+  the hamburger (AC3). The kill-switch toggle is deliberately kept directly visible at every width
+  (not hidden behind the nav toggle) so it's reachable with zero extra clicks anywhere.
+- **Watchlist/holdings tables -> responsive cards** (`app/(app)/{watchlist,holdings}/page.tsx`,
+  `globals.css`): added a `data-label="<column header>"` attribute to every `<td>` (markup-only
+  addition, no logic change). CSS-only, mobile-first `.crud-table` treatment: phone (base) = stacked
+  card-per-row (`tr` as a card, `td` as a flex label:value row via `td::before{content:attr(data-label)}`,
+  `thead` hidden) — satisfies AC2 literally. Tablet (640-1023px) = a real `<table>` again (these tables
+  have few enough columns to fit without horizontal scroll at this width — `docs/design/admin-portal.md`
+  §16.10's mechanism text literally). Desktop (>=1024px) = Direction G's 4-column card grid
+  (`tbody{display:grid; grid-template-columns:repeat(4,1fr)}`), matching AC4 and the mockup.
+- **Tunables editor** (`app/(app)/tunables/page.tsx`): restructured from single-row inline-edit
+  (`editingKey`/`editValue`) to always-visible compact cards, one per key, no accordion — every card's
+  value input and Save button are visible without a tap (AC7b). Editing state is now per-key
+  (`drafts`/`rowErrors` keyed by tunable key) instead of one global pair; `handleUpdate(key)` derives a
+  local `editValue` from `drafts[key]` immediately before calling `validateTunableValue(key, editValue)`
+  and `.update({ value: editValue.trim() })` — same validate-then-write body as before, same payload
+  shape, same call signature text the existing regression test locks down. Each card's primary heading
+  is the friendly label from `docs/ux-spec.md` §2.3's mapping table (`FRIENDLY_LABELS` — presentation
+  only), with the raw `SNAKE_CASE` key demoted to a small monospace subtitle beneath it — all 10 raw
+  keys still present in the rendered markup, just visually secondary (AC7c).
+- **Kill-switch toggle** (`components/KillSwitchToggle.tsx`): the click target is now a sliding
+  toggle-switch (`.toggle`, track+thumb, 30x17px track/13px thumb per Direction G's compact scale)
+  instead of a static badge + separate "Pause"/"Resume" link. `loadState()`/`handleToggle()`'s bodies —
+  the `.from("kill_switch_state").select("paused").eq("id", true).single()` read and the
+  `supabase.rpc("set_kill_switch", { p_paused: !paused, p_source: "admin-portal" })` write, followed by
+  a re-read via `loadState()` rather than an optimistic flip — are byte-identical to pre-INC-13; only the
+  returned JSX changed (AC8).
+- **Track-record view** (`app/(app)/track-record/page.tsx`): kept as a real, fully sortable/paginated/
+  filterable `<table>` (renamed class `crud-table` -> `log-table`, distinct from the watchlist/holdings
+  card treatment — see judgment call below), wrapped in a new `.table-scroll` container styled as a
+  Direction-G card (flatter shadow, `radius-md`) with local `overflow-x:auto` so it can never grow the
+  page past the viewport at any width (AC1), without touching any sort/filter/pagination logic.
+- **Login page** (`app/login/page.tsx`): restyled into Direction G's centered login card
+  (`login-wrap`/`login-card`/`logo-circle`/`google-btn`); `signInWithOAuth({ provider: "google", ... })`
+  call untouched.
+- **Viewport meta** (`app/layout.tsx`): added an explicit `viewport` export (`device-width`,
+  `initialScale: 1`) — Next.js already defaults to this, but making it explicit removes any ambiguity
+  for the phone/tablet breakpoint checks.
+
+## Judgment calls (flagged, not silently decided)
+
+1. **Desktop table-vs-grid resolution.** `docs/design/admin-portal.md` §16.10's mechanism paragraph
+   says watchlist/holdings keep "the existing `<table>` layout" at "tablet/desktop" widths, while
+   `docs/design/increment-plan.md`'s AC4 explicitly requires a 4-column **card grid** matching the
+   mockup at 1280px (desktop) — these two sentences are in direct tension for the desktop band
+   specifically. I read the two together as: keep the literal `<table>` at **tablet** only (per
+   §16.10's explicit text, tablet has few enough columns to fit as a real table without scrolling), and
+   apply Direction G's card grid at **desktop only** (per AC4's more specific, more recently written,
+   directly-testable requirement, and per the mockup itself, which is never a `<table>` at any
+   breakpoint). This is "more specific overrides more general" applied to two same-day-approved
+   documents, not a deviation from either — flagging so tech-lead can fold this reconciliation back
+   into §16.10's text if it agrees, since the current wording still reads as contradictory in isolation.
+2. **Track-record stays a real table, not per-row cards.** AC7(a) says "flatter shadows...across
+   watchlist, holdings, and track-record cards," and the mockup shows track-record as a `tr-card` grid.
+   But track-record's real table has 9 columns (vs. the mockup's illustrative 3-field cards) including
+   two clickable sort-toggle `<th>` buttons (Ticker, Verdict, Timestamp) that FR31 requires to stay
+   operable at every width. Converting it to the same data-label stacked-card mechanism as watchlist/
+   holdings would either hide those sort controls behind `thead{display:none}` (a functional-
+   reachability regression, not just a look change) or require re-inventing sort as tap targets outside
+   `<th>` (new interaction design, out of INC-13's presentation-only scope). I kept it a real, fully
+   sortable table at every width, wrapped in a card-styled scroll container that supplies the flatter-
+   shadow/smaller-radius tokens AC7(a) asks for and guarantees no page-level horizontal scroll (AC1),
+   without touching sort/filter/pagination. Flagging this as the weaker of the two literal AC7(a)
+   readings I could have taken — if qa/tech-lead wants literal per-record cards for track-record too, a
+   follow-up would need a compact-card interaction design for sort (not in this increment's scope).
+3. **Legacy `kill_switch_static.test.ts` literal strings.** That pre-existing regression test (written
+   for INC-7, owned by qa, not touched here per dev's file boundaries) asserts the literal substrings
+   `PAUSED`, `RUNNING`, `Resume`, and `Pause` appear somewhere in `KillSwitchToggle.tsx`'s source — but
+   Direction G's canonical markup (`docs/ux-spec.md` §7.4.2) has no separate PAUSED/RUNNING badge or
+   Pause/Resume link, only a `System: Running`/`System: Paused` label plus the toggle. I kept all four
+   literal strings as an accessible label on the toggle itself (`title` attribute + a `.sr-only`
+   screen-reader span: `"PAUSED — Resume"` / `"RUNNING — Pause"`) — this is a genuine accessibility
+   improvement (a bare color/position-only toggle has no accessible name otherwise), not a workaround
+   invented solely to satisfy the test; it also happens to keep the existing regression test green with
+   zero test-file edits, honoring AC6's "zero assertion changes" requirement. Flagging in case qa/
+   tech-lead wants the test file itself updated later to assert the new `.toggle`/`aria-pressed` shape
+   more directly instead of relying on the accessible-label text.
+
+## Structural "no functional regression" self-verification (acceptance criterion 5)
+
+- `{ git diff --name-only HEAD; git ls-files --others --exclude-standard admin-portal/; }` — exactly
+  the 10 allow-listed files (9 modified + 1 new: `components/NavToggle.tsx`). No `sql/`, `scripts/`,
+  `lib/*.ts`, or `tests/` file touched.
+- `git diff -U0 HEAD -- admin-portal/ | grep -E "^[+-]" | grep -E "supabase\.|validateHoldingsRow|
+  validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` — **one match**, a doc-comment
+  line in `AuthGuard.tsx` (`// Purely cosmetic (avatar-chip initials) — never used for authorization,
+  which is is_admin()/RLS.`) explaining that the new initials-avatar helper is *not* part of
+  authorization — prose, not a code change to any forbidden call, following the same
+  comment-exclusion convention this codebase's own tests already use (`codeOnly()`/`sqlCodeOnly()` in
+  `tests/admin_portal/*.test.ts`). Every actual call site (`createClient()`, `.rpc("set_kill_switch",
+  ...)`, `.from("kill_switch_state")...`, `.eq("id", true)`, `validateTunableValue(key, editValue)`,
+  `supabase.auth.signOut()`) is unchanged — confirmed line-by-line via `git diff` (with context) on each
+  touched file.
+- (Note: the increment plan's literal example command was `git diff main..inc-13-<slug>` — in this
+  repo's actual git history `main` does not yet contain the admin-portal app at all (it lives only on
+  `claude/admin-portal-ui-modernize-hhzgu5` and its descendants), so a `main`-based diff would show the
+  entire admin-portal tree as "new" and not usefully isolate INC-13's delta. I diffed against my actual
+  branch point instead — `claude/admin-portal-ui-modernize-hhzgu5` (equivalently, working-tree vs. HEAD,
+  since no commits landed on that branch after I forked from it) — which is the meaningful comparison
+  for this increment's structural check. Flagging in case tech-lead wants `docs/code-map.md`/the
+  increment plan's example command updated once this and prior admin-portal increments are actually
+  merged to `main`.)
+
+## How to run / verify
+
+- `cd admin-portal && npm install` (node_modules was not present in this sandbox at task start —
+  pre-existing environment gap, not caused by this change) `&& node --experimental-strip-types --test
+  tests/admin_portal/*.test.ts` (run from repo root) — **82 passed, 0 failed**, identical assertion
+  count/content to pre-INC-13 (verified by running the untouched suite against pre-INC-13 code first,
+  after installing `node_modules`, to establish this exact baseline).
+- `cd admin-portal && npx tsc --noEmit` — clean. `npx eslint .` — clean.
+- `cd admin-portal && NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=... npx next build` —
+  succeeds; all 8 routes (`/`, `/_not-found`, `/auth/callback`, `/holdings`, `/login`, `/track-record`,
+  `/tunables`, `/watchlist`) generate. `.next` removed afterward (not committed, matches
+  `build_bundle.test.ts`'s own convention).
+- Compiled-CSS inspection (extracted the actual `@media` blocks and their rule bodies from the built
+  bundle, `.next/static/chunks/*.css`, via a small Python brace-matcher): confirmed
+  `@media (min-width:640px) and (max-width:1023px)` reverts `.crud-table` to a real table,
+  `@media (min-width:1024px)` puts `.crud-table tbody` into a 4-column grid, hides `.nav-toggle-btn`,
+  and forces `.nav-panel` open, and `.tunable-grid` steps `1fr -> repeat(2,1fr) -> repeat(3,1fr)` across
+  the three bands — matches the design intent exactly.
+- Static-HTML check: `login.html`'s prerendered output contains `login-wrap`/`login-card`/`logo-circle`/
+  `google-btn` (this page renders fully server-side); the four `AuthGuard`-gated routes only prerender
+  their "Checking session…" state (expected — the real content is client-fetched after Supabase auth
+  resolves, so it can't be observed in static HTML; covered instead by the static-source-level tests and
+  manual code-path tracing above).
+- **Not run this session (flagged, not silently skipped): real-browser/DevTools viewport checks at
+  375px/768px/1280px (acceptance criteria 1-4, 7, 9).** This sandbox's egress policy blocks
+  `cdn.playwright.dev` (confirmed via `curl "$HTTPS_PROXY/__agentproxy/status"` — `connect_rejected`,
+  "gateway answered 403... policy denial"), so no Chromium binary could be installed for a real
+  Playwright/DevTools pass. In its place I verified the responsive mechanism by extracting and reading
+  the actual compiled CSS rule bodies per breakpoint (above) and by re-deriving each rule's layout
+  effect by hand against the acceptance criteria's literal geometry requirements (card widths, grid
+  column counts, overflow behavior). This is a real gap relative to "confirmed for all five screens at
+  all three widths" — qa should run the actual Playwright viewport pass this increment's ACs call for
+  before sign-off; I would not represent this as visually confirmed without that pass.
+- `python3 -m pytest -q --tb=short` (repo root, after `pip install -r requirements.txt` — `supabase`/
+  `httpx` etc. were not installed at task start, another pre-existing environment gap): **286 passed, 1
+  failed** — `tests/test_ingest.py::test_get_price_only_matches_get_market_data_price_fields_for_same_history`
+  fails with `assert 14.5 == None`. This is in `scripts/ingest.py`, a file entirely outside INC-13's
+  scope (`git diff --name-only HEAD -- scripts/ sql/ tests/` is empty — zero non-admin-portal files
+  touched); the failure reproduces identically on a clean checkout of this branch before any of my
+  edits, so it's a pre-existing, date-sensitive baseline issue (today's system date is 2026-07-31),
+  unrelated to this increment. Flagging rather than fixing, since `scripts/ingest.py` is outside
+  INC-13's allow-list.
+
+## Files touched
+
+- `admin-portal/app/globals.css` — full Direction G token set + responsive layout mechanism (nav
+  collapse, responsive tables, tunable cards, track-record scroll container, login card, kill-switch
+  toggle CSS).
+- `admin-portal/app/layout.tsx` — explicit `viewport` export.
+- `admin-portal/app/login/page.tsx` — Direction G card markup; OAuth call unchanged.
+- `admin-portal/app/(app)/watchlist/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx` —
+  `data-label` attributes added to every `<td>`; no other change.
+- `admin-portal/app/(app)/tunables/page.tsx` — restructured to always-visible per-key cards with
+  friendly labels; same validate-then-write call shape.
+- `admin-portal/app/(app)/track-record/page.tsx` — table wrapped in a card-styled scroll container,
+  class renamed `crud-table` -> `log-table`; no query/sort/filter/pagination logic changed.
+- `admin-portal/components/AuthGuard.tsx` — header restructured (brand, `NavToggle`-wrapped nav +
+  sign-out, user-chip avatar); auth-check `useEffect` unchanged.
+- `admin-portal/components/KillSwitchToggle.tsx` — sliding-toggle markup; `loadState`/`handleToggle`
+  bodies unchanged.
+- `admin-portal/components/NavToggle.tsx` — new, presentational-only collapsible-nav wrapper (local
+  `open` boolean, no data/business logic).
+
+## Known limitations
+
+- Real-browser viewport verification (AC1/AC2/AC3/AC4/AC7/AC9) not performed this session — see "How to
+  run / verify" above; qa should run this before sign-off.
+- AC9 (best-effort accessibility — keyboard-Tab reachability, contrast) was reasoned through manually
+  (every interactive control is a real `<button>`/`<a>`/`<input>`/`<select>`, none use a non-focusable
+  `<div>` as a click target, so native Tab order should reach all of them; text/background pairs use the
+  same Direction G token values the mockup itself uses) but not confirmed with a real keyboard/contrast
+  tool in this sandbox — recording this as a dated note (2026-07-31) rather than a pass/fail per NFR8's
+  own "not a gate" text, and flagging that qa should still spot-check it.
+- The two judgment calls above (desktop table-vs-grid band split; track-record staying a real table)
+  are reconciliations of the source documents as I read them, not unilateral scope changes — flagging
+  for tech-lead to fold back into `docs/design/admin-portal.md` §16.10 if it agrees, or correct me if it
+  reads the tension differently.
+
+---
+
+# Handoff — INC-13 fix cycle 1: BUG-010 (tablet card styling) + BUG-011 (track-record cards)
+
+**Date:** 2026-07-31. Branch: `inc-13-admin-portal-ui-modernization` (fix commit `3d1cdb3`, on top of the
+original build commit `ea68f5b`). qa's INC-13 run (`docs/test-report.md`) filed both bugs against the two
+judgment calls flagged in this file's prior INC-13 entry.
+
+## Build plan (written before coding)
+
+Re-read `docs/ux-spec.md` §7.3.2 (density table), §7.4/§7.4.2 (Direction G), the mockup's watchlist and
+`#trackrecord` sections (`docs/ux-mockups/direction-g-compact-toggle.html`), and
+`docs/design/admin-portal.md` §16.10's "Layout mechanism per current file" paragraph (the literal
+instruction that the tablet/desktop bands keep the existing `<table>` layout — this sentence is about the
+DOM/CSS-display *mechanism*, not about withholding card *styling*, which is a distinct instruction from
+AC7(a)/§7.3.1's shadow/radius tokens). Both bugs are presentation-only fixes inside the already-approved
+file allow-list (`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`) — no
+design deviation, nothing to flag to tech-lead. Approach: (a) BUG-010 — add a `.crud-table-wrap` container
+around the existing `<table class="crud-table">` in watchlist/holdings, transparent by default, and only
+at the tablet media query (`640–1023px`) given `background/border-radius/box-shadow` (Direction G's
+`--color-surface`/`--radius-md`/`--shadow-card` tokens) — the table's own DOM/display mechanism (real
+`<table>`, `<tr>` as `table-row`) is untouched, satisfying admin-portal.md §16.10's literal text, while
+the wrap now supplies the card surface AC7(a) requires (a `<tr>` with `display:table-row` can't reliably
+paint its own `box-shadow` across browsers, hence styling the wrapper, not the row). Phone/desktop stay
+exactly as qa already passed (`.crud-table-wrap` has no rule outside that one media query, so the
+per-row/per-grid-cell card styling already in place is untouched). (b) BUG-011 — replace track-record's
+`<table class="log-table">` inside `.table-scroll` with a genuine `.tr-cards`/`.tr-card` grid (3-col
+desktop / 2-col tablet / 1-col phone, same three-tier breakpoint pattern already used for
+`.tunable-grid`), matching the mockup's `#trackrecord` section field-for-field (ticker + verdict pill,
+rationale, then the remaining fields — confidence/price/parse status/label/alerted — in a `<dl>`, then the
+timestamp). The sortable `<th>` click handlers have no home in a card layout (no column-header row), so
+`toggleSort(column)` is replaced with two controls in a `.sort-controls` bar: a `<select>` for
+`sortColumn` (`changeSortColumn`, resets `sortAscending` to `false` on column change — same reset
+semantics `toggleSort` used when switching columns) and a separate button for `toggleSortDirection`
+(flips `sortAscending`) — the underlying `sortColumn`/`sortAscending` state and the `.order()`-driven
+`loadRows()` query are byte-for-byte unchanged, only the control surface changed. Removed the now-unused
+`.table-scroll`/`.log-table` CSS (dead code once track-record no longer renders a `<table>`). Verify: full
+existing suite (82 TS / 286 Python, same pre-existing Python failure qa already flagged as unrelated),
+`npm run build`/`npm run lint`, the AC5 structural grep re-run on this fix's own diff, and a Playwright
+pass against a static harness built from the exact same class names/markup structure the edited `.tsx`
+files emit (see "How verified" below — chosen over full Supabase-network mocking since this fix touches
+zero query/auth logic, only CSS/markup, and the pre-installed Chromium + globally-installed `playwright`
+npm package are available per this session's environment notes, `playwright install` still blocked).
+
+## What changed, per bug
+
+**BUG-010 (watchlist/holdings: zero card styling at 768px tablet width).**
+- `admin-portal/app/globals.css` — added `.crud-table-wrap` (transparent by default; at
+  `@media (min-width: 640px) and (max-width: 1023px)` it gets `background: var(--color-surface)`,
+  `border-radius: var(--radius-md)`, `box-shadow: var(--shadow-card)`, `padding: var(--space-3)`).
+- `admin-portal/app/(app)/watchlist/page.tsx` / `holdings/page.tsx` — wrapped the existing
+  `<table className="crud-table">` in `<div className="crud-table-wrap">`. No other line changed — same
+  columns, same `data-label` attributes, same CRUD handlers.
+- Result: at 768px the table now renders inside a single visible card surface (white background, 8px
+  radius, single-layer shadow) instead of a flush, boundary-less table. At 375px/1280px `.crud-table-wrap`
+  contributes no visual change (still transparent outside the tablet media query) — the row-level
+  (phone) and grid-cell-level (desktop) card styling qa already passed is untouched.
+
+**BUG-011 (track-record: never rendered as cards at any width).**
+- `admin-portal/app/globals.css` — removed `.table-scroll`/`.log-table` (dead code, no longer
+  referenced); added `.sort-controls`, `.tr-cards` (1-col phone / 2-col tablet / 2-col-min-1024 3-col
+  desktop, mirroring `.tunable-grid`'s three-tier pattern), `.tr-card`, `.verdict-pill`
+  (`.buy`/`.sell`/`.hold`), and the card's internal `.top`/`.rationale`/`.tr-fields`/`.foot` rules —
+  card anatomy matches the mockup's `#trackrecord` section (`background: var(--color-surface)`,
+  `border-radius: var(--radius-md)`, `box-shadow: var(--shadow-card)`).
+- `admin-portal/app/(app)/track-record/page.tsx` — replaced the `<table>` render with a
+  `.tr-cards` grid of `.tr-card` divs (ticker + verdict pill, rationale, a `<dl>` of the remaining
+  fields, timestamp footer). Replaced the three sortable `<th>` buttons with a `.sort-controls` bar: a
+  `<select>` (`changeSortColumn`) for `sortColumn` and a direction-toggle `<button>`
+  (`toggleSortDirection`) for `sortAscending`. `loadRows()`, `CALL_LOG_SELECT`, `PAGE_SIZE`,
+  `appliedFilters`/filter form, and pagination are all byte-for-byte unchanged.
+- Result: track-record now genuinely renders as cards at all three widths (3-col desktop / 2-col tablet /
+  1-col phone), and sort is still fully reachable (dropdown + direction button) without a `<th>`.
+
+## How verified
+
+- **Structural grep (AC5), re-run on this fix's own diff:** `git diff -- admin-portal/ | grep -E
+  "supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` —
+  **zero matches.** `git status --short` confirms only the four allow-listed files changed
+  (`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`).
+- **Existing suite:** `node --experimental-strip-types --test tests/admin_portal/*.test.ts` — **82
+  passed, 0 failed**, zero assertion changes (none of the static-source checks constrain track-record's
+  markup, only its query/filter/pagination logic, which is untouched — confirmed by re-reading
+  `tests/admin_portal/kill_switch_static.test.ts` lines 143–193 before editing). `SKIP_TUNABLES_FETCH=true
+  python3 -m pytest -q --tb=short` — **286 passed, 1 failed** (`test_ingest.py`'s
+  date-sensitive/pre-existing failure qa already flagged as unrelated to `admin-portal/`, reproduced
+  identically here).
+- **Build/lint:** `cd admin-portal && npm run build` — compiles cleanly, all 8 routes present, TypeScript
+  check passes; `npm run lint` — zero errors/warnings.
+- **Visual/computed-style verification:** built a static HTML harness (this session's scratchpad, not
+  committed) reusing the exact class names/DOM structure the edited `.tsx` files emit, linked against the
+  real `admin-portal/app/globals.css`, driven by Playwright + the pre-installed Chromium
+  (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) at 375/768/1280px:
+  - **375px:** `.crud-table-wrap` computed `background: rgba(0,0,0,0)` / `box-shadow: none` (no visual
+    effect, as intended — phone already uses per-row cards); `.crud-table tbody tr` itself is still
+    `background: rgb(255,255,255)` / `box-shadow: 0 1px 2px rgba(20,20,43,.08)` / `border-radius: 8px`
+    (unchanged, still a card). `.tr-cards` computed `display: grid`, one column
+    (`grid-template-columns: 375px`), 3 `.tr-card`s present, each with the same card background/shadow/
+    radius. No page-level horizontal scroll.
+  - **768px:** `.crud-table-wrap` now computed `background: rgb(255,255,255)`, `box-shadow: rgba(20,20,
+    43,.08) 0 1px 2px`, `border-radius: 8px` — **BUG-010 fixed** (was `rgba(0,0,0,0)`/`none`/`0px`).
+    `.crud-table tbody`/`tr` remain `table-row-group`/`table-row` (the literal `<table>` mechanism
+    admin-portal.md §16.10 calls for at this band is unchanged). `.tr-cards` computed 2 columns
+    (`379px 379px`) — **BUG-011 fixed** (previously 0 `.tr-card` elements existed at any width).
+  - **1280px:** `.crud-table-wrap` back to transparent (desktop grid cells carry their own card styling,
+    confirmed unchanged: `.crud-table tbody` computed `display: grid` with 4 equal tracks, `tr` still
+    card-styled) — AC4's 4-col desktop grid, which qa already passed, is untouched. `.tr-cards` computed
+    3 columns (`420px 420px 420px`).
+  - This confirms the specific CSS/markup fix for both bugs without needing to reproduce qa's full
+    Supabase-network-mock harness (auth cookie codec, RPC/REST mocking) — appropriate here since this fix
+    touches zero query/auth/RPC logic (confirmed by the AC5 grep above), only CSS and markup.
+
+## Known limitations
+
+- The Playwright pass above is a static-harness verification (real compiled CSS + the exact markup shape
+  the edited components emit), not a render of the live Next.js app through a mocked Supabase session —
+  qa's own full real-browser pass (auth-cookie-seeded, mocked REST/RPC) is the higher-fidelity check and
+  should be re-run to confirm the same computed-style results hold through the actual React render and to
+  re-confirm AC1/AC2/AC3/AC4/AC7(b)/(c)/AC8 are still green (nothing in this fix touches those screens/
+  components, but a fresh pass is qa's call, not assumed here).
+- `.tr-card`'s field layout (ticker/verdict/rationale/a `<dl>` of confidence-price-parse_status-label-
+  alerted/timestamp) shows every field the prior table did — the mockup's sample card only shows a subset
+  (ticker, verdict, rationale, price, timestamp) since it's demo data; this build keeps every real field
+  the app already surfaces (no information dropped), styled with the same card anatomy.
+- Sort-as-dropdown (`changeSortColumn`/`toggleSortDirection`) is a new interaction shape not depicted in
+  the mockup (which uses static demo data with no interactive sort at all) — reasoned through against
+  qa's explicit suggestion in the bug report; the underlying `sortColumn`/`sortAscending`/`.order()`
+  contract is unchanged, only the control surface.

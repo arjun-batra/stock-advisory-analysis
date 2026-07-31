@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Direction B — Dense / Data-forward — Admin Portal Mockup</title>
+<style>
+  :root{
+    --color-bg:#0B0E14;
+    --color-surface:#141821;
+    --color-surface-alt:#1B202B;
+    --color-border:#2A303C;
+    --color-text-primary:#E4E7EB;
+    --color-text-secondary:#8B94A3;
+    --color-accent:#22D3EE;
+    --color-accent-hover:#67E8F9;
+    --color-success:#22C55E;
+    --color-warning:#EAB308;
+    --color-danger:#F87171;
+    --space-1:2px; --space-2:4px; --space-3:8px; --space-4:12px;
+    --space-5:16px; --space-6:24px; --space-7:32px; --space-8:40px;
+    --font-size-xs:11px; --font-size-sm:12px; --font-size-base:14px;
+    --font-size-lg:16px; --font-size-xl:20px; --font-size-2xl:28px;
+    --font-family-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --radius-sm:2px;
+    --row-height-compact:32px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--color-bg); color:var(--color-text-primary);
+    font-family:var(--font-family-sans); font-size:var(--font-size-base);
+  }
+  .banner{background:#000; color:var(--color-accent); padding:var(--space-3) var(--space-5); font-size:var(--font-size-sm); font-family:var(--font-family-mono);}
+  .banner a{color:var(--color-accent-hover); margin-right:var(--space-4); text-decoration:none;}
+
+  .app{ display:flex; min-height:100vh; }
+  .rail{
+    width:160px; flex-shrink:0; background:var(--color-surface); border-right:1px solid var(--color-border);
+    padding:var(--space-5) var(--space-3);
+  }
+  .rail .logo{ font-family:var(--font-family-mono); font-size:var(--font-size-sm); color:var(--color-text-secondary); margin-bottom:var(--space-6); }
+  .rail nav a{
+    display:flex; align-items:center; gap:var(--space-2); padding:var(--space-3) var(--space-3); margin-bottom:var(--space-1);
+    color:var(--color-text-secondary); text-decoration:none; border-left:2px solid transparent; font-size:var(--font-size-sm);
+  }
+  .rail nav a.active{ color:var(--color-accent); border-left-color:var(--color-accent); background:var(--color-surface-alt); }
+  .rail nav a .label{ display:inline; }
+
+  .main{ flex:1; min-width:0; }
+  .header{
+    display:flex; align-items:center; justify-content:space-between; gap:var(--space-4);
+    padding:var(--space-3) var(--space-5); border-bottom:1px solid var(--color-border); background:var(--color-surface);
+    font-family:var(--font-family-mono); font-size:var(--font-size-sm);
+  }
+  .killswitch{ display:flex; align-items:center; gap:var(--space-2); }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--color-success); display:inline-block; }
+  .dot.paused{ background:var(--color-warning); }
+  .user-chip{ color:var(--color-text-secondary); }
+
+  section.screen{ padding:var(--space-6) var(--space-5); border-bottom:6px solid var(--color-bg); }
+  section.screen h2{ font-size:var(--font-size-lg); margin:0 0 var(--space-4) 0; font-family:var(--font-family-mono); display:flex; justify-content:space-between; align-items:center; }
+  .btn{
+    background:var(--color-accent); color:#001014; border:none; border-radius:var(--radius-sm);
+    padding:var(--space-2) var(--space-4); font-size:var(--font-size-sm); font-weight:600; cursor:pointer; font-family:var(--font-family-mono);
+  }
+  .btn:hover{ background:var(--color-accent-hover); }
+  .btn.secondary{ background:transparent; color:var(--color-text-primary); border:1px solid var(--color-border); }
+
+  table{ width:100%; border-collapse:collapse; background:var(--color-surface); font-family:var(--font-family-mono); font-size:var(--font-size-sm); }
+  th,td{ text-align:left; padding:var(--space-2) var(--space-4); height:var(--row-height-compact); border-bottom:1px solid var(--color-border); }
+  th{ color:var(--color-text-secondary); font-weight:400; text-transform:uppercase; font-size:var(--font-size-xs); background:var(--color-surface-alt); }
+  tbody tr:nth-child(even){ background:var(--color-surface-alt); }
+  td.num{ text-align:right; }
+  .status-dot{ color:var(--color-success); }
+  .status-dot.watch{ color:var(--color-text-secondary); }
+  .actions a{ color:var(--color-accent); margin-right:var(--space-3); text-decoration:none; cursor:pointer; }
+
+  .list-compact{ display:none; font-family:var(--font-family-mono); font-size:var(--font-size-sm); }
+  .list-row{ padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--color-border); background:var(--color-surface); cursor:pointer; }
+  .list-row .line{ display:flex; justify-content:space-between; }
+  .list-row .expand{ display:none; padding:var(--space-3); background:var(--color-surface-alt); margin-top:var(--space-2); border-radius:var(--radius-sm); }
+  .list-row.open .expand{ display:block; }
+  .expand .inline-field{ display:flex; gap:var(--space-3); margin-bottom:var(--space-2); align-items:center; }
+  .expand input{ background:var(--color-bg); border:1px solid var(--color-border); color:var(--color-text-primary); padding:var(--space-2); font-family:var(--font-family-mono); font-size:var(--font-size-sm); width:100px;}
+
+  .form-panel{
+    background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-sm);
+    padding:var(--space-5); max-width:420px; margin-top:var(--space-5); font-family:var(--font-family-mono);
+  }
+  .form-panel h3{ margin-top:0; font-size:var(--font-size-base); color:var(--color-accent); }
+  .field{ margin-bottom:var(--space-4); }
+  .field label{ display:block; font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-bottom:var(--space-1); text-transform:uppercase; }
+  .field input, .field select{
+    width:100%; padding:var(--space-2) var(--space-3); border:1px solid var(--color-border); border-radius:var(--radius-sm);
+    font-size:var(--font-size-sm); background:var(--color-bg); color:var(--color-text-primary); font-family:var(--font-family-mono);
+  }
+  .field .derived{ font-size:var(--font-size-xs); color:var(--color-accent); background:var(--color-surface-alt); padding:var(--space-2) var(--space-3); border-radius:var(--radius-sm); }
+  .field .error{ color:var(--color-danger); font-size:var(--font-size-xs); margin-top:var(--space-1); }
+
+  .tunable-line{
+    display:grid; grid-template-columns: 180px 1fr 160px 140px 140px; gap:var(--space-3); align-items:center;
+    padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--color-border); font-family:var(--font-family-mono); font-size:var(--font-size-sm);
+  }
+  .tunable-line:nth-child(even){ background:var(--color-surface-alt); }
+  .tunable-line .key{ color:var(--color-accent); font-weight:600; }
+  .tunable-line .desc{ color:var(--color-text-secondary); font-size:var(--font-size-xs); }
+  .tunable-line input, .tunable-line select{ background:var(--color-bg); border:1px solid var(--color-border); color:var(--color-text-primary); padding:var(--space-2); font-family:var(--font-family-mono); font-size:var(--font-size-sm); width:100%; }
+  .tunable-line .updated{ color:var(--color-text-secondary); font-size:var(--font-size-xs); }
+
+  .verdict{ font-family:var(--font-family-mono); font-weight:600; }
+  .verdict.buy{ color:var(--color-success); }
+  .verdict.sell{ color:var(--color-danger); }
+  .verdict.hold{ color:var(--color-warning); }
+  .filters{ display:flex; gap:var(--space-3); margin-bottom:var(--space-4); font-family:var(--font-family-mono); font-size:var(--font-size-sm); }
+  .filters select{ background:var(--color-surface); border:1px solid var(--color-border); color:var(--color-text-primary); padding:var(--space-2) var(--space-3); }
+
+  .login-wrap{ display:flex; align-items:center; justify-content:center; padding:var(--space-8) var(--space-4); }
+  .login-card{ background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-sm); padding:var(--space-7); max-width:340px; width:100%; text-align:center; font-family:var(--font-family-mono);}
+  .login-card h2{ font-size:var(--font-size-base); color:var(--color-accent); margin-bottom:var(--space-2); }
+  .login-card p.sub{ color:var(--color-text-secondary); font-size:var(--font-size-sm); margin-bottom:var(--space-5); }
+  .google-btn{ width:100%; padding:var(--space-3); border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-bg); color:var(--color-text-primary); font-size:var(--font-size-sm); cursor:pointer; font-family:var(--font-family-mono); }
+  .reject-msg{ margin-top:var(--space-4); background:#2A1414; border:1px solid var(--color-danger); color:var(--color-danger); padding:var(--space-3); border-radius:var(--radius-sm); font-size:var(--font-size-sm); text-align:left; }
+
+  .bottom-bar{ display:none; }
+
+  @media (max-width: 1023px){
+    .rail{ width:56px; padding:var(--space-4) var(--space-1); }
+    .rail .logo{ display:none; }
+    .rail nav a .label{ display:none; }
+    .rail nav a{ justify-content:center; }
+    table .col-type{ display:none; }
+    .tunable-line{ grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+  }
+
+  @media (max-width: 599px){
+    .app{ flex-direction:column; }
+    .rail{ display:none; }
+    .bottom-bar{
+      display:flex; position:sticky; bottom:0; background:var(--color-surface); border-top:1px solid var(--color-border);
+      justify-content:space-around; padding:var(--space-2) 0; font-family:var(--font-family-mono); font-size:var(--font-size-xs);
+    }
+    .bottom-bar a{ color:var(--color-text-secondary); text-decoration:none; }
+    table.responsive-table{ display:none; }
+    .list-compact{ display:block; }
+    section.screen{ padding:var(--space-4); }
+    .form-panel{ max-width:100%; }
+    .filters{ flex-direction:column; }
+  }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  DIRECTION_B :: DENSE/DATA-FORWARD — resize window: phone(&le;599px) / tablet(600-1023px) / desktop(&ge;1024px)
+  <a href="#login">login</a><a href="#watchlist">watchlist</a><a href="#tunables">tunables</a><a href="#trackrecord">track-record</a>
+</div>
+
+<!-- LOGIN -->
+<section class="screen" id="login">
+  <h2>login (FR27)</h2>
+  <div class="login-wrap">
+    <div class="login-card">
+      <h2>admin-portal://</h2>
+      <p class="sub">sign in with an authorized Google account</p>
+      <button class="google-btn">&#9673; Sign in with Google</button>
+      <div class="reject-msg">
+        This Google account isn't authorized for this admin portal.<br>
+        <a href="#" style="color:inherit; font-weight:600;">try a different account</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="app">
+  <div class="rail">
+    <div class="logo">admin//portal</div>
+    <nav>
+      <a href="#watchlist" class="active">[WL]<span class="label">watchlist</span></a>
+      <a href="#tunables">[TN]<span class="label">tunables</span></a>
+      <a href="#trackrecord">[TR]<span class="label">track-record</span></a>
+    </nav>
+  </div>
+  <div class="main">
+    <div class="header">
+      <div class="killswitch"><span class="dot"></span> kill_switch: RUNNING</div>
+      <div class="user-chip">arjun@gmail.com</div>
+    </div>
+
+    <!-- WATCHLIST / HOLDINGS -->
+    <section class="screen" id="watchlist">
+      <h2>watchlist &amp; holdings <button class="btn">+ add_row</button></h2>
+      <table class="responsive-table">
+        <thead><tr><th></th><th>ticker</th><th class="col-type">type</th><th>mkt</th><th>status</th><th>shares</th><th>cost_basis</th><th>actions</th></tr></thead>
+        <tbody>
+          <tr><td><span class="status-dot">&#9679;</span></td><td>AAPL</td><td class="col-type">STK</td><td>US</td><td>HELD</td><td class="num">10</td><td class="num">150.00 USD</td><td class="actions"><a>edit</a><a>del</a></td></tr>
+          <tr><td><span class="status-dot">&#9679;</span></td><td>VOO</td><td class="col-type">ETF</td><td>US</td><td>HELD</td><td class="num">5</td><td class="num">410.00 USD</td><td class="actions"><a>edit</a><a>del</a></td></tr>
+          <tr><td><span class="status-dot">&#9679;</span></td><td>TD</td><td class="col-type">STK</td><td>TSX</td><td>HELD</td><td class="num">25</td><td class="num">85.20 CAD</td><td class="actions"><a>edit</a><a>del</a></td></tr>
+          <tr><td><span class="status-dot watch">&#9675;</span></td><td>MSFT</td><td class="col-type">STK</td><td>US</td><td>WATCH</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="actions"><a>edit</a><a>del</a></td></tr>
+          <tr><td><span class="status-dot watch">&#9675;</span></td><td>RELIANCE</td><td class="col-type">STK</td><td>NSE</td><td>WATCH</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="actions"><a>edit</a><a>del</a></td></tr>
+        </tbody>
+      </table>
+
+      <div class="list-compact">
+        <div class="list-row open">
+          <div class="line"><span>&#9679; AAPL US&middot;STK HELD 10sh 150.00</span><span>&#9662;</span></div>
+          <div class="expand">
+            <div class="inline-field">shares:<input value="10"></div>
+            <div class="inline-field">cost:<input value="150.00"></div>
+            <div class="inline-field" style="color:var(--color-accent);">currency: USD (from US)</div>
+            <button class="btn">save</button> <button class="btn secondary">delete</button>
+          </div>
+        </div>
+        <div class="list-row"><div class="line"><span>&#9679; TD TSX&middot;STK HELD 25sh 85.20</span><span>&#9656;</span></div></div>
+        <div class="list-row"><div class="line"><span>&#9675; MSFT US&middot;STK WATCH &mdash;</span><span>&#9656;</span></div></div>
+      </div>
+
+      <div class="form-panel">
+        <h3>add / edit ticker</h3>
+        <div class="field"><label>ticker</label><input value="AAPL"></div>
+        <div class="field"><label>market</label><select><option>US</option><option>TSX</option><option>NSE</option></select></div>
+        <div class="field"><label>type</label><select><option>stock</option><option>ETF</option></select></div>
+        <div class="field"><label>status</label><select><option>held</option><option>watch-only</option></select></div>
+        <div class="field"><label>shares</label><input value="10"><div class="error" style="display:none;">shares must be &gt; 0</div></div>
+        <div class="field"><label>cost_basis</label><input value="150.00"></div>
+        <div class="field"><label>currency</label><div class="derived">USD (from US) — derived</div></div>
+        <button class="btn">save</button> <button class="btn secondary">cancel</button>
+      </div>
+    </section>
+
+    <!-- TUNABLES -->
+    <section class="screen" id="tunables">
+      <h2>tunables (FR30)</h2>
+      <div class="tunable-line">
+        <div class="key">GEMINI_MODEL</div>
+        <div class="desc">primary model for AI judgment calls</div>
+        <div>ex: gemini-2.0-flash</div>
+        <input value="gemini-2.0-flash">
+        <div class="updated">upd 07-20&middot;arjun</div>
+      </div>
+      <div class="tunable-line">
+        <div class="key">ALERTS_ENABLED</div>
+        <div class="desc">master alert switch (AND-gated w/ workflow input)</div>
+        <div>true/false</div>
+        <select><option>true</option><option>false</option></select>
+        <div class="updated">upd 07-20&middot;arjun</div>
+      </div>
+      <div class="tunable-line">
+        <div class="key">DISCOVERY_GAINER_PCT</div>
+        <div class="desc">min % gain to trip gainer signal</div>
+        <div>ex: 5.0</div>
+        <input value="5.0">
+        <div class="updated">upd 07-15&middot;arjun</div>
+      </div>
+      <div class="tunable-line">
+        <div class="key">DISCOVERY_SHORTLIST_MAX</div>
+        <div class="desc">max candidates passed to AI per run</div>
+        <div>ex: 20</div>
+        <input value="20">
+        <div class="updated">upd 07-15&middot;arjun</div>
+      </div>
+    </section>
+
+    <!-- TRACK RECORD -->
+    <section class="screen" id="trackrecord">
+      <h2>track_record (FR31)</h2>
+      <div class="filters">
+        <select><option>market: all</option><option>US</option><option>TSX</option><option>NSE</option></select>
+        <select><option>sort: newest</option><option>sort: ticker</option></select>
+      </div>
+      <table class="responsive-table">
+        <thead><tr><th>ticker</th><th>mkt</th><th>verdict</th><th>rationale</th><th>price</th><th>p/l%</th><th>alerted</th><th>ts</th></tr></thead>
+        <tbody>
+          <tr><td>AAPL</td><td>US</td><td><span class="verdict buy">BUY</span></td><td>breaking resistance, strong vol</td><td class="num">162.40</td><td class="num">+8.3%</td><td>Y</td><td>14:00 ET</td></tr>
+          <tr><td>TD</td><td>TSX</td><td><span class="verdict hold">HOLD</span></td><td>range-bound, earnings in 2wk</td><td class="num">84.10</td><td class="num">-1.3%</td><td>N</td><td>13:30 ET</td></tr>
+          <tr><td>RELIANCE</td><td>NSE</td><td><span class="verdict sell">SELL</span></td><td>weak guidance, breakdown</td><td class="num">2845</td><td class="num">&mdash;</td><td>Y</td><td>15:45 IST</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="bottom-bar">
+      <a href="#watchlist">[WL]</a>
+      <a href="#tunables">[TN]</a>
+      <a href="#trackrecord">[TR]</a>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -2,8 +2,9 @@
 
 **Owner:** tech-lead. Backfilled 2026-07-29; refreshed 2026-07-30 (REV-118, Pass 28 — `sql/` list was
 stale); refreshed again 2026-07-31 (REV-122/REV-126 — the `run_hourly.py` REV-116 caveat and
-`kill_switch_abort_log.sql`'s apply-status were stale). Map for "does the code still match this" — for
-rationale read `docs/design.md` / `docs/design/*.md`.
+`kill_switch_abort_log.sql`'s apply-status were stale); refreshed again 2026-07-31 (REV-145, Pass 34 —
+`admin-portal/components/` inventory was missing INC-13's new `NavToggle.tsx`). Map for "does the code
+still match this" — for rationale read `docs/design.md` / `docs/design/*.md`.
 Refresh whenever a merged increment changes structure.
 
 ## Modules
@@ -21,7 +22,9 @@ Refresh whenever a merged increment changes structure.
 
 **`admin-portal/`** (Next.js/Vercel; the one write-capable, human-authenticated surface)
 - `app/` — `login/`, `auth/callback/` (only server route, no secret), `(app)/watchlist|holdings|
-  tunables|track-record/`. `components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`.
+  tunables|track-record/`. `components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`, `NavToggle.tsx`
+  (INC-13, presentational-only collapsible mobile/tablet nav; local open/closed state, no data/Supabase
+  calls; CSS forces the panel open at desktop widths regardless of its state).
 - `lib/supabase-client.ts` (the only Supabase client — browser, anon key + session), `lib/admin-guard.ts`
   (UI-layer allowlist check, UX only, not the security boundary), `lib/validation.ts` (form validation
   mirroring `sql/schema.sql` CHECKs, no new rules invented).

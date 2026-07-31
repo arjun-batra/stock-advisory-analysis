@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Direction C — Card-based / Friendly SaaS — Admin Portal Mockup</title>
+<style>
+  :root{
+    --color-bg:#F4F5F7;
+    --color-surface:#FFFFFF;
+    --color-border:#E8E9ED;
+    --color-text-primary:#1F2430;
+    --color-text-secondary:#6B7280;
+    --color-accent:#7C3AED;
+    --color-accent-hover:#6D28D9;
+    --color-success-bg:#DCFCE7; --color-success-fg:#166534;
+    --color-warning-bg:#FEF3C7; --color-warning-fg:#92400E;
+    --color-danger-bg:#FEE2E2; --color-danger-fg:#991B1B;
+    --color-info-bg:#DBEAFE; --color-info-fg:#1E40AF;
+    --space-1:4px; --space-2:8px; --space-3:16px; --space-4:20px;
+    --space-5:24px; --space-6:32px; --space-7:48px; --space-8:64px;
+    --font-size-xs:12px; --font-size-sm:14px; --font-size-base:16px;
+    --font-size-lg:20px; --font-size-xl:28px; --font-size-2xl:36px;
+    --radius-md:12px; --radius-lg:20px;
+    --shadow-card: 0 1px 3px rgba(20,20,43,0.08), 0 4px 12px rgba(20,20,43,0.06);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--color-bg); color:var(--color-text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:var(--font-size-base);
+  }
+  .banner{background:var(--color-accent); color:#fff; padding:var(--space-2) var(--space-4); font-size:var(--font-size-sm); border-radius:0 0 var(--radius-md) var(--radius-md);}
+  .banner a{ color:#EDE9FE; margin-right:var(--space-3); text-decoration:underline; }
+
+  .app{ display:flex; min-height:100vh; }
+  .sidebar{
+    width:200px; flex-shrink:0; background:var(--color-surface); margin:var(--space-3); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-card); padding:var(--space-4);
+  }
+  .sidebar h1{ font-size:var(--font-size-base); margin:0 0 var(--space-4) 0; }
+  .sidebar nav a{
+    display:block; padding:var(--space-2) var(--space-3); margin-bottom:var(--space-1);
+    color:var(--color-text-secondary); text-decoration:none; border-radius:var(--radius-md); font-size:var(--font-size-sm);
+  }
+  .sidebar nav a.active{ background:#F3E8FF; color:var(--color-accent); font-weight:600; }
+
+  .main{ flex:1; min-width:0; padding-right:var(--space-3); }
+  .header{
+    display:flex; align-items:center; justify-content:flex-end; gap:var(--space-3);
+    margin:var(--space-3) var(--space-3) 0 0; background:var(--color-surface); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-card); padding:var(--space-3) var(--space-4);
+  }
+  .pill{ padding:4px var(--space-3); border-radius:999px; font-size:var(--font-size-xs); font-weight:600; display:inline-flex; align-items:center; gap:6px; }
+  .pill.running{ background:var(--color-success-bg); color:var(--color-success-fg); }
+  .pill.paused{ background:var(--color-warning-bg); color:var(--color-warning-fg); }
+  .user-chip{ width:32px; height:32px; border-radius:50%; background:var(--color-accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:var(--font-size-xs); }
+
+  section.screen{ padding:var(--space-5); }
+  section.screen h2{ font-size:var(--font-size-xl); margin:0 0 var(--space-4) 0; display:flex; align-items:center; justify-content:space-between; font-weight:700; }
+  .btn{
+    background:var(--color-accent); color:#fff; border:none; border-radius:999px;
+    padding:var(--space-2) var(--space-4); font-size:var(--font-size-sm); font-weight:600; cursor:pointer;
+  }
+  .btn:hover{ background:var(--color-accent-hover); }
+  .btn.secondary{ background:#fff; color:var(--color-text-primary); border:1px solid var(--color-border); }
+  .btn.icon{ background:#fff; color:var(--color-text-secondary); border:1px solid var(--color-border); border-radius:50%; width:32px; height:32px; padding:0; }
+
+  .toolbar{ display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-4); gap:var(--space-3); }
+  .search{ padding:var(--space-2) var(--space-3); border:1px solid var(--color-border); border-radius:999px; font-size:var(--font-size-sm); flex:1; max-width:280px; }
+
+  .card-grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:var(--space-4); }
+  .ticker-card{
+    background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); padding:var(--space-4);
+  }
+  .ticker-card .top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:var(--space-2); }
+  .ticker-card .top strong{ font-size:var(--font-size-lg); }
+  .ticker-card .mkt{ color:var(--color-text-secondary); font-size:var(--font-size-sm); }
+  .pill.type{ background:var(--color-info-bg); color:var(--color-info-fg); }
+  .pill.held{ background:var(--color-success-bg); color:var(--color-success-fg); }
+  .pill.watch{ background:#F3F4F6; color:var(--color-text-secondary); }
+  .ticker-card .figures{ margin:var(--space-3) 0; font-size:var(--font-size-sm); color:var(--color-text-secondary); }
+  .ticker-card .figures strong{ color:var(--color-text-primary); display:block; font-size:var(--font-size-base); }
+  .ticker-card .card-actions{ display:flex; justify-content:flex-end; gap:var(--space-2); }
+
+  .form-modal{
+    background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card);
+    padding:var(--space-5); max-width:420px; margin-top:var(--space-5);
+  }
+  .form-modal h3{ margin-top:0; font-size:var(--font-size-lg); }
+  .field{ margin-bottom:var(--space-4); }
+  .field label{ display:block; font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-bottom:var(--space-1); font-weight:600; }
+  .field input, .field select{
+    width:100%; padding:var(--space-2) var(--space-3); border:1px solid var(--color-border); border-radius:var(--radius-md);
+    font-size:var(--font-size-sm); background:#FAFAFB;
+  }
+  .field .derived{ font-size:var(--font-size-xs); color:var(--color-accent); background:#F3E8FF; padding:var(--space-2) var(--space-3); border-radius:999px; display:inline-block; }
+  .field .error{ color:var(--color-danger-fg); font-size:var(--font-size-xs); margin-top:var(--space-1); }
+
+  .accordion{ display:flex; flex-direction:column; gap:var(--space-3); }
+  .acc-card{ background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); padding:var(--space-4); }
+  .acc-card .head{ display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+  .acc-card .head .head-label{ display:flex; flex-direction:column; }
+  .acc-card .head .friendly{ font-weight:700; }
+  .acc-card .head .key{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-weight:400; font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-top:2px; }
+  .acc-card .head .val{ color:var(--color-text-secondary); font-size:var(--font-size-sm); }
+  .acc-card .body{ margin-top:var(--space-3); display:none; }
+  .acc-card.open .body{ display:block; }
+  .acc-card .desc{ color:var(--color-text-secondary); font-size:var(--font-size-sm); margin-bottom:var(--space-2); }
+  .acc-card .example{ color:var(--color-text-secondary); font-size:var(--font-size-xs); margin-bottom:var(--space-2); }
+  .acc-card input, .acc-card select{ padding:var(--space-2) var(--space-3); border:1px solid var(--color-border); border-radius:var(--radius-md); font-size:var(--font-size-sm); }
+  .acc-card .updated{ font-size:var(--font-size-xs); color:var(--color-text-secondary); margin-top:var(--space-2); }
+
+  .tr-cards{ display:grid; grid-template-columns: repeat(2, 1fr); gap:var(--space-3); }
+  .tr-card{ background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); padding:var(--space-3) var(--space-4); }
+  .tr-card .top{ display:flex; justify-content:space-between; margin-bottom:var(--space-2); }
+  .verdict-pill{ padding:2px var(--space-3); border-radius:999px; font-size:var(--font-size-xs); font-weight:700; }
+  .verdict-pill.buy{ background:var(--color-success-bg); color:var(--color-success-fg); }
+  .verdict-pill.sell{ background:var(--color-danger-bg); color:var(--color-danger-fg); }
+  .verdict-pill.hold{ background:var(--color-warning-bg); color:var(--color-warning-fg); }
+  .tr-card .rationale{ font-size:var(--font-size-sm); color:var(--color-text-secondary); margin-bottom:var(--space-2); }
+  .tr-card .foot{ display:flex; justify-content:space-between; font-size:var(--font-size-xs); color:var(--color-text-secondary); }
+  .filter-chips{ display:flex; gap:var(--space-2); margin-bottom:var(--space-4); }
+  .chip{ background:#fff; border:1px solid var(--color-border); border-radius:999px; padding:4px var(--space-3); font-size:var(--font-size-xs); }
+  .chip.active{ background:#F3E8FF; color:var(--color-accent); border-color:#F3E8FF; }
+
+  .login-wrap{ display:flex; align-items:center; justify-content:center; padding:var(--space-8) var(--space-4); }
+  .login-card{ background:var(--color-surface); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); padding:var(--space-7); max-width:380px; width:100%; text-align:center; }
+  .login-card .logo-circle{ width:56px; height:56px; border-radius:50%; background:#F3E8FF; color:var(--color-accent); display:flex; align-items:center; justify-content:center; font-size:var(--font-size-lg); margin:0 auto var(--space-4) auto; font-weight:700; }
+  .login-card h2{ font-size:var(--font-size-lg); margin-bottom:var(--space-2); }
+  .login-card p.sub{ color:var(--color-text-secondary); font-size:var(--font-size-sm); margin-bottom:var(--space-5); }
+  .google-btn{ width:100%; padding:var(--space-3); border:1px solid var(--color-border); border-radius:999px; background:#fff; font-size:var(--font-size-sm); font-weight:600; cursor:pointer; }
+  .reject-msg{ margin-top:var(--space-4); background:var(--color-danger-bg); color:var(--color-danger-fg); padding:var(--space-3); border-radius:var(--radius-md); font-size:var(--font-size-sm); text-align:left; }
+
+  .fab{ display:none; }
+  .bottom-tabs{ display:none; }
+
+  @media (max-width: 1023px){
+    .card-grid{ grid-template-columns: repeat(2, 1fr); }
+    .tr-cards{ grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 599px){
+    .app{ flex-direction:column; }
+    .sidebar{ display:none; }
+    .header{ margin:var(--space-2); }
+    section.screen{ padding:var(--space-3); }
+    .card-grid{ grid-template-columns: 1fr; }
+    .toolbar{ flex-wrap:wrap; }
+    .fab{
+      display:flex; position:fixed; bottom:64px; right:var(--space-4); width:52px; height:52px; border-radius:50%;
+      background:var(--color-accent); color:#fff; align-items:center; justify-content:center; font-size:24px;
+      box-shadow:var(--shadow-card); z-index:5;
+    }
+    .bottom-tabs{
+      display:flex; position:sticky; bottom:0; background:var(--color-surface); border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+      box-shadow:var(--shadow-card); justify-content:space-around; padding:var(--space-2) 0; margin:0 var(--space-2);
+    }
+    .bottom-tabs a{ color:var(--color-text-secondary); text-decoration:none; font-size:var(--font-size-xs); text-align:center; }
+    .form-modal{ max-width:100%; border-radius:var(--radius-lg) var(--radius-lg) 0 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <strong>Direction C — Card-based / Friendly SaaS.</strong> Resize this window: phone(&le;599px) / tablet(600-1023px) / desktop(&ge;1024px).
+  <a href="#login">Login</a><a href="#watchlist">Watchlist</a><a href="#tunables">Tunables</a><a href="#trackrecord">Track Record</a>
+</div>
+
+<!-- LOGIN -->
+<section class="screen" id="login">
+  <h2>Login (FR27)</h2>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="logo-circle">SA</div>
+      <h2>Stock Advisory — Admin</h2>
+      <p class="sub">Sign in with your authorized Google account to continue.</p>
+      <button class="google-btn">Sign in with Google</button>
+      <div class="reject-msg">
+        This Google account isn't authorized for this admin portal.<br>
+        <a href="#" style="color:inherit; font-weight:700;">Try a different account</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="app">
+  <div class="sidebar">
+    <h1>Admin Portal</h1>
+    <nav>
+      <a href="#watchlist" class="active">&#128200; Watchlist</a>
+      <a href="#tunables">&#9881;&#65039; Tunables</a>
+      <a href="#trackrecord">&#128203; Track Record</a>
+    </nav>
+  </div>
+  <div class="main">
+    <div class="header">
+      <span class="pill running">&#128994; System: Running</span>
+      <div class="user-chip">AB</div>
+    </div>
+
+    <!-- WATCHLIST / HOLDINGS -->
+    <section class="screen" id="watchlist">
+      <h2>Watchlist &amp; Holdings</h2>
+      <div class="toolbar">
+        <input class="search" placeholder="Search tickers...">
+        <button class="btn">+ Add ticker</button>
+      </div>
+      <div class="card-grid">
+        <div class="ticker-card">
+          <div class="top"><strong>AAPL</strong><span class="mkt">US</span></div>
+          <span class="pill type">Stock</span> <span class="pill held">&#9679; Held</span>
+          <div class="figures">10 sh<strong>$150.00 USD</strong></div>
+          <div class="card-actions"><button class="btn icon">&#9998;</button><button class="btn icon">&#128465;</button></div>
+        </div>
+        <div class="ticker-card">
+          <div class="top"><strong>VOO</strong><span class="mkt">US</span></div>
+          <span class="pill type">ETF</span> <span class="pill held">&#9679; Held</span>
+          <div class="figures">5 sh<strong>$410.00 USD</strong></div>
+          <div class="card-actions"><button class="btn icon">&#9998;</button><button class="btn icon">&#128465;</button></div>
+        </div>
+        <div class="ticker-card">
+          <div class="top"><strong>TD</strong><span class="mkt">TSX</span></div>
+          <span class="pill type">Stock</span> <span class="pill held">&#9679; Held</span>
+          <div class="figures">25 sh<strong>C$85.20 CAD</strong></div>
+          <div class="card-actions"><button class="btn icon">&#9998;</button><button class="btn icon">&#128465;</button></div>
+        </div>
+        <div class="ticker-card">
+          <div class="top"><strong>MSFT</strong><span class="mkt">US</span></div>
+          <span class="pill type">Stock</span> <span class="pill watch">&#9675; Watch-only</span>
+          <div class="figures">&nbsp;</div>
+          <div class="card-actions"><button class="btn icon">&#9998;</button><button class="btn icon">&#128465;</button></div>
+        </div>
+        <div class="ticker-card">
+          <div class="top"><strong>RELIANCE</strong><span class="mkt">NSE</span></div>
+          <span class="pill type">Stock</span> <span class="pill watch">&#9675; Watch-only</span>
+          <div class="figures">&nbsp;</div>
+          <div class="card-actions"><button class="btn icon">&#9998;</button><button class="btn icon">&#128465;</button></div>
+        </div>
+      </div>
+
+      <div class="form-modal">
+        <h3>Add / Edit ticker</h3>
+        <div class="field"><label>Ticker</label><input value="AAPL"></div>
+        <div class="field"><label>Market</label><select><option>US</option><option>TSX</option><option>NSE</option></select></div>
+        <div class="field"><label>Type</label><select><option>Stock</option><option>ETF</option></select></div>
+        <div class="field"><label>Status</label><select><option>Held</option><option>Watch-only</option></select></div>
+        <div class="field"><label>Shares</label><input value="10"><div class="error" style="display:none;">Shares must be greater than 0.</div></div>
+        <div class="field"><label>Cost basis</label><input value="150.00"></div>
+        <div class="field"><label>Currency</label><span class="derived">&#127482;&#127480; USD (from US)</span></div>
+        <div style="display:flex; gap:8px; margin-top:16px;"><button class="btn">Save</button><button class="btn secondary">Cancel</button></div>
+      </div>
+      <div class="fab">+</div>
+    </section>
+
+    <!-- TUNABLES -->
+    <section class="screen" id="tunables">
+      <h2>Tunables editor (FR30)</h2>
+      <div class="accordion">
+        <div class="acc-card open">
+          <div class="head"><span class="head-label"><span class="friendly">Primary AI model</span><span class="key">GEMINI_MODEL</span></span><span class="val">gemini-2.0-flash &#9662;</span></div>
+          <div class="body">
+            <div class="desc">Primary Gemini model used for AI judgment calls.</div>
+            <div class="example">Example: gemini-2.0-flash</div>
+            <input value="gemini-2.0-flash"> <button class="btn">Save</button>
+            <div class="updated">Last updated 2026-07-20 by arjun@gmail.com</div>
+          </div>
+        </div>
+        <div class="acc-card">
+          <div class="head"><span class="head-label"><span class="friendly">Alerts on/off switch</span><span class="key">ALERTS_ENABLED</span></span><span class="val">true &#9656;</span></div>
+        </div>
+        <div class="acc-card open">
+          <div class="head"><span class="head-label"><span class="friendly">Gainer threshold (%)</span><span class="key">DISCOVERY_GAINER_PCT</span></span><span class="val">5.0 &#9662;</span></div>
+          <div class="body">
+            <div class="desc">Minimum % gain to trip the gainer signal in discovery's prefilter.</div>
+            <div class="example">Example: 5.0</div>
+            <input value="5.0"> <button class="btn">Save</button>
+            <div class="error">Must be a number, e.g. 5.0.</div>
+            <div class="updated">Last updated 2026-07-15 by arjun@gmail.com</div>
+          </div>
+        </div>
+        <div class="acc-card">
+          <div class="head"><span class="head-label"><span class="friendly">Max daily candidates</span><span class="key">DISCOVERY_SHORTLIST_MAX</span></span><span class="val">20 &#9656;</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TRACK RECORD -->
+    <section class="screen" id="trackrecord">
+      <h2>Track record (FR31)</h2>
+      <div class="filter-chips">
+        <span class="chip active">All markets</span>
+        <span class="chip">US</span>
+        <span class="chip">TSX</span>
+        <span class="chip">NSE</span>
+      </div>
+      <div class="tr-cards">
+        <div class="tr-card">
+          <div class="top"><strong>AAPL</strong> <span class="verdict-pill buy">Buy</span></div>
+          <div class="rationale">Breaking above resistance on strong volume.</div>
+          <div class="foot"><span>$162.40 &middot; +8.3%</span><span>2:00 PM ET</span></div>
+        </div>
+        <div class="tr-card">
+          <div class="top"><strong>TD</strong> <span class="verdict-pill hold">Hold</span></div>
+          <div class="rationale">Range-bound, earnings in 2 weeks.</div>
+          <div class="foot"><span>C$84.10 &middot; -1.3%</span><span>1:30 PM ET</span></div>
+        </div>
+        <div class="tr-card">
+          <div class="top"><strong>RELIANCE</strong> <span class="verdict-pill sell">Sell</span></div>
+          <div class="rationale">Weak guidance, momentum breaking down.</div>
+          <div class="foot"><span>&#8377;2,845</span><span>3:45 PM IST</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="bottom-tabs">
+      <a href="#watchlist">&#128200;<br>Watchlist</a>
+      <a href="#tunables">&#9881;&#65039;<br>Tunables</a>
+      <a href="#trackrecord">&#128203;<br>Track Rec</a>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

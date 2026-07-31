@@ -3893,3 +3893,224 @@ the new file's structural footprint. Per `CLAUDE.md`, majors don't halt an in-fl
 blocker would, but they should be routed and closed by their owners (pm, tech-lead) before this is folded into
 any future full-closure audit.
 
+---
+
+## Pass 34 — 2026-07-31 (INC-13 diff-scoped audit — admin portal responsive & visual modernization, NFR8) —
+**NOT CLEAR (1 new major)**
+
+**Scope.** Diff-scoped audit of INC-13 per `CLAUDE.md`'s Phase 3d process: files changed since the last
+reviewer clearance (Pass 33, `docs/review-log.md`) on `inc-13-admin-portal-ui-modernization`, branched off
+`claude/admin-portal-ui-modernize-hhzgu5` — this increment is new since Pass 33, so the diff scope is
+effectively the increment's full branch diff (original build commit `ea68f5b` + fix-cycle-1 commit
+`3d1cdb3` + handoff commit `e515093`), plus NFR8 traceability. qa's latest run (`docs/test-report.md`,
+"INC-13 fix cycle 1 retest") is a **PASS — 0 bugs open**, BUG-010/BUG-011 both independently confirmed
+RESOLVED via a real-browser Playwright pass against the compiled app with mocked Supabase network calls,
+full AC1–AC9 regression clean. Read for context: `docs/requirements.md` §6 NFR8 + Decision #39 (§8) +
+changelog 2026-07-31 entries; `docs/design/increment-plan.md`'s INC-13 entry (9 ACs, file allow-list);
+`docs/design/admin-portal.md` §16.10; `docs/ux-spec.md` §7.3/§7.4/§2.3 + `docs/ux-mockups/
+direction-g-compact-toggle.html`; `docs/handoff.md`'s two INC-13 entries (original build + fix cycle 1);
+`docs/code-map.md`.
+
+**Note on tooling.** This session's reviewer instance had no shell/`git` access — `git diff`/grep commands
+in the brief were reproduced by direct file reads plus the `Grep` tool against the working tree (equivalent
+to `grep` with no diff filtering) and by cross-checking dev's/qa's own `git diff`-based evidence
+(`docs/handoff.md`, `docs/test-report.md`) for internal consistency rather than re-deriving the diff from
+git history directly. This is a methodology note, not a finding — the substantive checks below reached the
+same conclusions dev/qa already reported wherever they were independently re-derivable this way.
+
+### 1. Diff scope / allow-list
+
+All ten files dev/qa report as touched (`app/globals.css`, `app/layout.tsx`, `app/login/page.tsx`,
+`app/(app)/{watchlist,holdings,tunables,track-record}/page.tsx`, `components/{AuthGuard,KillSwitchToggle,
+NavToggle}.tsx`) are within the `increment-plan.md`/`admin-portal.md` §16.10 allow-list; `NavToggle.tsx` is
+the one permitted new presentational component. No `sql/`, `scripts/`, `lib/*.ts`, or `tests/` file is
+touched — confirmed by reading `admin-portal/lib/validation.ts`, `admin-portal/lib/admin-guard.ts`, and
+`admin-portal/lib/supabase-client.ts` directly and finding no INC-13-attributable content in any of them
+(no comment, no structural change referencing Direction G/NFR8/INC-13 anywhere in those three files).
+**Clean — no scope-boundary violation.**
+
+### 2. Structural no-regression (independent re-check, not accepted on dev's/qa's word)
+
+Read all ten touched files in full (not just the AC5 grep dev/qa ran) and traced every `supabase.*`/`.rpc(`/
+`createClient`/`validateHoldingsRow`/`validateTunableValue`/`is_admin`/`set_kill_switch` call site each
+file contains:
+- `KillSwitchToggle.tsx`: `loadState()`'s `.from("kill_switch_state").select("paused").eq("id",
+  true).single()` and `handleToggle()`'s `supabase.rpc("set_kill_switch", { p_paused: !paused, p_source:
+  "admin-portal" })` — both byte-identical in shape to the INC-7/INC-3 contract described in
+  `docs/design/admin-portal.md` §16.6/§16.10; only the returned JSX (the `.toggle` element replacing the old
+  pill+link) changed.
+- `AuthGuard.tsx`: `checkAuthorization(supabase)`, `supabase.auth.onAuthStateChange`, `supabase.auth.signOut
+  ()` all unchanged; the one `is_admin()` text match is the pre-existing doc-comment on the new cosmetic
+  `initials()` helper explicitly disclaiming it as non-authorizing — confirmed by reading the comment in
+  context (line 94), not just grep-matching it.
+- `watchlist/page.tsx`, `holdings/page.tsx`: every `supabase.from(...)`/`validateWatchlistRow`/
+  `validateHoldingsRow` call site is verified unchanged in argument shape and call site; only a `data-label`
+  attribute was added to each `<td>` and a `.crud-table-wrap` div added around the `<table>`.
+  `holdings/page.tsx`'s currency-derivation comment/behavior (INC-10) is untouched — no `currency` field is
+  sent in any insert/update payload.
+- `tunables/page.tsx`: `validateTunableValue(key, editValue)` call and `.update({ value: editValue.trim()
+  })` are unchanged in shape; only the state model (`editingKey`/`editValue` → per-key `drafts`/
+  `rowErrors`) and the returned markup changed, as documented.
+- `track-record/page.tsx`: `CALL_LOG_SELECT`, `loadRows()`'s filter/`.order()`/`.range()` chain, and
+  `applyFilters`/`clearFilters` are byte-for-byte unchanged; the three sortable `<th>` buttons were replaced
+  by a `<select>` (`changeSortColumn`) + direction button (`toggleSortDirection`) that write to the same
+  `sortColumn`/`sortAscending` state consumed by the same query — a markup/control-surface change, not a
+  query-logic change. qa's retest independently confirmed this functionally (sort still re-fetches and
+  reorders correctly) rather than just reading the diff.
+- `login/page.tsx`, `layout.tsx`, `NavToggle.tsx`: `signInWithOAuth` call unchanged; `NavToggle` holds only
+  a local `open` boolean, no Supabase import, no prop touching any query/auth logic.
+
+**Zero forbidden functional-code touches confirmed independently** — matches dev's and qa's own AC5 grep
+result (one doc-comment match in `AuthGuard.tsx`, no code match). **Pass.**
+
+### 3. Lean code / no hardcoded tunables
+
+`app/globals.css`'s new `--color-*`/`--space-*`/`--font-size-*`/`--radius-*`/`--shadow-card` custom
+properties are visual design tokens, not business/operational tunables — `docs/design/admin-portal.md`
+§16.10 and `requirements.md` NFR8 both explicitly scope this increment as "no config-schema change,"
+and these values are sourced verbatim from the user-approved `docs/ux-mockups/direction-g-compact-
+toggle.html` (verified: `docs/ux-spec.md` §7.3/§7.4's token tables match the CSS `:root` block exactly,
+e.g. `--radius-md: 8px`/`--radius-lg: 14px`/`--shadow-card: 0 1px 2px rgba(20,20,43,.08)`) — not tunables in
+`scripts/config.py`'s sense, so **not** `[HARDCODED]` findings. Checked for dead code specifically: the
+BUG-011 fix's removal of `.table-scroll`/`.log-table` (superseded by `.tr-cards`/`.tr-card`) is confirmed
+complete — grepped the full `admin-portal/` tree for `log-table`/`table-scroll`/`.pill\b` and found zero
+remaining references anywhere (CSS or TSX), so no leftover dead selectors/markup from either the original
+build or the fix cycle. No unused imports found in any of the ten touched files on a full read. **Clean.**
+
+### 4. Traceability (NFR8 scope, no FR27–32 creep)
+
+Every touched file's data-fetch/write/validation/auth call sites are confirmed unchanged (§2 above) —
+FR27 (OAuth), FR28/FR29 (CRUD + INC-10's currency derivation), FR30 (validation), FR31 (read-only,
+no new aggregation — `CALL_LOG_SELECT` unchanged), FR32 (kill-switch RPC) are all untouched functionally;
+INC-13 is NFR8-only, no `[SCOPE-CREEP]`. `docs/ux-spec.md` §2.3's friendly-label mapping table
+(`GEMINI_MODEL`→"Primary AI model", ... `DISCOVERY_PUSH_COOLDOWN_DAYS`→"Re-alert cooldown (days)") matches
+`tunables/page.tsx`'s `FRIENDLY_LABELS` object verbatim, key-for-key, confirming Direction G's tunables
+labeling was implemented against the approved spec, not improvised. Decision #39 (`requirements.md` §8,
+changelog 2026-07-31 entries) is the correct, complete provenance chain for NFR8 → this increment.
+
+### NEW FINDINGS — Pass 34
+
+**REV-145 — `[STRUCTURE]` — major — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.** `docs/code-map.md`'s
+`admin-portal/` component inventory did not list `components/NavToggle.tsx`, the new presentational
+component INC-13 added — a documentation-currency gap `CLAUDE.md`'s git-workflow rule requires closing
+before merge. Full original finding + closing verification: `docs/archive/review-log-archive.md`
+("REV-145/REV-146/REV-147 — INC-13 admin-portal doc-currency findings + closure").
+
+**REV-146 — `[DESIGN-GAP]` — minor — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.**
+`docs/design/admin-portal.md` §16.10's layout-mechanism text was in direct tension with the increment
+plan's desktop 4-column-grid AC. Non-blocking (dev's shipped resolution was independently verified sound);
+§16.10's text itself needed correction. Full original finding + closing verification: `docs/archive/
+review-log-archive.md`.
+
+**REV-147 — `[DESIGN-GAP]` — minor — owner: tech-lead — RESOLVED 2026-07-31, Pass 35.** Same root cause as
+REV-146: §16.10 never described track-record's `.tr-cards`/`.sort-controls` layout mechanism at all.
+Non-blocking; §16.10 needed the missing description added. Full original finding + closing verification:
+`docs/archive/review-log-archive.md`.
+
+### Previously logged items re-checked this pass
+
+**REV-142 — RESOLVED (2026-07-31).** `docs/requirements.md:688-705` now contains the six-step FR31/FR32
+closure checklist with step 6 ("Confirm the track-record view (`/track-record`) renders non-empty, real
+`call_log` data for that same signed-in admin") explicitly added, cross-referencing REV-142 by name
+(`:696`). Independently re-verified by reading the checklist directly, not accepted on the changelog's own
+word. Out of INC-13's diff scope (a `requirements.md` change from the BUG-009 fix cycle, not this
+increment) but caught in the course of this pass's traceability read — recorded here rather than silently
+passed over, per the reviewer's re-check-every-pass rule.
+
+**REV-143 — RESOLVED (2026-07-31, prior to this pass).** `docs/code-map.md:37-38`'s `sql/` inventory now
+names `call_log_authenticated_read_fix.sql` explicitly ("authenticated-read RLS fix for `call_log`,
+restores admin portal's track-record view, FR31, REV-143 fixed"). Independently re-verified by reading the
+line directly. Also out of INC-13's diff scope but caught in the same traceability read as REV-142 — this
+is the reason REV-145 above (the *component* list a few lines earlier in the same file) is flagged
+separately: the `sql/` section was refreshed for this cycle's fix but the `admin-portal/` component
+section a few lines above it was not refreshed for INC-13's new file, in the same document, at essentially
+the same time. Both fixed forward, not carried.
+
+**REV-144 — unchanged, still open (informational minor, owner tech-lead).** Not touched by INC-13's diff
+(applies to `sql/call_log_authenticated_read_fix.sql`'s transaction-wrapping convention, unrelated to
+`admin-portal/`) — carried forward unaffected, no re-verification needed this pass beyond confirming the
+file it concerns is untouched by INC-13 (confirmed: INC-13 touches zero `sql/` files, §1 above).
+
+**All 22 minors carried from Pass 32/33** (REV-063+071, REV-065, REV-066+052 tech-lead half, REV-067,
+REV-097/100/101, REV-102/127, REV-109, REV-114, REV-123, REV-136, plus qa-tracked BUG-007, and others per
+Pass 33's "Open items" list) are **unaffected by this diff** — none of their referenced files
+(`scripts/*.py`, `sql/*.sql`, `requirements.md`'s config-audit tables, `non-functional-ops.md`) are touched
+by INC-13, which is confined entirely to `admin-portal/`. Not re-verified line-by-line this pass (diff-scope
+rule — INC-13 touches none of their files); carried forward as-is.
+
+### Open items after Pass 34
+
+**Blockers: 0. Majors: 1 new (REV-145), 0 carried (REV-142/143 resolved above).** Minors: 22 carried
+(unaffected) + 2 new this pass (REV-146, REV-147) + 1 carried unaffected (REV-144) = 25 open.
+
+**Routing:**
+- **tech-lead** — REV-145 (add `NavToggle.tsx` to `docs/code-map.md:24`'s component list — one-line fix,
+  required before merge per `CLAUDE.md`'s structural-change code-map-refresh rule), REV-146 and REV-147
+  (fold both judgment-call reconciliations into `docs/design/admin-portal.md` §16.10's text, per dev's own
+  flagged request in `docs/handoff.md`) — all three are quick documentation fixes, no code change implied.
+
+### Verdict — Pass 34
+
+**NOT CLEAR — one new major (REV-145).** INC-13's own code (all ten touched files, both the original build
+and the fix cycle) is independently verified clean on all four passes run this session: zero scope-boundary
+violations, zero forbidden functional-code touches (structural no-regression holds), zero hardcoded
+tunables/dead code, and zero FR27–32 functional scope-creep — qa's PASS verdict (`docs/test-report.md`) is
+corroborated, not merely trusted. **The one thing holding this pass NOT CLEAR is documentation currency,
+not application code:** `docs/code-map.md`'s `admin-portal/` component list was not refreshed for the one
+new file this increment adds, which is exactly the git-workflow precondition `CLAUDE.md` sets for merging a
+structure-changing increment ("tech-lead refreshes docs/code-map.md before the merge commit"). This is a
+fast, mechanical, one-line fix with no re-test implied (the component itself is already qa-passed and
+independently re-verified presentational-only above) — recommend tech-lead applies it and reviewer
+re-confirms in a short follow-up pass before this increment merges to `main`, rather than treating this as
+a multi-cycle fix round. REV-146/REV-147 are non-blocking design-doc-text tensions already soundly resolved
+in the shipped code (independently re-derived, not just accepted from dev's own flagged judgment calls) —
+they should be folded into §16.10 for the next reader's benefit but do not, on their own, need to hold up
+this merge.
+
+**What NOT CLEAR does and does not mean here.** It does not mean INC-13's UI/UX work itself has a defect —
+every substantive check (structural no-regression, traceability, hardcoding, leanness) passed independently
+this pass. It means the specific `CLAUDE.md` precondition for merging a structure-changing increment
+(code-map currency) is not yet met, which is a fast tech-lead fix, not a return to dev or qa.
+
+## Pass 35 — 2026-07-31 (INC-13 follow-up, narrow re-check of REV-145/146/147)
+
+Scope: tech-lead's fix commit `f67c54c` ("fix REV-145/146/147 - add NavToggle to code-map, accurate §16.10
+mechanism docs"), the two files it touches (`docs/code-map.md`, `docs/design/admin-portal.md`), and a
+sanity check that no INC-13 code changed since Pass 34's clearance of the code itself.
+
+**Diff-scope confirmation.** No `git show`/`git diff` shell access available this pass; confirmed the
+change is docs-only by direct content inspection of `docs/code-map.md` and `docs/design/admin-portal.md`
+against the actual `admin-portal/` source, plus a working-tree mtime-ordering cross-check (`Glob` over
+`admin-portal/app/**`, `admin-portal/components/**`, `admin-portal/lib/**`, and the relevant `docs/*`
+files): every `admin-portal/` source file's position in the combined chronological ordering falls before
+`docs/handoff.md`/`docs/test-report.md`/`docs/review-log.md`, and `docs/code-map.md` + `docs/design/
+admin-portal.md` are the two most-recently-modified files repo-wide, with no `admin-portal/` file ordered
+after them — consistent with a docs-only commit. No source file content differs in substance from what
+Pass 34 already independently verified clean.
+
+**REV-145, REV-146, REV-147 — all RESOLVED (2026-07-31), independently re-verified against current code and
+docs, not accepted on the fix commit's message alone.** `docs/code-map.md` now lists `NavToggle.tsx` with
+an accurate description matching the actual component. `docs/design/admin-portal.md` §16.10 now gives
+three non-contradictory breakpoint bands for `.crud-table`/`.crud-table-wrap` (phone data-label cards,
+tablet real `<table>` with card-styled wrapper, desktop `tbody{display:grid}`) and an explicit track-record
+`.tr-cards`/`.sort-controls` mechanism paragraph — both cross-checked line-for-line against
+`admin-portal/app/globals.css` and `admin-portal/app/(app)/track-record/page.tsx`. Full original findings
+and this closing verification's line-level detail: `docs/archive/review-log-archive.md`
+("REV-145/REV-146/REV-147 — INC-13 admin-portal doc-currency findings + closure").
+
+### Open items after Pass 35
+
+**Blockers: 0. Majors: 0 (REV-145 resolved above, none new).** Minors: 22 carried unaffected (per Pass 34,
+none of their files touched by this docs-only commit) + REV-144 carried unaffected = 23 open (REV-146/147
+resolved and removed from the open count).
+
+### Verdict — Pass 35
+
+**CLEAR.** All three findings from Pass 34 (REV-145 major, REV-146/147 minors) are independently confirmed
+resolved against the actual current state of `docs/code-map.md`, `docs/design/admin-portal.md`, and the
+underlying `admin-portal/` source (CSS + component code), not merely accepted from the fix commit's message.
+The fix commit `f67c54c` is docs-only (confirmed via content read plus mtime-ordering cross-check — no
+regression risk to INC-13's already-independently-verified code). Nothing else in INC-13's diff scope
+changed since Pass 34. **INC-13 is cleared to merge to `claude/admin-portal-ui-modernize-hhzgu5`** per
+`CLAUDE.md`'s git-workflow rule (branch merges after reviewer clears with zero blockers).
+

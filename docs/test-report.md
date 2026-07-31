@@ -5,111 +5,141 @@ file holds only the latest run and open bugs.
 
 ---
 
-## Live-execution verification checklist — track-record view — 2026-07-31
+## INC-13 fix cycle 1 retest — BUG-010/BUG-011 (NFR8) — 2026-07-31
 
-**Scope.** `docs/requirements.md`'s "FR31, FR32 — Deferred, pending live execution" section (Decision #36)
-live-execution verification checklist, step 3: "confirm the track-record table shows real data" against
-the real deployed admin portal (`admin-portal/app/(app)/track-record/page.tsx`, FR31,
-`docs/design/admin-portal.md` §16.5), signed in as an admin via Google OAuth against the live Supabase
-project (`ikghqdtlbwifwnooytmm`).
+**Scope.** Re-test of `docs/design/increment-plan.md`'s INC-13 (9 ACs) after dev's fix-cycle-1 commits
+`3d1cdb3` (fix) + `e515093` (handoff) on `inc-13-admin-portal-ui-modernization`, per dev's account in
+`docs/handoff.md`'s "INC-13 fix cycle 1" entry. Supersedes the prior INC-13 run (2026-07-31, FAIL, both
+bugs below filed) — see `docs/archive/test-report-archive.md` for that entry.
 
-### Result: FAIL — filed as BUG-009
+**Method.** Dev's own fix-verification used a static HTML harness (real compiled CSS, hand-copied markup
+shape) rather than a live-mocked Playwright render of the actual React app, and explicitly flagged this
+gap and asked qa to re-run the higher-fidelity method. Repeated the same real-browser method as the
+original INC-13 pass: `next build && next start` (fresh server process — the port had a stale server left
+over from an earlier session serving pre-fix code; killed it and confirmed the new process's `cwd`/build
+before testing, to avoid silently re-validating against stale code) on port 4173, Playwright + the
+pre-installed Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) driving the actual compiled
+app, with every Supabase network call (`auth/v1/*`, `rest/v1/*`, `rest/v1/rpc/*`) mocked at the network
+layer. Auth: seeded the `sb-ikghqdtlbwifwnooytmm-auth-token` cookie with the exact `@supabase/ssr`
+base64url+chunking codec (verified by driving the real installed `@supabase/ssr` chunker/base64url
+modules directly, not a guessed format), so `AuthGuard`'s `checkAuthorization()` resolves a real
+authenticated/admin session with zero network round-trip needed for session bootstrap — the same
+higher-fidelity approach the original INC-13 pass used, now re-run against the fix's own diff. 49
+harness assertions across BUG-010/BUG-011 verification, full AC1–AC4/AC7(b)(c)/AC8 regression, functional
+sort testing, and CRUD/validation spot checks; scripts/screenshots are session-scratchpad only, not
+committed (matches this project's LLM/browser-test fixture posture — this is a deterministic-shell
+UI/wiring check, no generated-text property assertions needed).
 
-Step 3 fails: the signed-in admin sees an empty track-record table, no error message. Root cause isolated
-via direct SQL against the live project (not a code read) — see BUG-009 below. Filed to Open bugs, handed
-to dev; not fixed by qa.
+### 1. BUG-010 retest — watchlist/holdings tablet card styling
+
+Computed styles measured directly (not read from source) at 768px:
+- `.crud-table-wrap` (watchlist): `background-color` non-transparent (`rgb(255, 255, 255)`), `box-shadow`
+  a real shadow (not `none`), `border-radius` non-zero (`8px`, matches `--radius-md`). **PASS** — was
+  `rgba(0, 0, 0, 0)` / `none` / `0px` before the fix.
+- `.crud-table-wrap` (holdings): same non-transparent background confirmed. **PASS.**
+- Confirmed no phone/desktop regression: same computed-style checks were exercised as part of AC2 (375px,
+  row-level card styling on `.crud-table tbody tr` still present) and AC4 (1280px, 4-column grid still
+  present) below — both still green.
+
+**BUG-010: RESOLVED.**
+
+### 2. BUG-011 retest — track-record cards at all three widths
+
+At 375px/768px/1280px: `document.querySelectorAll("table")` on `/track-record` returns **0** at every
+width (previously always 1 — a real `<table class="log-table">`); `.tr-card` count is **> 0** at every
+width; `.tr-cards`'s computed `grid-template-columns` resolves to **1 column at 375px, 2 at 768px, 3 at
+1280px** — matching AC7(a)/`docs/ux-spec.md` §7.3.2's 1/2/3-tier density requirement exactly. No
+page-level horizontal scroll at any width (AC1 held simultaneously).
+
+**Functional sort check (not just visual):**
+- Default load (timestamp descending): first rendered card is the newest row (`AAPL`, 2026-07-30).
+- Selecting "Ticker" via the new `.sort-controls select` (`changeSortColumn`) changes the row order
+  (first card is no longer `AAPL`) and lands on `TD.TO` first — confirming `changeSortColumn`'s
+  documented reset-to-descending semantics hold through the real `.order()`-driven `loadRows()` query
+  against the new control surface.
+- Clicking the direction-toggle button (`toggleSortDirection`) reverses the order again (`AAPL` first,
+  ascending ticker) — confirms the direction flip is wired to a real re-fetch, not a client-side no-op.
+
+**BUG-011: RESOLVED.**
+
+### 3. Full regression — AC1–AC4, AC7(b)/(c), AC8 (no regression from the fix)
+
+All re-confirmed via the same real-browser pass, not assumed from dev's diff-touches-nothing-else claim:
+- **AC1** (no page-level horizontal scroll): held at all widths on track-record and watchlist (spot-checked
+  alongside the BUG-010/BUG-011 assertions above).
+- **AC2** (watchlist stacked cards @375px): `<tr>` computed `display: block`, `data-label` present on
+  cells. **PASS.**
+- **AC3** (nav + kill-switch reachable via collapsed control @375px): `.nav-toggle-btn` exists; kill-switch
+  toggle has a non-zero bounding box independent of the nav toggle. **PASS.**
+- **AC4** (1280px 4-col desktop grid): watchlist `tbody` computed `display: grid` resolving to 4 columns.
+  **PASS.**
+- **AC7(b)/(c)** (tunables always-visible compact cards): all 10 `.tun-card`s present; all 10 raw
+  `SNAKE_CASE` keys still rendered; friendly heading text differs from the raw key. **PASS.**
+- **AC8** (sliding toggle, RPC round-trip): `.killswitch .pill` count is 0; clicking `.killswitch .toggle`
+  fires `rpc/set_kill_switch` with `{p_paused: true, p_source: "admin-portal"}` (mocked), and the toggle's
+  class flips to `.paused` on the (mocked) success response. **PASS** — same residual as the original
+  pass: the persisted `kill_switch_audit` row itself needs live Supabase, unreachable from this sandbox;
+  AC5's structural grep (below) confirms the RPC call site is unchanged.
+- **AC9** (best-effort accessibility, non-blocking): keyboard-Tab reaches every interactive control
+  (nav toggle, kill-switch toggle, nav links, form inputs/selects, Save) in DOM order at all three widths,
+  no dead ends observed; a quick contrast spot-check (`h1` text `rgb(31,36,48)` on body background
+  `rgb(244,245,247)`) is comfortably high-contrast. Recorded per NFR8's "not a pass/fail gate" framing —
+  unaffected by this fix cycle (outside its file scope) and unchanged from before.
+
+### 4. Structural "no functional regression" enforcement (AC5)
+
+`git diff --name-only main..inc-13-admin-portal-ui-modernization -- admin-portal/` is still not a
+meaningful comparison (`main` contains no `admin-portal/` directory at all — confirmed again via
+`git ls-tree -d main -- admin-portal`, empty), same environment note as the original INC-13 run. Re-ran
+against the branch's actual merge-base (`claude/admin-portal-ui-modernize-hhzgu5`), covering the full
+branch diff including this fix cycle: `git diff --name-only` shows exactly the 10 allow-listed files
+(`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`, `tunables/page.tsx`,
+`layout.tsx`, `login/page.tsx`, `AuthGuard.tsx`, `KillSwitchToggle.tsx`, `NavToggle.tsx` — no `sql/`,
+`scripts/`, `lib/*.ts`, or `tests/` file). The forbidden-call grep (`supabase\.|validateHoldingsRow|
+validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient`), run with zero diff context
+(`git diff -U0`) to avoid false positives from unrelated unchanged context lines, returns **exactly one
+match** — the same prose doc-comment in `AuthGuard.tsx` qa's original pass already found
+(`// Purely cosmetic (avatar-chip initials) — never used for authorization, which is is_admin()/RLS.`).
+**AC5: PASS**, clean across the full branch, not just this fix commit.
+
+### 5. Existing automated suite
+
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts`: **82 passed, 0 failed** — zero
+  assertion changes (matches dev's claim).
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short`: **286 passed, 1 failed** —
+  `test_ingest.py::test_get_price_only_matches_get_market_data_price_fields_for_same_history`, the same
+  pre-existing/unrelated date-sensitive failure flagged in the original INC-13 run (outside INC-13's file
+  allow-list, reproduces identically on the pre-INC-13 commit). Not an INC-13 regression.
+- `cd admin-portal && npm run build`: compiles cleanly, all 8 routes present, TypeScript check passes.
+- `cd admin-portal && npm run lint`: zero errors/warnings.
+
+### 6. CRUD/validation regression spot check (fix cycle's markup change didn't collaterally break anything)
+
+Re-ran at 375px/768px/1280px: watchlist Edit→Save fires a `PATCH` with the edited payload and the row
+re-renders correctly after the sort-control/table-wrap CSS changes; watchlist Delete fires a `DELETE` and
+the row disappears; tunables rejects a non-numeric value for `DISCOVERY_GAINER_PCT` before any write
+(`validateTunableValue`'s `must be numeric` error shown, zero `PATCH` request), then accepts a valid value
+and fires the `PATCH`. All 15 checks (3 widths × 5 assertions) **pass** — no wiring regression from
+BUG-010/BUG-011's fix.
 
 ### Verdict
 
-**FAIL** on live-execution checklist step 3. No other checklist steps re-run this pass (scope was this one
-failing step and its root cause). No production code touched by qa. 1 bug filed (BUG-009).
+**PASS — 0 bugs open for INC-13.** BUG-010 and BUG-011 both independently confirmed RESOLVED via computed
+styles/DOM structure measured on the real running app (not dev's static harness, not source-reading).
+Full regression clean: AC1–AC5, AC7(a)/(b)/(c), AC8, AC9 all hold; existing suite 82/0 (TypeScript) + 286/1
+(Python, 1 pre-existing/unrelated); structural grep clean across the full branch diff; CRUD/validation
+wiring unaffected at all three widths. **This is a full PASS with zero open INC-13 bugs — ready for
+reviewer.**
 
 ---
 
-## Retest — BUG-009 — 2026-07-31
-
-**Verdict: RESOLVED.** Verified from the repo (no live DB access this session, see gap note below):
-`sql/call_log_authenticated_read_fix.sql`'s own DROP/CREATE logic is clean and idempotent — it drops
-both the stale live name (`"anon read call_log"`) and the canonical name (`anon_read_call_log`) before
-a single `create policy ... for select to anon, authenticated using (true)`, so re-running it a second
-time does not error. This matches `sql/schema.sql:112-114`'s already-documented policy shape exactly
-(confirmed by reading both files) and matches `docs/handoff.md`'s BUG-009 fix entry's description of
-root cause, fix, and file list. No other file needed a change:
-`admin-portal/app/(app)/track-record/page.tsx` does a plain `supabase.from("call_log").select(...)`
-with no other query path (confirmed by reading the file) — it only needed RLS to permit the read, which
-this fix does. Full regression run confirms zero regressions (expected, since only one new `sql/` file
-was added, no production code touched): `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` →
-**287 passed, 0 failed**; `node --experimental-strip-types --test tests/admin_portal/*.test.ts` →
-**82 passed, 0 failed** (after `npm install` in `admin-portal/` — missing `node_modules` was a
-pre-existing environment gap, not caused by this fix); `npm run lint` and `npm run build` in
-`admin-portal/` both succeed, including `/track-record` in the build's route list.
-
-**Live-application confirmation (not qa's this session):** independently confirmed twice — dev's local
-Postgres 16 scratch-cluster reproduction (bug reproduced, fix applied, verified idempotent re-apply),
-and the orchestrator's direct `pg_policies` query against production project `ikghqdtlbwifwnooytmm`
-post-apply, showing `call_log` has exactly one SELECT policy: `anon_read_call_log`, roles
-`{anon,authenticated}`, `cmd: SELECT`, `qual: true`.
-
-**Gap, stated honestly:** qa has no direct live-DB or live-portal access this session and did NOT
-re-run the original repro (sign in via Google OAuth, load `/track-record`, confirm non-empty rows)
-against the live deployed portal. This retest is a repo-level/static verification plus regression run,
-not a live re-execution of the failing step. If the user wants a genuine live re-test of the checklist
-step, that still needs to happen with real Supabase/portal access.
-
-**Unblocks:** `docs/requirements.md`'s FR31/FR32 live-execution verification checklist (Decision #36)
-step 3 ("confirm the track-record table shows real data") is no longer blocked by BUG-009 — pm should
-pick this up to formally re-run/close that checklist step (qa does not edit `requirements.md`).
-
-**Owner:** was dev (fix applied); now reviewer, to clear per the diff-scoped audit convention.
-
----
-
-## Open bugs (resolved this pass, retained here for reviewer to clear then archive)
-
-**BUG-009 — Admin portal track-record view shows an empty table for every signed-in admin, no error
-(FR31, `docs/design/admin-portal.md` §16.5) — critical, blocks live-execution checklist step 3.
-STATUS: RESOLVED 2026-07-31, see retest entry above — pending reviewer clearance before archiving.**
-
-**Discovered via:** `docs/requirements.md`'s live-execution verification checklist (Decision #36, "FR31,
-FR32 — Deferred, pending live execution"), step 3 ("confirm the track-record table shows real data")
-failed against the live deployed portal.
-
-**Repro (either):**
-1. Sign in to the admin portal via Google OAuth, visit `/track-record` — table renders empty, no error
-   shown.
-2. Or, against Supabase project `ikghqdtlbwifwnooytmm` directly: confirm `public.call_log` has 8,890 rows
-   (7,825 in the last 30 days — data is present, not missing); confirm `call_log`'s only RLS SELECT policy
-   is `"anon read call_log"`, scoped `TO anon`, `USING (true)`; query `pg_auth_members` and confirm
-   `authenticated` is NOT a member of `anon`.
-
-**Root cause:** `admin-portal/lib/supabase-client.ts` is a browser client carrying the signed-in user's
-session, so every portal query after Google OAuth login runs as Postgres role `authenticated`, not `anon`.
-`call_log`'s sole SELECT policy is scoped `TO anon` only, so it does not apply to `authenticated` sessions
-— RLS silently returns zero rows (not an error, since RLS filtering isn't an error condition). Contrast:
-`watchlist`/`holdings` don't show this symptom because each has an `admin_write_<table>` policy scoped
-`TO authenticated` with `cmd: ALL`, and `ALL` implicitly covers `SELECT` too, so authenticated admins get
-read access as a side effect of the write policy. `call_log` is read-only from the portal's side, so it
-never got an equivalent policy — §16.5's design assumed the existing anon policy was sufficient without
-accounting for the portal caller running as `authenticated` once logged in.
-
-**Expected vs. actual:** Expected — signed-in admin sees the real `call_log` data (8,890 rows /
-7,825 last-30-days) in the track-record table. Actual — empty table, no error, for every signed-in admin.
-
-**Expected fix direction:** add an additional RLS SELECT policy on `public.call_log` scoped `TO
-authenticated` (mirroring the existing `"anon read call_log"` policy's `USING (true)`), analogous to how
-`watchlist`/`holdings` already grant authenticated read access via their `ALL`-scoped write policies. No
-code change needed in `admin-portal/`; SQL-only fix in `sql/` (owner: dev, per file-ownership table — qa
-does not fix production code/schema).
-
-**Owner:** dev.
-
----
+## Open bugs
 
 **BUG-007 — `_parse_batch`'s duplicate-requested-ticker resolution is silently last-write-wins when both
 occurrences resolve legitimately (`ok`) to DIFFERENT verdicts — minor, deferred by design — INC-9, BUG-006
-fix-cycle-2 residual, filed for the record, not currently blocking.** Unchanged this pass — the C901
-refactor is a verbatim move and does not touch this residual's last-write-wins behavior in `_store_result`.
-Full detail: `docs/archive/test-report-archive.md`'s INC-9 BUG-006 fix-cycle-2 entry (repro:
+fix-cycle-2 residual, filed for the record, not currently blocking.** Unchanged this pass — INC-13 touches
+only `admin-portal/`, nowhere near `ai_judge.py`. Full detail: `docs/archive/test-report-archive.md`'s
+INC-9 BUG-006 fix-cycle-2 entry (repro:
 `tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere`).
 **Owner:** tech-lead (design-level call on `_parse_batch`'s ticker-keyed return contract, if ever
 addressed).
