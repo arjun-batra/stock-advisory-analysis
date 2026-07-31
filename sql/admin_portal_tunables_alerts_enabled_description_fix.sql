@@ -21,8 +21,10 @@
 -- holdings_currency_derivation.sql). Safe to apply any number of times: scoped to one column, one
 -- `where key = 'ALERTS_ENABLED'`.
 --
--- Not applied live by dev -- release applies this alongside the two other new INC-10 SQL files per the
--- orchestrator's explicit instruction for this increment.
+-- APPLIED AND LIVE (2026-07-30, applied and confirmed directly against production, project
+-- ikghqdtlbwifwnooytmm, Postgres 17.6.1): the live ALERTS_ENABLED row's description is corrected to
+-- this file's text. This file's header previously read "Not applied live by dev" (REV-125) -- stale
+-- once release applied it; the SQL below went live and was simply never updated afterward.
 
 update public.tunables
    set description = 'Master switch for real pushes. Effective value is this AND the workflow''s alerts_enabled input -- that input defaults to true on every scheduled run and is false only during a deliberate manual dry-run test, so this table value is the one that actually matters day-to-day.'

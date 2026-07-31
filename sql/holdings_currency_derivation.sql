@@ -23,9 +23,10 @@
 -- which columns changed; this is intentional (self-healing on next write) but not automatic/immediate
 -- for a row nobody touches.
 --
--- Not applied live by dev — release/INC-11 applies this against the live project per the orchestrator's
--- explicit instruction for this increment (this is new trigger logic on a live table other surfaces
--- already write to; application needs the user's involvement, not a code-review-time apply).
+-- APPLIED AND LIVE (2026-07-30, applied and confirmed directly against production, project
+-- ikghqdtlbwifwnooytmm, Postgres 17.6.1): trigger present and enabled. This file's header previously
+-- read "Not applied live by dev" (REV-125) — stale once release applied it; the SQL below went live
+-- and was simply never updated afterward.
 
 create or replace function public._derive_holdings_currency() returns trigger
 language plpgsql security definer set search_path = '' as $$

@@ -119,9 +119,10 @@ def main() -> None:
     # main()'s first statement: reachable, unconditionally, even while paused
     # (DEEP-007 residual, docs/review-log.md). No run_heartbeat row, no
     # kill_switch_abort_log row: bare early return, same as before
-    # (operational-controls.md §13.6.2 -- tech-lead correction to the
-    # checkpoint-1 placement text and §13.1's "no irreversible action
-    # possible in that window" claim is pending, per REV-116).
+    # (operational-controls.md §13.6.2 -- the checkpoint-1 placement text and
+    # §13.1's "no irreversible action possible in that window" claim were
+    # corrected and independently re-verified; REV-116/REV-117/DEEP-007
+    # resolved, docs/review-log.md Pass 29).
     config.require_secrets("SUPABASE_URL", "SUPABASE_SECRET_KEY")
     sb = state.client()
     if state.is_paused(sb):

@@ -20,11 +20,18 @@
 -- Postgres version this project targets. Verified by applying this file twice to a local Postgres 16
 -- scratch database and confirming the second apply is clean (see docs/handoff.md's INC-12 entry).
 --
--- Not applied live by dev — release/INC-11-style live application applies this against the live project
--- (per the orchestrator's explicit instruction: do not apply to the live Supabase project this session).
--- The live project's Postgres major version has not yet been confirmed; nothing in this file requires
--- PG14+ (no trigger, no `create or replace trigger`), so it should apply cleanly regardless of that
--- outcome.
+-- APPLIED AND LIVE (2026-07-30, applied and confirmed directly against production, project
+-- ikghqdtlbwifwnooytmm, Postgres 17.6.1): table present with `rls_enabled = true`, `rls_forced = true`,
+-- zero policies, and the four write verbs (insert/update/delete/truncate) revoked from anon and
+-- authenticated. Proven working in production, not merely present: an `anon` INSERT was empirically
+-- denied with `permission denied for table kill_switch_abort_log`. One expectation correction, not a
+-- defect: the post-apply `information_schema.role_table_grants` query returned six rows, not the zero
+-- a prior note predicted — `anon` and `authenticated` each hold `REFERENCES, SELECT, TRIGGER`, which
+-- are Supabase's standard defaults on any new public-schema table and match `admin_allowlist` and
+-- `kill_switch_audit` exactly. That is correct and expected, not a breach — the REVOKE above was only
+-- ever meant to guarantee TRUNCATE/INSERT/UPDATE/DELETE are absent from both roles' grants, and they
+-- are. This file's header previously read "Not applied live by dev" (REV-125) — stale once applied;
+-- the SQL below went live and was simply never updated afterward.
 
 create table if not exists public.kill_switch_abort_log (   -- append-only, never updated/deleted
   id                    uuid primary key default gen_random_uuid(),

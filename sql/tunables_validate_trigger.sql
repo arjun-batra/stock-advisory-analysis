@@ -28,9 +28,15 @@
 -- are never touched on a failed write. Verify via
 -- `select tgname from pg_trigger where tgrelid = 'public.tunables'::regclass order by tgname`.
 --
--- Not applied live by dev — release/INC-11 applies this against the live project per the orchestrator's
--- explicit instruction for this increment (this is new validation logic on a live table other
--- surfaces already write to; application needs the user's involvement, not a code-review-time apply).
+-- APPLIED AND LIVE (2026-07-30, applied and confirmed directly against production, project
+-- ikghqdtlbwifwnooytmm, Postgres 17.6.1): trigger present and enabled; `tunables_0_validate_update`
+-- confirmed via `select tgname from pg_trigger ... order by tgname` to sort before
+-- `tunables_stamp_update`, exactly as this file's trigger-ordering note above requires. Proven working
+-- in production, not merely present: an `update tunables set value='yes' where key='ALERTS_ENABLED'`
+-- inside a rolled-back transaction was rejected with `tunables.value for key ALERTS_ENABLED must be
+-- exactly "true" or "false" (case-insensitive), got yes`. This file's header previously read "Not
+-- applied live by dev" (REV-125) — stale once release applied it; the SQL below went live and was
+-- simply never updated afterward.
 
 create or replace function public._validate_tunable_update() returns trigger
 language plpgsql security definer set search_path = '' as $$
