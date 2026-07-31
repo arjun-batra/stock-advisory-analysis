@@ -615,9 +615,10 @@ not a review-only convention.
    width; every nav item (Watchlist, Holdings, Tunables, Track Record, sign-out) and the kill-switch
    toggle remain reachable by clicking/tapping that control — confirmed by driving each item via a qa
    script at both widths.
-4. At 1280px, the layout is no longer capped at the pre-INC-13 fixed 900px `main` width in a way that
-   contradicts the approved `docs/ux-spec.md` direction (checked against that direction's mockup, not a
-   fixed pixel assertion — this criterion cannot be finalized until that direction is selected).
+4. At 1280px, the layout is no longer capped at the pre-INC-13 fixed 900px `main` width — the watchlist
+   and holdings screens render a **4-column** card grid (Direction G/F's desktop density,
+   `docs/ux-spec.md` §7.3.2), matching `docs/ux-mockups/direction-g-compact-toggle.html` at a ≥1024px
+   viewport (visual comparison against the mockup, not a fixed-pixel assertion beyond the column count).
 5. **Structural enforcement:** `git diff --name-only main..inc-13-<slug>` contains only files from the
    allow-list above; `git diff main..inc-13-<slug> -- admin-portal/ | grep -E "supabase\.|
    validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` returns
@@ -628,7 +629,28 @@ not a review-only convention.
    pagination, kill-switch toggle round-trip producing a `kill_switch_audit` row) at all three viewport
    widths, confirming identical functional outcomes to pre-INC-13 — any difference is a regression, not a
    visual choice.
-7. Best-effort accessibility (recorded, not a pass/fail gate per NFR8): keyboard-Tab reaches every
+7. **Direction G visual conformance (`docs/ux-spec.md` §7.3/§7.4, `docs/ux-mockups/
+   direction-g-compact-toggle.html`):** manual/qa visual comparison against the mockup at all three
+   widths confirms: (a) flatter single-layer card shadows and the smaller `radius-md`/`radius-lg`
+   tokens (8px/14px, not Direction C's 12px/20px) across watchlist, holdings, and track-record cards;
+   (b) the tunables editor renders all 10 keys as always-visible compact cards with no
+   expand/collapse — value input and Save visible without a tap; (c) every one of the 10 tunables cards
+   shows the friendly-label heading from `docs/ux-spec.md` §2.3's mapping table as the primary heading,
+   with the raw `SNAKE_CASE` key demoted to a small monospace subtitle directly beneath it (grep the
+   rendered markup for all 10 raw keys still present, just visually secondary — confirms the mapping is
+   presentational only, no key dropped).
+8. **Kill-switch toggle-switch interaction (`docs/ux-spec.md` §7.4.2):** the kill-switch control renders
+   as a sliding toggle-switch (track + thumb), not Direction F's static pill badge — grep
+   `components/KillSwitchToggle.tsx` for a `.toggle` element (or equivalent class) rather than a bare
+   `.pill` span. Clicking/tapping the toggle element pauses/resumes via the **existing**
+   `set_kill_switch(..., p_source:='admin-portal')` Supabase RPC call already wired in INC-7 (§16.6) — no
+   new backend logic, purely a visual-control swap (confirmed by AC5's grep showing zero
+   `set_kill_switch`/`.rpc(` diff lines — the call site itself is unchanged, only its surrounding
+   markup/CSS is). Toggling produces a new `kill_switch_audit` row exactly as INC-7 AC2 already proves;
+   this AC only confirms the click target and visual state (slid right = running/emerald track, slid left
+   = paused/grey track) match Direction G, reusing INC-7's existing round-trip proof rather than
+   re-deriving it.
+9. Best-effort accessibility (recorded, not a pass/fail gate per NFR8): keyboard-Tab reaches every
    interactive control in DOM order at all three widths; a quick manual contrast check on body text passes
    — recorded as a dated note in `docs/handoff.md`.
 
