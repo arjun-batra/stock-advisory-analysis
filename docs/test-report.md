@@ -5,185 +5,131 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-13 — Admin portal responsive & visual modernization (NFR8) — 2026-07-31
+## INC-13 fix cycle 1 retest — BUG-010/BUG-011 (NFR8) — 2026-07-31
 
-**Scope.** `docs/design/increment-plan.md`'s INC-13 (9 ACs), `docs/design/admin-portal.md` §16.10,
-`docs/ux-spec.md` §7.4 (Direction G) + §7.3 (density table) + §2.3 (tunables label mapping),
-`docs/ux-mockups/direction-g-compact-toggle.html` (approved visual reference). Branch
-`inc-13-admin-portal-ui-modernization` (commit `ea68f5b`), dev handoff `docs/handoff.md` (bottom entry).
+**Scope.** Re-test of `docs/design/increment-plan.md`'s INC-13 (9 ACs) after dev's fix-cycle-1 commits
+`3d1cdb3` (fix) + `e515093` (handoff) on `inc-13-admin-portal-ui-modernization`, per dev's account in
+`docs/handoff.md`'s "INC-13 fix cycle 1" entry. Supersedes the prior INC-13 run (2026-07-31, FAIL, both
+bugs below filed) — see `docs/archive/test-report-archive.md` for that entry.
 
-**Environment note (affects both dev and qa identically):** this sandbox's egress policy blocks the real
-Supabase project (`ikghqdtlbwifwnooytmm.supabase.co`, confirmed via direct `curl` — `CONNECT tunnel failed,
-response 403` — same `connect_rejected`/`policy denial` class as the `cdn.playwright.dev` block dev hit).
-No live Google OAuth / RLS / `kill_switch_audit` round-trip is reachable from this sandbox, full stop —
-this is an environment limitation, not a code defect. Chromium itself, however, **is** pre-installed
-(`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) and the globally-installed `playwright` npm package
-launches it successfully, so unlike dev, qa **could** run a real-browser Playwright pass — the missing
-piece was a live Supabase backend, not a browser. Worked around by running the admin portal for real
-(`next build && next start`) and mocking every Supabase network call (auth cookie, `rest/v1/*`, `rpc/*`)
-at the Playwright network layer, so the actual compiled app (not a static mockup, not a source-reading
-exercise) renders and is measured/clicked for real. This closes dev's flagged gap for every
-geometry/markup/interaction-wiring AC; it does not and cannot substitute for a genuine live OAuth+RLS+
-audit-row round-trip, which still needs to run once real network access exists (same residual as INC-3/
-INC-4's already-deferred live checks).
+**Method.** Dev's own fix-verification used a static HTML harness (real compiled CSS, hand-copied markup
+shape) rather than a live-mocked Playwright render of the actual React app, and explicitly flagged this
+gap and asked qa to re-run the higher-fidelity method. Repeated the same real-browser method as the
+original INC-13 pass: `next build && next start` (fresh server process — the port had a stale server left
+over from an earlier session serving pre-fix code; killed it and confirmed the new process's `cwd`/build
+before testing, to avoid silently re-validating against stale code) on port 4173, Playwright + the
+pre-installed Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) driving the actual compiled
+app, with every Supabase network call (`auth/v1/*`, `rest/v1/*`, `rest/v1/rpc/*`) mocked at the network
+layer. Auth: seeded the `sb-ikghqdtlbwifwnooytmm-auth-token` cookie with the exact `@supabase/ssr`
+base64url+chunking codec (verified by driving the real installed `@supabase/ssr` chunker/base64url
+modules directly, not a guessed format), so `AuthGuard`'s `checkAuthorization()` resolves a real
+authenticated/admin session with zero network round-trip needed for session bootstrap — the same
+higher-fidelity approach the original INC-13 pass used, now re-run against the fix's own diff. 49
+harness assertions across BUG-010/BUG-011 verification, full AC1–AC4/AC7(b)(c)/AC8 regression, functional
+sort testing, and CRUD/validation spot checks; scripts/screenshots are session-scratchpad only, not
+committed (matches this project's LLM/browser-test fixture posture — this is a deterministic-shell
+UI/wiring check, no generated-text property assertions needed).
 
-### 1. Existing automated suite
+### 1. BUG-010 retest — watchlist/holdings tablet card styling
 
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` (repo root): **82 passed, 0
-  failed** — confirms dev's claim, zero assertion changes (diffed the test files themselves: untouched).
-- `python3 -m pytest -q --tb=short`: **286 passed, 1 failed** —
-  `test_ingest.py::test_get_price_only_matches_get_market_data_price_fields_for_same_history`
-  (`assert 14.5 == None`). Confirmed pre-existing and unrelated to INC-13: reproduces identically on a
-  throwaway worktree of `8124f833` (the commit INC-13 branched from, before any of dev's edits) and
-  `scripts/ingest.py` is outside INC-13's file allow-list (`git diff --name-only claude/admin-portal-ui-
-  modernize-hhzgu5..inc-13-admin-portal-ui-modernization -- scripts/` is empty). Not filed as an INC-13
-  bug; flagging for whoever owns `scripts/ingest.py`'s date-sensitivity next.
+Computed styles measured directly (not read from source) at 768px:
+- `.crud-table-wrap` (watchlist): `background-color` non-transparent (`rgb(255, 255, 255)`), `box-shadow`
+  a real shadow (not `none`), `border-radius` non-zero (`8px`, matches `--radius-md`). **PASS** — was
+  `rgba(0, 0, 0, 0)` / `none` / `0px` before the fix.
+- `.crud-table-wrap` (holdings): same non-transparent background confirmed. **PASS.**
+- Confirmed no phone/desktop regression: same computed-style checks were exercised as part of AC2 (375px,
+  row-level card styling on `.crud-table tbody tr` still present) and AC4 (1280px, 4-column grid still
+  present) below — both still green.
 
-### 2. Structural "no functional regression" enforcement (AC5)
+**BUG-010: RESOLVED.**
 
-`git diff --name-only main..inc-13-admin-portal-ui-modernization -- admin-portal/` is **not** a meaningful
-comparison in this repo (`main` doesn't contain `admin-portal/` at all yet — confirmed via `git ls-tree -d
-main -- admin-portal`, empty), exactly as dev's handoff flags. Re-ran against dev's actual branch point
-(`claude/admin-portal-ui-modernize-hhzgu5`, the merge-base): `git diff --name-only` shows exactly the 10
-allow-listed files (no `sql/`, `scripts/`, `lib/*.ts`, or `tests/` file). The forbidden-call grep (
-`supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient`)
-returns **exactly one match**, a prose doc-comment in `AuthGuard.tsx` (`// Purely cosmetic (avatar-chip
-initials) — never used for authorization, which is is_admin()/RLS.`) — confirmed by inspecting the diff
-line-by-line: every real call site (`createClient()`, `.rpc("set_kill_switch", ...)`,
-`.from("kill_switch_state")...`, `validateTunableValue(...)`) is byte-for-byte unchanged. **AC5: PASS.**
+### 2. BUG-011 retest — track-record cards at all three widths
 
-### 3. Real-browser viewport pass (the gap dev could not close)
+At 375px/768px/1280px: `document.querySelectorAll("table")` on `/track-record` returns **0** at every
+width (previously always 1 — a real `<table class="log-table">`); `.tr-card` count is **> 0** at every
+width; `.tr-cards`'s computed `grid-template-columns` resolves to **1 column at 375px, 2 at 768px, 3 at
+1280px** — matching AC7(a)/`docs/ux-spec.md` §7.3.2's 1/2/3-tier density requirement exactly. No
+page-level horizontal scroll at any width (AC1 held simultaneously).
 
-Playwright + pre-installed Chromium against the real running app (`next start`, port 4173), all Supabase
-calls mocked at the network layer (auth cookie seeded per `@supabase/ssr`'s actual cookie codec so the
-real authenticated screens render, not just the "Checking session…" skeleton). All 5 screens
-(login/watchlist/holdings/tunables/track-record) + shared header/kill-switch, at 375px/768px/1280px (15
-screen×width checks) plus targeted AC2/AC3/AC4/AC7/AC8 assertions and a mocked kill-switch RPC round-trip.
-Screenshots taken at every screen×width for visual record.
+**Functional sort check (not just visual):**
+- Default load (timestamp descending): first rendered card is the newest row (`AAPL`, 2026-07-30).
+- Selecting "Ticker" via the new `.sort-controls select` (`changeSortColumn`) changes the row order
+  (first card is no longer `AAPL`) and lands on `TD.TO` first — confirming `changeSortColumn`'s
+  documented reset-to-descending semantics hold through the real `.order()`-driven `loadRows()` query
+  against the new control surface.
+- Clicking the direction-toggle button (`toggleSortDirection`) reverses the order again (`AAPL` first,
+  ascending ticker) — confirms the direction flip is wired to a real re-fetch, not a client-side no-op.
 
-**Result: 156 pass / 3 fail** (the 3 failures are BUG-011 below, all the same root cause).
+**BUG-011: RESOLVED.**
 
-- **AC1 (no page-level horizontal scroll):** PASS, 15/15 — `scrollWidth <= clientWidth` held for every
-  screen at every width, including track-record at 375px (its 9-column table scrolls *inside*
-  `.table-scroll`, never at the page level).
-- **AC2 (watchlist/holdings stacked cards @375px):** PASS — real `<tr>` computed `display: block`,
-  `data-label` present on every cell, Edit/Delete individually clickable with a real bounding box.
-- **AC3 (nav + kill-switch reachable via collapsed control @375/768):** PASS — `.nav-toggle-btn` exists,
-  fits inside the header, opening it reveals Watchlist/Holdings/Tunables/Track record/Sign out all
-  visible; kill-switch toggle itself stays visible independent of the nav toggle (matches design intent:
-  "reachable with zero extra clicks at any width").
-- **AC4 (1280px 4-col grid):** PASS — `tbody` computed `display: grid`, `grid-template-columns` resolves
-  to 4 tracks, for both watchlist and holdings.
-- **AC7(b)/(c) (tunables always-visible compact cards, friendly label + demoted raw key):** PASS at all
-  three widths — all 10 `.tun-card`s present, all 10 raw `SNAKE_CASE` keys still in the rendered markup,
-  friendly heading ≠ raw key, value input/select + Save visible with zero clicks.
-- **AC7(a) (flatter shadow/radius tokens across watchlist/holdings/track-record cards):** **FAIL** — see
-  BUG-010 and BUG-011.
-- **AC8 (sliding toggle-switch, not a static pill):** PASS — `.killswitch .toggle` exists, `.killswitch
-  .pill` count is 0, at every screen/width. Clicking the toggle (mocked RPC): fires
-  `rpc/set_kill_switch` with `{p_paused: true, p_source: "admin-portal"}`, and the toggle's visual state
-  flips to `.paused` after the (mocked) success response — the click-target/visual-state half of AC8 is
-  confirmed. The **persisted-row** half (a real `kill_switch_audit` row appearing) cannot be confirmed
-  from this sandbox — no live Supabase reachable (see environment note above) — but AC5's structural grep
-  already proves the RPC call site itself is byte-for-byte unchanged from INC-7, so INC-7's own already-
-  established proof mechanism still applies unmodified; this is not a new gap INC-13 introduces.
-- **Login screen:** renders correctly at all three widths (`.login-card` present, no page scroll).
+### 3. Full regression — AC1–AC4, AC7(b)/(c), AC8 (no regression from the fix)
 
-### 4. Functional-regression spot check (CRUD + validation wiring survives the markup restructure)
+All re-confirmed via the same real-browser pass, not assumed from dev's diff-touches-nothing-else claim:
+- **AC1** (no page-level horizontal scroll): held at all widths on track-record and watchlist (spot-checked
+  alongside the BUG-010/BUG-011 assertions above).
+- **AC2** (watchlist stacked cards @375px): `<tr>` computed `display: block`, `data-label` present on
+  cells. **PASS.**
+- **AC3** (nav + kill-switch reachable via collapsed control @375px): `.nav-toggle-btn` exists; kill-switch
+  toggle has a non-zero bounding box independent of the nav toggle. **PASS.**
+- **AC4** (1280px 4-col desktop grid): watchlist `tbody` computed `display: grid` resolving to 4 columns.
+  **PASS.**
+- **AC7(b)/(c)** (tunables always-visible compact cards): all 10 `.tun-card`s present; all 10 raw
+  `SNAKE_CASE` keys still rendered; friendly heading text differs from the raw key. **PASS.**
+- **AC8** (sliding toggle, RPC round-trip): `.killswitch .pill` count is 0; clicking `.killswitch .toggle`
+  fires `rpc/set_kill_switch` with `{p_paused: true, p_source: "admin-portal"}` (mocked), and the toggle's
+  class flips to `.paused` on the (mocked) success response. **PASS** — same residual as the original
+  pass: the persisted `kill_switch_audit` row itself needs live Supabase, unreachable from this sandbox;
+  AC5's structural grep (below) confirms the RPC call site is unchanged.
+- **AC9** (best-effort accessibility, non-blocking): keyboard-Tab reaches every interactive control
+  (nav toggle, kill-switch toggle, nav links, form inputs/selects, Save) in DOM order at all three widths,
+  no dead ends observed; a quick contrast spot-check (`h1` text `rgb(31,36,48)` on body background
+  `rgb(244,245,247)`) is comfortably high-contrast. Recorded per NFR8's "not a pass/fail gate" framing —
+  unaffected by this fix cycle (outside its file scope) and unchanged from before.
 
-Separate mocked-network Playwright pass, 3 widths × (watchlist Edit→Save, watchlist Delete, tunables
-reject-then-accept a value): **15/15 pass**. Confirms Add/Edit/Delete and validate-then-write handlers
-still fire the correct REST calls with correct payloads after INC-13's markup/CSS restructure — no wiring
-regression from the responsive rework, at any breakpoint.
+### 4. Structural "no functional regression" enforcement (AC5)
 
-### 5. Manual regression checklist (auth gate, RLS, CRUD, validation, pagination, kill-switch round-trip)
+`git diff --name-only main..inc-13-admin-portal-ui-modernization -- admin-portal/` is still not a
+meaningful comparison (`main` contains no `admin-portal/` directory at all — confirmed again via
+`git ls-tree -d main -- admin-portal`, empty), same environment note as the original INC-13 run. Re-ran
+against the branch's actual merge-base (`claude/admin-portal-ui-modernize-hhzgu5`), covering the full
+branch diff including this fix cycle: `git diff --name-only` shows exactly the 10 allow-listed files
+(`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`, `tunables/page.tsx`,
+`layout.tsx`, `login/page.tsx`, `AuthGuard.tsx`, `KillSwitchToggle.tsx`, `NavToggle.tsx` — no `sql/`,
+`scripts/`, `lib/*.ts`, or `tests/` file). The forbidden-call grep (`supabase\.|validateHoldingsRow|
+validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient`), run with zero diff context
+(`git diff -U0`) to avoid false positives from unrelated unchanged context lines, returns **exactly one
+match** — the same prose doc-comment in `AuthGuard.tsx` qa's original pass already found
+(`// Purely cosmetic (avatar-chip initials) — never used for authorization, which is is_admin()/RLS.`).
+**AC5: PASS**, clean across the full branch, not just this fix commit.
 
-**Partially blocked by the same environment gap as §3's live-Supabase note** — the auth-gate-reject,
-live-RLS-write-confirmed-in-Supabase, and live kill-switch-audit-row portions of INC-13 AC6's checklist
-need real network access this sandbox doesn't have, identical to dev's own stated limitation. What **was**
-verified this session, without a live backend:
-- CRUD/validation logic itself: covered unchanged by the untouched `tests/admin_portal/*.test.ts` (§1) and
-  by §4's live-wiring spot check.
-- Track-record pagination/sort/filter code: zero diff (confirmed via the AC5 grep in §2 and a manual read
-  of `track-record/page.tsx` — only `className`/wrapper markup changed, `loadRows`/`toggleSort`/
-  `applyFilters` bodies untouched).
-- Kill-switch click → RPC → visual-state update: confirmed via §3's mocked round-trip.
-**Not verified this session (real backend required):** allowlist-reject flow, live Supabase writes for
-watchlist/holdings/tunables, and a live `kill_switch_audit` row appearing. Flagging for the user/release to
-decide whether to accept the same residual-live-check status INC-3/INC-4/INC-11 already carry, or to
-re-run this specific check once Supabase egress is available.
+### 5. Existing automated suite
 
-### 6. Dev's two flagged judgment calls (`docs/handoff.md`)
+- `node --experimental-strip-types --test tests/admin_portal/*.test.ts`: **82 passed, 0 failed** — zero
+  assertion changes (matches dev's claim).
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short`: **286 passed, 1 failed** —
+  `test_ingest.py::test_get_price_only_matches_get_market_data_price_fields_for_same_history`, the same
+  pre-existing/unrelated date-sensitive failure flagged in the original INC-13 run (outside INC-13's file
+  allow-list, reproduces identically on the pre-INC-13 commit). Not an INC-13 regression.
+- `cd admin-portal && npm run build`: compiles cleanly, all 8 routes present, TypeScript check passes.
+- `cd admin-portal && npm run lint`: zero errors/warnings.
 
-- **(a) Watchlist/holdings: real `<table>` at tablet, card grid only at desktop.** Investigated against
-  AC4's literal text (only tests 1280px), `docs/design/admin-portal.md` §16.10's "what dev implements"
-  narrative (says 4-col desktop/3-col tablet/2-col phone), `docs/ux-spec.md` §7.3.2's density table (same:
-  "4-col desktop / 3-col tablet / 2-col phone"), and the approved mockup (`direction-g-compact-toggle.html`,
-  which is a card grid at every breakpoint, 2-col even at phone). **Empirically confirmed via computed
-  style at 768px: `.crud-table tr` has `background: rgba(0,0,0,0)`, `box-shadow: none`, `border-radius:
-  0px` — i.e., literally zero card treatment at tablet, not just "a plainer card."** This crosses from "a
-  reasonable reading of an ambiguous doc" into a violation of AC7(a)'s explicit "at all three widths…
-  across watchlist, holdings… cards" text — filed as **BUG-010**.
-- **(b) Track-record: kept as a real, sortable table in a card-styled scroll container, not per-row
-  cards.** AC7(a) literally names "track-record cards"; `docs/ux-spec.md` §7.3.2 explicitly requires "3-col
-  card grid desktop / 2-col tablet / 1-col phone" for track-record; the approved mockup implements exactly
-  that (`.tr-cards`). **Empirically confirmed: zero `.tr-cards`/card elements exist for track-record at any
-  of the three widths** — there is no "track-record card" for AC7(a)'s shadow/radius requirement to apply
-  to. This is a real AC violation, not an accepted judgment call — filed as **BUG-011**. (Dev's stated
-  reasoning — that literal per-row cards would either hide the sortable `<th>` controls or require
-  reinventing sort as a non-`<th>` tap target — is a legitimate implementation concern, but the fix is
-  tech-lead's/dev's call, not something qa can wave through against an explicit AC.)
-- **(c) Kill-switch reuses legacy `PAUSED`/`RUNNING`/`Resume`/`Pause` strings as an accessible label
-  (`title` + `.sr-only` span).** No AC violated — AC8 only requires a `.toggle` element (not `.pill`) and
-  an unchanged RPC call site, both true (§3/§2). **Accepted**, no bug filed.
+### 6. CRUD/validation regression spot check (fix cycle's markup change didn't collaterally break anything)
 
-### Bugs filed
-
-**BUG-010 — Watchlist/holdings rows have zero card styling at the tablet breakpoint (640–1023px),
-contradicting AC7(a) and `docs/ux-spec.md` §7.3.2's density table — moderate.**
-- **Increment:** INC-13. **FR/NFR:** NFR8, AC7(a) (`docs/design/increment-plan.md`).
-- **Repro:** load `/watchlist` (or `/holdings`) at 768px viewport width; inspect a `<tr>` in `.crud-table
-  tbody` — computed `background-color: rgba(0,0,0,0)`, `box-shadow: none`, `border-radius: 0px` (CSS at
-  `admin-portal/app/globals.css`'s `@media (min-width:640px) and (max-width:1023px)` block explicitly
-  zeroes these). Screenshot: `shot-watchlist-768.png` (this session's scratch dir) shows a plain flush
-  table, no card boundaries.
-- **Expected:** per AC7(a) ("flatter single-layer card shadows and the smaller radius-md/radius-lg tokens
-  … across watchlist, holdings, and track-record cards" — applies "at all three widths") and `docs/ux-
-  spec.md` §7.3.2 ("4-col desktop / 3-col tablet / 2-col phone" for watchlist/holdings), tablet width
-  should show card-styled watchlist/holdings rows (a 3-col card grid per the approved mockup).
-- **Actual:** a plain, unstyled real `<table>` with no card shadow/radius/background at all at 768px.
-- **Owner:** dev (tech-lead may instead choose to update `docs/design/admin-portal.md` §16.10's
-  contradictory mechanism paragraph and get user sign-off on "table at tablet" as an intentional deviation
-  — either way, this is a decision above qa's pay grade, being handed back rather than silently accepted).
-
-**BUG-011 — Track-record view never renders as cards at any width, contradicting AC7(a)'s literal
-"track-record cards" text and `docs/ux-spec.md` §7.3.2's card-grid density table — moderate-high.**
-- **Increment:** INC-13. **FR/NFR:** NFR8, AC7(a).
-- **Repro:** load `/track-record` at 375px, 768px, or 1280px; `document.querySelectorAll(".tr-cards,
-  [class*='tr-card']")` returns 0 at every width; only `.log-table` (a real `<table>`, class renamed from
-  `crud-table`) exists, wrapped in a `.table-scroll` container. Screenshot: `shot-track-record-375.png`
-  shows a flat table with columns already cut off (`Parse stat…`) requiring internal horizontal scroll to
-  see the rest.
-- **Expected:** per AC7(a) (names "track-record cards" as one of three card types needing the token
-  treatment) and `docs/ux-spec.md` §7.3.2 ("3-col card grid desktop / 2-col tablet / 1-col phone" for
-  track-record), and the approved mockup (`.tr-cards` grid at every breakpoint).
-- **Actual:** no track-record card exists at any width — always a table in a card-styled scroll wrapper.
-- **Note:** dev's stated concern (converting the sortable `<th>` controls to a card layout without a new
-  interaction design) is real and worth tech-lead weighing against the AC — but the AC as written is not
-  satisfied today.
-- **Owner:** dev/tech-lead (same reconciliation choice as BUG-010: build the literal per-row card layout,
-  or get design.md/AC7 explicitly revised with user sign-off for the table-in-scroll-container approach).
+Re-ran at 375px/768px/1280px: watchlist Edit→Save fires a `PATCH` with the edited payload and the row
+re-renders correctly after the sort-control/table-wrap CSS changes; watchlist Delete fires a `DELETE` and
+the row disappears; tunables rejects a non-numeric value for `DISCOVERY_GAINER_PCT` before any write
+(`validateTunableValue`'s `must be numeric` error shown, zero `PATCH` request), then accepts a valid value
+and fires the `PATCH`. All 15 checks (3 widths × 5 assertions) **pass** — no wiring regression from
+BUG-010/BUG-011's fix.
 
 ### Verdict
 
-**FAIL — 2 bugs filed (BUG-010, BUG-011), both AC7(a) violations traced to dev's own flagged judgment
-calls (a) and (b).** Everything else: **PASS** — existing suite 82/0 (TS) + 286/1 (Python, 1 pre-existing/
-unrelated), AC5 structural enforcement clean, AC1/AC2/AC3/AC4/AC7(b)/AC7(c)/AC8 all independently confirmed
-via a real-browser Playwright pass against the actual running app (the gap dev flagged as unclosed), CRUD/
-validation wiring survives the restructure at all three widths, judgment call (c) accepted. Not a
-regression risk to existing functionality — both bugs are visual/layout-density gaps against the approved
-design, not functional breakage. Dev to fix BUG-010/BUG-011 (or get the design doc/AC revised with tech-
-lead + user sign-off if the table-based approach is to be accepted instead); qa re-tests after either path.
+**PASS — 0 bugs open for INC-13.** BUG-010 and BUG-011 both independently confirmed RESOLVED via computed
+styles/DOM structure measured on the real running app (not dev's static harness, not source-reading).
+Full regression clean: AC1–AC5, AC7(a)/(b)/(c), AC8, AC9 all hold; existing suite 82/0 (TypeScript) + 286/1
+(Python, 1 pre-existing/unrelated); structural grep clean across the full branch diff; CRUD/validation
+wiring unaffected at all three widths. **This is a full PASS with zero open INC-13 bugs — ready for
+reviewer.**
 
 ---
 
@@ -197,7 +143,3 @@ INC-9 BUG-006 fix-cycle-2 entry (repro:
 `tests/test_ai_judge.py::test_parse_batch_duplicate_ticker_divergent_ok_verdicts_last_write_wins_undocumented_elsewhere`).
 **Owner:** tech-lead (design-level call on `_parse_batch`'s ticker-keyed return contract, if ever
 addressed).
-
-**BUG-010 — see INC-13 run above.** **Owner:** dev/tech-lead.
-
-**BUG-011 — see INC-13 run above.** **Owner:** dev/tech-lead.
