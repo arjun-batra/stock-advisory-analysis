@@ -28,7 +28,7 @@ all (the workflows use the Supabase secret key server-side). This is the **first
 human-authenticated surface. NFR6 asks for this explicitly: design the auth/RLS/secrets handling
 carefully, not by analogy to the read-only surfaces.
 
-**2026-07-31 addendum (NFR8, Decision #39, INC-13 — READY, dev may start):** §16.10 below adds the
+**2026-07-31 addendum (NFR8, Decision #39, INC-13 — IMPLEMENTED, merged to `main`):** §16.10 below adds the
 responsive/visual-modernization design for the five screens covered by §16.1–§16.6. This is a
 presentation-layer-only addition — it changes no auth/RLS/schema/data-fetching content in §16.1–§16.9,
 which remain as-built/IMPLEMENTED exactly as documented above and require no revision for NFR8. The
@@ -316,15 +316,15 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
-| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **READY**, Direction G selected, INC-13 (`increment-plan.md`) |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **IMPLEMENTED**, Direction G, INC-13 (`increment-plan.md`), reviewer-CLEAR Pass 35, merged to `main` |
 
-### 16.10 Responsive & visual design system (NFR8, INC-13) — READY, Direction G selected
+### 16.10 Responsive & visual design system (NFR8, INC-13) — IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main`
 
 **Gate cleared 2026-07-31:** designer published `docs/ux-spec.md` with mockup directions covering all
 five screens, and the user (Arjun) selected **Direction G — "Compact Toggle"**
 (`docs/ux-mockups/direction-g-compact-toggle.html`; design detail in `docs/ux-spec.md` §7.4, built on
-Direction F's density §7.3 and Direction E's toggle component §7.2). INC-13 is now **READY — dev may
-start a build plan.** This section defines the **technical mechanism** (breakpoints, layout system,
+Direction F's density §7.3 and Direction E's toggle component §7.2). INC-13 is now **IMPLEMENTED and
+merged to `main`** (commit `da50ed8`, PR #46; reviewer Pass 35 CLEAR, zero blockers/majors). This section defines the **technical mechanism** (breakpoints, layout system,
 structural enforcement) that Direction G is implemented through; the visual/interaction language itself
 is designer's + the user's call and is specified in `docs/ux-spec.md`, not restated here.
 

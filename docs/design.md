@@ -81,12 +81,13 @@ apply-order documentation — release-owned, since fixed) plus a minor covering 
 (REV-126, corrected by this update) — **neither reopens INC-12 or DEEP-007.** FR31/FR32 remain Deferred
 pending a live admin-portal check only the user can run — see §15.
 
-**2026-07-31 — NFR8 change request (Decision #39): admin-portal UI/UX modernization, planned as INC-13.**
+**2026-07-31 — NFR8 change request (Decision #39): admin-portal UI/UX modernization, built as INC-13, now IMPLEMENTED.**
 `requirements.md` §6 added NFR8 (responsive + visually modern admin portal, zero functional/backend/auth/
 schema change, accessibility best-effort). pm flagged it to tech-lead; this design responds with
 `admin-portal.md` §16.10 (breakpoints, responsive-table mechanism, structural no-regression enforcement)
-and one new increment, `increment-plan.md`'s INC-13. **INC-13's requirements-level gate is now
-cleared and INC-13 is READY — dev may start.** Arjun selected **Direction G** ("Compact Toggle" —
+and one new increment, `increment-plan.md`'s INC-13. **INC-13 is now IMPLEMENTED — dev-built, qa-tested,
+reviewer Pass 35 verdict CLEAR (zero blockers/majors), merged to `main` (commit `da50ed8`, PR #46).**
+Arjun selected **Direction G** ("Compact Toggle" —
 `docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.4/§7.3) as the final visual
 direction: Direction F's compact card density (`docs/ux-spec.md` §7.3) as the visual baseline for all
 five screens, with Direction E's sliding toggle-switch component (`docs/ux-spec.md` §7.2, §7.4.2) swapped
@@ -120,7 +121,7 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/non-functional-ops.md` **(§7.3/§7.5 IMPLEMENTED, INC-9/INC-10, reviewer-CLEAR Passes 25/27; §8's repo map current)** | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(§13.1–§13.5/§14 IMPLEMENTED, INC-3/INC-4; §13.6 IMPLEMENTED, INC-12, reviewer-CLEAR Pass 29 — DEEP-007 closed)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness, in-flight boundary checks) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
-| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20; §16.3's holdings-currency-derivation content IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27; §16.10 NEW 2026-07-31, NFR8/INC-13, READY — Direction G selected)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory, responsive/visual design system | §16 (16.1–16.10) |
+| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20; §16.3's holdings-currency-derivation content IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27; §16.10 IMPLEMENTED, NFR8/INC-13, reviewer-CLEAR Pass 35, merged to `main` — Direction G)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory, responsive/visual design system | §16 (16.1–16.10) |
 | `docs/design/admin-portal-tunables.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; write-time-validation subsection IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
 | `docs/design/tunables-fallback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
 | `docs/design/tunables-workflow-writeback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |
@@ -292,7 +293,7 @@ INC-3–INC-7.**
 | NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
 | NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |
-| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39) | **PLANNED, READY** — `admin-portal.md` §16.10, INC-13 (`increment-plan.md`). Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31; dev may start. |
+| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39) | **IMPLEMENTED** — `admin-portal.md` §16.10, INC-13 (`increment-plan.md`), reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46). Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31. |
 | FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |

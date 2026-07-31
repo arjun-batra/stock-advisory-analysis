@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 READY (Direction G selected, dev may start)
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46)
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -560,7 +560,7 @@ analytics beyond what's logged, and no requirement asks for portal exposure of t
 
 ---
 
-## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, READY (Direction G selected 2026-07-31)
+## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46)
 
 pm flagged NFR8 (`requirements.md` §6, admin-portal UI/UX modernization) to tech-lead 2026-07-31, GATE 2
 already passed by the user for NFR8 itself. This is one new increment appended after INC-12; none of
@@ -569,11 +569,11 @@ INC-3–INC-12 are marked stale by it (see the note at the end of this section).
 **2026-07-31 update — gate cleared:** designer published `docs/ux-spec.md` with mockup directions
 (A/C/D/E/F/G active, B rejected); Arjun reviewed and selected **Direction G — "Compact Toggle"**
 (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.4) as the final direction. INC-13
-is now **READY — dev may start a build plan.** See `docs/design/admin-portal.md` §16.10 for the updated
+is now **IMPLEMENTED — merged to `main`.** See `docs/design/admin-portal.md` §16.10 for the updated
 design content naming Direction G's exact reference files/details.
 
-### INC-13 — Admin portal responsive & visual modernization (NFR8) — **READY, dev may start**
-(design complete; Direction G selected by the user 2026-07-31 — gate cleared, no further blocker)
+### INC-13 — Admin portal responsive & visual modernization (NFR8) — **IMPLEMENTED, reviewer Pass 35 CLEAR, merged to `main`**
+(dev-built, qa-tested — PASS across a fix cycle, BUG-010/BUG-011 found and fixed; reviewer Pass 35 verdict CLEAR — REV-145/146/147 all RESOLVED, zero blockers/majors, `docs/review-log.md`; merged commit `da50ed8`, PR #46)
 **Design:** `docs/design/admin-portal.md` §16.10 (breakpoints, layout mechanism, structural
 enforcement rule, file allow-list). **Files:** `admin-portal/app/globals.css`, `admin-portal/app/
 layout.tsx`, `admin-portal/app/(app)/layout.tsx`, `admin-portal/app/login/page.tsx`, `admin-portal/app/
