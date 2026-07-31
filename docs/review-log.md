@@ -3734,3 +3734,162 @@ as planned; the five new minors (REV-137 through REV-141) are exactly the kind o
 has consistently deferred past `v0.1.0` without incident (see Pass 30/31's own deferral pattern for
 comparable items), not a reason to hold the tag.
 
+---
+
+## Pass 33 — 2026-07-31 (BUG-009 fix cycle, diff-scoped, post-`v0.1.0`)
+
+**Scope.** Diff-scoped per `CLAUDE.md` Phase 3d, `git diff --name-only c5c28f7..HEAD` (last clearance =
+Pass 32) — three commits, one bug-fix cycle: `bdd803c` (qa files BUG-009: `docs/test-report.md`,
+`docs/archive/test-report-archive.md`), `76a5e5a` (dev fixes BUG-009: new
+`sql/call_log_authenticated_read_fix.sql`, `docs/handoff.md`), `4d652ed` (qa retests, marks RESOLVED:
+`docs/test-report.md`). Files read in full this pass: `sql/call_log_authenticated_read_fix.sql` (whole
+file), `sql/schema.sql:90-114` (`call_log` table + its documented `anon_read_call_log` policy),
+`sql/schema_truncate_grant_closure.sql` and `sql/kill_switch_portal_grant.sql` (whole files, the two prior
+additive-fix-file precedents named in the brief), `sql/dashboard_latest_call_view.sql` (whole file, the
+`security_invoker=true` view the fix's header claims is also governed by this policy),
+`admin-portal/app/(app)/track-record/page.tsx` (grepped for its Supabase query shape), `docs/handoff.md`'s
+BUG-009 entry (near end of file), `docs/test-report.md` (whole file), `docs/requirements.md:610-667`
+(Decision #36 / §11's FR31/FR32 "Deferred, pending live execution" section and its five-step closure
+checklist, read in full), `docs/requirements.md:433` (Decision #36's own text) and its changelog entries
+referencing it (`:697`, `:699`, `:700`), `docs/design/admin-portal.md:1-30,195-205` (§16.5 track-record
+design text) and `docs/design.md:287` (the FR31/FR32 coverage-map row), `docs/code-map.md` (whole file,
+`sql/` inventory).
+
+**1. `sql/call_log_authenticated_read_fix.sql` — DROP/CREATE logic independently re-derived, correct and
+idempotent.** `sql/schema.sql:112-114` documents `create policy "anon_read_call_log" on public.call_log for
+select to anon, authenticated using (true)` — read directly, confirmed byte-for-byte identical in shape to
+the fix file's own `create policy` block (lines 38-40). The fix drops both the stale live name (`"anon read
+call_log"`, spaces, the object independently confirmed against production via `pg_policies`) and the
+canonical name (`anon_read_call_log`) before the single `create policy`, both via `drop policy if exists`,
+so re-running the file a second time (after it has already gone live) is a no-op on both drops and then a
+clean create — Postgres has no `create or replace policy`, and a bare `create policy` would otherwise error
+"already exists" on a second run. This matches the file's own stated intent exactly. **Matches the
+project's established additive-fix convention:** like `schema_truncate_grant_closure.sql` and
+`kill_switch_portal_grant.sql`, it does not edit `schema.sql` itself, is scoped to one table's one gap, and
+carries a rationale comment explaining root cause and why a new file rather than an edit to the original —
+same shape, same house style (Pass 4's leanness finding already established this narrative-comment style as
+this codebase's calibrated norm for `sql/` fix files, not `[BLOAT]`; re-confirmed here, no new bloat finding).
+**`using (true)` scope confirmed unchanged** — the qual clause is identical before and after; the only change
+is the role list (`anon` → `anon, authenticated`), exactly and only what `schema.sql` already claimed and
+what FR31's page (`track-record/page.tsx`, grepped: reuses `anon_read_call_log`, queries `call_log` directly,
+not the view) needed. No accidental broadening (no new rows exposed) or narrowing (anon's existing access is
+preserved unchanged). The `security_invoker=true` `latest_call_per_ticker` view's own comment
+(`dashboard_latest_call_view.sql:20-22`) independently confirms it runs as caller under `call_log`'s own RLS,
+so the fix file's claim that it also governs that view is accurate.
+
+**2. `docs/handoff.md` and `docs/test-report.md` — root cause and fix description consistent with each
+other and with the fix file itself.** All three name the same root cause (live policy `"anon read call_log"`,
+`TO anon` only, vs. `schema.sql`'s documented `anon_read_call_log`, `TO anon, authenticated` — a doc/reality
+drift never actually applied, not a design gap), the same fix (drop-and-recreate under the canonical name),
+and the same file list (`sql/call_log_authenticated_read_fix.sql` only, no `admin-portal/` code change).
+qa's retest entry honestly states its own gap (no live DB/portal access this session; verification is
+repo-level/static plus regression, not a live re-execution) rather than overclaiming — full regression (287
+Python + 82 TS) plus the orchestrator's independent live `pg_policies` confirmation (exactly one SELECT
+policy, `anon_read_call_log`, `{anon,authenticated}`, `qual: true`) together substitute adequately for a live
+portal re-test this session. No inconsistency found between the three documents on the substance of the fix.
+
+**3. Traceability to FR31 and to the live-execution checklist — substantively correct, but exposes a
+pre-existing gap in `requirements.md` itself, not introduced by this fix cycle.** FR31 (`requirements.md:318`)
+→ design (`admin-portal.md` §16.5) → code (`track-record/page.tsx`) → now-fixed RLS is a sound chain, and
+BUG-009 was a real bug correctly root-caused and fixed. **However:** `docs/test-report.md`'s BUG-009 filing,
+`docs/handoff.md`'s fix entry, and this task's own framing all describe the failure as "step 3" of Decision
+#36's live-execution checklist ("confirm the track-record table shows real data"). Read `requirements.md:610-
+667` in full: the actual five-step "Steps to close FR31/FR32" checklist there (sign in via Google OAuth,
+toggle the kill-switch, confirm `kill_switch_audit` shows the authenticated admin as actor not `postgres`,
+confirm `run_heartbeat.last_run_at` does not advance while paused, resume and confirm it advances again) is
+**entirely about FR32's kill-switch mechanics — none of its five steps verifies FR31's track-record view at
+all.** Cross-checked Decision #36's own text (`:433`) and `design.md`'s FR31/FR32 coverage-map row (`:287`):
+both name the *same* three live checks (INC-3 AC3, INC-4 AC6, INC-7 AC2/AC3 — the portal's kill-switch RPC
+round-trip and dispatch-suppression proof) as the gating criteria for "deferred, pending live execution," and
+none of them is a track-record-view check either. This confirms it is not a one-off phrasing slip in a single
+document — no document in this project ever defined a live-verification criterion for FR31 itself; FR31 was
+bundled into "Deferred" status purely by sharing INC-7 with FR32, and this pass's own Pass 32 entry
+(`review-log.md:3718-3720`) already characterized the "five-step live-portal check" the same (kill-switch-
+only) way, independently corroborating this reading. The practical consequence: as literally written, all
+five of Decision #36's steps could pass — and FR31/FR32 both be moved to "Delivered" — without anyone ever
+having checked that the track-record view shows data, exactly the gap BUG-009 fell into and only qa's own
+initiative (going beyond the letter of the checklist) caught. Logged as REV-142 below.
+
+**4. Points a mechanical checklist would miss.**
+- **Drop/create gap window:** the file's three DDL statements are not wrapped in an explicit
+  `begin`/`commit` block. Between the second `drop policy` and the `create policy`, a request landing in that
+  instant would see zero SELECT policies on `call_log` for `anon`/`authenticated` — RLS-filtered to zero rows,
+  not an error, for the duration of that single statement gap (sub-second, single-script, DBA-run operation).
+  For a low-traffic, human-triggered, single-application admin-tool fix this is not a blocker, but it's a real
+  transient-availability window worth naming — logged as REV-144 below, informational/non-blocking.
+- **`using (true)` scope match:** independently confirmed identical before/after (see finding 1) — no
+  accidental broadening or narrowing of visible rows.
+- **`docs/code-map.md` staleness:** the new `sql/call_log_authenticated_read_fix.sql` file is not listed in
+  `code-map.md`'s `sql/` inventory (`:31-41`), which otherwise names every other `sql/` file individually
+  (including the two precedent fix files this pass compared against). Per `CLAUDE.md`'s structure-audit rule,
+  a stale code-map is major, owner tech-lead. Logged as REV-143 below.
+
+### NEW FINDINGS — Pass 33
+
+**REV-142 — `[REQUIREMENTS-GAP]` — major — owner: pm.** `docs/requirements.md`'s Decision #36 / §11 "Steps
+to close FR31/FR32" checklist (`:657-665`) and Decision #36's own three-item live-check list (`:433`) both
+verify only FR32 (kill-switch) behavior; neither `requirements.md` nor `design.md`'s coverage-map row
+(`design.md:287`) ever defined a live-verification criterion for FR31 (the track-record view) itself, despite
+FR31 being tagged "Deferred, pending live execution" alongside FR32. `docs/test-report.md`'s BUG-009 filing
+and `docs/handoff.md`'s fix entry both cite "step 3: confirm the track-record table shows real data" as part
+of that checklist — no such step exists anywhere in `requirements.md`'s text (confirmed by full read of
+`:610-667`, `:433`, and a grep across the file and its changelog archive for the phrase, zero hits beyond
+this fix cycle's own commentary). Not a defect in the BUG-009 fix itself — the bug qa found via its own
+initiative was real and is now correctly fixed — but the checklist as literally written would have let FR31
+be marked "Delivered" without ever checking it renders data, which is exactly the class of gap Decision #36
+was written to prevent ("ensures Phase-4 closure cannot quietly treat 'deferred' as terminal again," per its
+own rationale column). Suggested fix: pm adds an explicit sixth step (or a separate FR31-specific criterion)
+to the FR31/FR32 closure section — "confirm the track-record view renders non-empty, real `call_log` data
+for a signed-in admin" — so a future closure pass has an actual documented criterion to check FR31 against,
+rather than relying on whichever agent happens to test it going beyond the letter of the checklist next time.
+
+**REV-143 — `[STRUCTURE]` — major — owner: tech-lead.** `docs/code-map.md`'s `sql/` inventory (`:31-41`)
+does not list the new `sql/call_log_authenticated_read_fix.sql` (added `76a5e5a`, this session), even though
+that section otherwise names every other `sql/` file individually, including both precedent additive-fix
+files (`schema_truncate_grant_closure.sql`, `kill_switch_portal_grant.sql`) this pass compared it against.
+Per `CLAUDE.md`'s structure-audit rule, a code-map that no longer matches reality is major, owner tech-lead.
+Not a blocker to this fix cycle (the SQL fix itself is independently verified correct above) — but the map
+should be refreshed before this is treated as fully closed, consistent with the Git-workflow rule that
+structural changes get a code-map refresh.
+
+**REV-144 — `[SECURITY]`-adjacent, informational — minor — owner: tech-lead.** `sql/call_log_authenticated_
+read_fix.sql`'s two `drop policy if exists` statements followed by one `create policy`, run outside an
+explicit transaction, leave a sub-second window with zero SELECT policies on `public.call_log` for
+`anon`/`authenticated` — any request landing in that instant gets zero rows (RLS-filtered, not an error), not
+a security exposure (narrows, doesn't broaden, access) but a transient-availability gap. Low-risk for a
+single human-triggered application against a low-traffic admin-only read path; not a blocker. Worth adopting
+as a house convention going forward: wrap multi-statement DROP/CREATE POLICY sequences in this project's
+`sql/` fix files in an explicit `begin`/`commit` (or a single `do $$ ... $$` block) so a future fix over a
+higher-traffic table doesn't carry the same transient gap unexamined.
+
+### Open items after Pass 33
+
+**Blockers: 0. Majors: 2 new (REV-142, REV-143).** Carried minors unchanged from Pass 32 (22 open, unaffected
+— none of their files were touched by this diff) plus **1 new minor this pass** (REV-144).
+
+**Routing:**
+- **pm** — REV-142 (add an explicit FR31-specific live-verification criterion to Decision #36/§11).
+- **tech-lead** — REV-143 (refresh `docs/code-map.md`'s `sql/` inventory to list the new fix file), REV-144
+  (optional house-convention call: wrap future multi-statement RLS DROP/CREATE fixes in a transaction).
+
+### Verdict — Pass 33
+
+**The BUG-009 fix itself is CLEAR.** `sql/call_log_authenticated_read_fix.sql`'s DROP/CREATE logic is
+independently re-derived (not accepted on dev's or qa's word) as correct, idempotent, and an exact match to
+`sql/schema.sql:112-114`'s already-documented policy shape; it follows this project's established additive-
+fix convention; its `using (true)` scope is confirmed unchanged (no accidental broadening/narrowing); and
+`docs/handoff.md`/`docs/test-report.md` describe the same root cause and fix consistently. This **unblocks
+FR31/FR32's live-execution checklist for pm** — the RLS drift that caused BUG-009 is fixed and independently
+confirmed live (orchestrator's `pg_policies` query, `call_log` now shows exactly one SELECT policy,
+`anon_read_call_log`, `{anon,authenticated}`, `qual: true`) — **but pm should be aware, before treating FR31
+as ready to close, that REV-142 (above) found the checklist FR31 is meant to close against never actually
+named a track-record-specific criterion; recommend pm add one now that the gap is known, rather than let a
+future pass rely again on an agent's initiative to test it.**
+
+**Two new majors this pass (REV-142, REV-143), zero blockers.** Neither is a defect in the BUG-009 fix or a
+regression risk to currently-live behavior — both are pre-existing document-hygiene gaps (one in
+`requirements.md`, one in `code-map.md`) that this diff's audit surfaced while tracing FR31's paper trail and
+the new file's structural footprint. Per `CLAUDE.md`, majors don't halt an in-flight fix cycle the way a
+blocker would, but they should be routed and closed by their owners (pm, tech-lead) before this is folded into
+any future full-closure audit.
+

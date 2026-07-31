@@ -34,7 +34,8 @@ dispatch), `phase5_monitoring.sql`/`enable_monitor_alerts_rls.sql` (dead-man's-s
 `TRUNCATE`-grant closure, REV-099), `kill_switch.sql` (FR24–26), `admin_portal_rls.sql` (`admin_allowlist`/
 `is_admin()`), `admin_portal_tunables.sql` (`tunables` table + policy + seed), `kill_switch_portal_
 grant.sql` (portal admin-check on kill-switch), `kill_switch_abort_log.sql` (INC-12, FR35's abort log —
-applied and live, REV-117 fixed). INC-10 fix-round, each additive: `tunables_validate_
+applied and live, REV-117 fixed), `call_log_authenticated_read_fix.sql` (authenticated-read RLS fix for
+`call_log`, restores admin portal's track-record view, FR31, REV-143 fixed). INC-10 fix-round, each additive: `tunables_validate_
 trigger.sql` (write-time validation), `holdings_currency_derivation.sql` (currency derivation, FR29),
 `admin_portal_tunables_alerts_enabled_description_fix.sql` (seed-description fix). Historical/superseded/
 **not applied** markers: `drop_shadow_tables_migration.sql`, `dedup_watchlist_health_check.sql`,

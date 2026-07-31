@@ -1902,3 +1902,91 @@ not-paused) plus the full existing `tests/test_kill_switch_boundary.py` (22 test
   was lost or silently changed. Flagging so the orchestrator doesn't mistake the checkpoint's own "UNVERIFIED"
   label for this handoff's status: full regression (275/0 Python, 82/0 TypeScript) and the real-code-path
   smoke tests above were run against this exact content, after the checkpoint landed.
+
+---
+
+# Handoff — BUG-009 fix: `call_log` authenticated-read (FR31, `docs/design/admin-portal.md` §16.5)
+
+## Build plan (written before coding)
+
+Read `docs/test-report.md`'s BUG-009 entry, `docs/code-map.md`'s `sql/` inventory, and
+`docs/design/admin-portal.md` §16.5 (the track-record view's "no new RLS needed... the anon SELECT
+policy on call_log already covers it" claim BUG-009 disproves against live production) plus
+`sql/schema.sql:90-114` (the `anon_read_call_log`, `for select to anon, authenticated using (true)`
+policy it documents). qa's root-cause finding (confirmed against production project
+`ikghqdtlbwifwnooytmm` via `pg_policies`, taken as given per this task's brief — no DB access this
+session) is a doc/reality drift, not a missing-policy gap: the live policy on `public.call_log` is
+named `"anon read call_log"` (spaces), scoped `TO anon` only — a different object than what
+`schema.sql` documents, never actually matching it. Fix is additive-only over already-applied schema,
+following the established convention (`sql/schema_truncate_grant_closure.sql`,
+`sql/kill_switch_portal_grant.sql`) — a new standalone file, `sql/schema.sql` itself untouched. Chose
+"drop the stale/misnamed policy and recreate it under the canonical name" over "add a second
+authenticated-only policy" so the end state is exactly one clearly-named policy governing this read
+path (matching what `schema.sql` already claims and every other anon/authenticated SELECT policy in
+this codebase), not two overlapping ones. No design deviation — this is squarely the "Expected fix
+direction" `docs/test-report.md`'s BUG-009 entry already names, and squarely dev's scope per the
+file-ownership table (SQL-only fix in `sql/`, no `admin-portal/` code change — the frontend query in
+`track-record/page.tsx` is already correct once RLS allows the read). Files: new
+`sql/call_log_authenticated_read_fix.sql` only. Verify: (1) full existing pytest suite unaffected (no
+Python file touched); (2) local Postgres 16 scratch-cluster reproduction — built `anon`/`authenticated`
+roles + a `call_log` table with the exact live-drift policy shape qa described, confirmed the bug
+reproduces (`authenticated` sees 0 rows, `anon` sees 1), applied the fix, confirmed `authenticated` now
+sees the row and exactly one policy (`anon_read_call_log`, roles `{anon,authenticated}`, `using
+(true)`) exists afterward; (3) double-apply idempotency check (same discipline as REV-117's local
+verification) — first pass caught a real gap (a bare `create policy anon_read_call_log` errors
+"already exists" on a second run once the fix is live, since Postgres has no `CREATE OR REPLACE
+POLICY`), fixed by dropping the canonical name too before creating, re-verified clean on both first
+and second apply.
+
+## What changed and why
+
+`sql/schema.sql:100-105` has always documented `anon_read_call_log` as `for select to anon,
+authenticated using (true)` on `public.call_log`, and `docs/design/admin-portal.md` §16.5 relied on
+that documented state to justify "no new RLS needed" for the track-record view. qa's live-execution
+verification checklist (`docs/test-report.md`, BUG-009) found this was never actually true in
+production: the deployed policy is named `"anon read call_log"` (spaces, not underscores — a distinct
+object), scoped `TO anon` only. `authenticated` is not a member of `anon`, so every portal query after
+Google OAuth sign-in (`admin-portal/lib/supabase-client.ts`, a browser client carrying the session) ran
+as role `authenticated` and got zero rows back via RLS filtering — no error, just an empty table, for
+every signed-in admin. `sql/call_log_authenticated_read_fix.sql` drops the stale/misnamed live policy
+(and, idempotently, the canonical name if already present) and recreates the canonical
+`anon_read_call_log` policy for `anon, authenticated`, `using (true)` — matching `schema.sql`'s
+documented shape exactly, one clearly-named policy, no overlap.
+
+## Files touched
+
+- **New `sql/call_log_authenticated_read_fix.sql`** — `drop policy if exists "anon read call_log"`,
+  `drop policy if exists "anon_read_call_log"` (idempotency), then `create policy
+  "anon_read_call_log" on public.call_log for select to anon, authenticated using (true)`. Full
+  reasoning/citation of the live-state facts (policy name, scoped role, row count) in the file's own
+  header comment. `sql/schema.sql` itself is untouched, per this project's established convention of
+  layering fixes in new files rather than editing the original CREATE TABLE file.
+
+## How to run / verify
+
+- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` — **287 passed, 0 failed** (no Python file
+  touched by this fix; this environment needed `pip install -r requirements.txt` to have any test
+  collect at all — a pre-existing environment gap, not caused by this change).
+- Local Postgres 16 scratch-cluster verification (not committed, no Docker/live Supabase available this
+  session — same class of substitution as the REV-117 fix cycle's precedent, and again not a
+  PG17.6.1-identical proxy, flagged for that reason): built the exact live-drift policy shape qa
+  described, confirmed the bug reproduces, applied the fix once and confirmed
+  `authenticated`/`anon` both now see the row via exactly one policy, applied it a second time
+  verbatim and confirmed a clean idempotent re-apply (no error, same end state). Scratch cluster
+  stopped and its data directory removed afterward.
+- **Not applied to the live project** — no Supabase MCP/DB credentials in this task, per the explicit
+  instruction. Orchestrator applies `sql/call_log_authenticated_read_fix.sql` to project
+  `ikghqdtlbwifwnooytmm`, same process as every prior `sql/` fix file in this project's history.
+
+## Known limitations
+
+- `docs/code-map.md`'s `sql/` inventory line does not yet list this new file — that's tech-lead-owned
+  (dev doesn't touch `code-map.md`); flagging for tech-lead to add a one-line entry alongside the other
+  additive fix files once this lands.
+- Local-Postgres verification used PG16, not the live-confirmed PG17.6.1, for the same reason as the
+  REV-116/117 fix cycle (no Docker/PG17 in this sandbox) — the DROP POLICY/CREATE POLICY/RLS
+  constructs touched are not version-sensitive, but this is not a byte-identical version match; flagged
+  rather than silently presented as equivalent.
+- Until the orchestrator applies this file live, the track-record view (FR31) remains empty for
+  signed-in admins — BUG-009 stays open in `docs/test-report.md` until qa re-verifies against the live
+  project post-apply.
