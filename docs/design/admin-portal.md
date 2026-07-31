@@ -28,6 +28,11 @@ all (the workflows use the Supabase secret key server-side). This is the **first
 human-authenticated surface. NFR6 asks for this explicitly: design the auth/RLS/secrets handling
 carefully, not by analogy to the read-only surfaces.
 
+**2026-07-31 addendum (NFR8, Decision #39, INC-13 — BLOCKED, not yet startable):** §16.10 below adds the
+responsive/visual-modernization design for the five screens covered by §16.1–§16.6. This is a
+presentation-layer-only addition — it changes no auth/RLS/schema/data-fetching content in §16.1–§16.9,
+which remain as-built/IMPLEMENTED exactly as documented above and require no revision for NFR8.
+
 ---
 
 ## 16. Admin portal architecture (FR27–FR32, NFR5, NFR6)
@@ -309,3 +314,61 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **BLOCKED**, pending `docs/ux-spec.md` + user direction selection, INC-13 (`increment-plan.md`) |
+
+### 16.10 Responsive & visual design system (NFR8, INC-13) — BLOCKED pending `docs/ux-spec.md` + user selection
+
+**Blocking dependency (hard gate, per `requirements.md` §6 NFR8 — not the normal "previous increment
+passed QA" sequencing rule, an additional requirements-level gate):** dev may not start INC-13 until (a)
+designer has produced `docs/ux-spec.md` with 2–3 mockup directions covering all five screens, and (b) the
+user has picked one direction. As of this writing `docs/ux-spec.md` does not exist yet. This section
+defines the **technical mechanism** (breakpoints, layout system, structural enforcement) the chosen
+mockup direction will be implemented through — it does not itself pick a visual direction; that is
+designer's + the user's call, not tech-lead's.
+
+**Scope boundary (structural, not just stated intent):** every change in INC-13 is presentation-layer —
+CSS, JSX/TSX markup, className/data-attribute additions, and purely-presentational local component state
+(e.g. a nav-open/closed boolean). **Nothing in §16.1–§16.9 above changes.** No `supabase.*` call, no
+`lib/validation.ts` exported function's logic, no `lib/admin-guard.ts`/`lib/supabase-client.ts` content,
+no `sql/*`, no `scripts/*`, and no event-handler's *business* logic (a button may be restyled/repositioned;
+what its `onClick` calls may not change) may be touched. This is enforced structurally (see acceptance
+criteria in `increment-plan.md`'s INC-13, not just reviewed by eye): a `git diff` grep for
+`supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient` across
+every file INC-13 touches must return zero matches.
+
+**Breakpoints (tech-lead decision, per NFR8's explicit delegation — mobile-first CSS):**
+- **Phone:** up to 639px (base/default styles, no media query needed).
+- **Tablet:** `@media (min-width: 640px)`.
+- **Desktop:** `@media (min-width: 1024px)`.
+
+These three bands are what "phone/tablet/desktop" in NFR8 map to; qa tests at 375px, 768px, and 1280px as
+concrete representative widths (common devtools/Playwright presets, one comfortably inside each band).
+
+**Layout mechanism per current file (`code-map.md`'s `admin-portal/` inventory — no new files required,
+one small presentational component permitted):**
+- `app/globals.css` — the current fixed `main { max-width: 900px }` becomes fluid with breakpoint-scaled
+  padding; `.app-header`'s flex nav row (today unconditional) collapses to a stacked/menu form below the
+  tablet breakpoint via CSS (a small presentational `NavToggle` local-state component is permitted in
+  `components/` if a JS-driven open/closed toggle is needed — no data implications, no new prop touches
+  any Supabase call).
+- `.crud-table` (`watchlist`/`holdings` pages) — below the tablet breakpoint, switches from `<table>`
+  layout to a stacked "card per row" layout via CSS only (`tr { display:block }`, `td::before { content:
+  attr(data-label) }`), reading a `data-label="<column header>"` attribute added to each `<td>` in markup
+  (a markup addition, not a logic change) — this satisfies "no horizontal scrolling" literally at phone
+  width rather than wrapping the table in a scroll region. At tablet/desktop widths the existing `<table>`
+  layout is kept.
+- `form.crud-form` — already single-column (fits phone as-is); gains an optional two-column
+  `grid-template-columns` at the desktop breakpoint only, if the chosen mockup direction calls for it.
+- Kill-switch toggle (`components/KillSwitchToggle.tsx`) and login screen — CSS/markup sizing only; no
+  change to the toggle's `set_kill_switch` RPC call or the login screen's OAuth redirect.
+
+**Files INC-13 may touch (allow-list, see `increment-plan.md` for the exact grep-checkable rule):**
+`admin-portal/app/globals.css`, `admin-portal/app/layout.tsx`, `admin-portal/app/(app)/layout.tsx`,
+`admin-portal/app/login/page.tsx`, `admin-portal/app/(app)/watchlist/page.tsx`, `admin-portal/app/(app)/
+holdings/page.tsx`, `admin-portal/app/(app)/tunables/page.tsx`, `admin-portal/app/(app)/track-record/
+page.tsx`, `admin-portal/components/AuthGuard.tsx`, `admin-portal/components/KillSwitchToggle.tsx`, and at
+most one new presentational component file under `admin-portal/components/` (e.g. `NavToggle.tsx`) if a
+collapsible-nav toggle needs local state. No other file, in any directory, is in scope.
+
+**Accessibility:** best-effort only per NFR8's explicit text — keyboard reachability and legible contrast
+are checked and recorded, not a pass/fail gate; no WCAG target.

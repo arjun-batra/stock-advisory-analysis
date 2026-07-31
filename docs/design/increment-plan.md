@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 planned, BLOCKED on designer's `docs/ux-spec.md` + user mockup selection (not yet startable)
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -557,3 +557,73 @@ analytics beyond what's logged, and no requirement asks for portal exposure of t
    for that cycle, both while still paused (§13.4's blanket suppression) and after resuming (the existing
    `resume_baseline` guard).
 9. Full existing test suite passes; `git diff` confirms no file outside the list above changed.
+
+---
+
+## 2026-07-31 — NFR8 change request (Decision #39) — INC-13, planned, BLOCKED (not yet startable)
+
+pm flagged NFR8 (`requirements.md` §6, admin-portal UI/UX modernization) to tech-lead 2026-07-31, GATE 2
+already passed by the user for NFR8 itself. This is one new increment appended after INC-12; none of
+INC-3–INC-12 are marked stale by it (see the note at the end of this section).
+
+### INC-13 — Admin portal responsive & visual modernization (NFR8) — **BLOCKED, not yet startable**
+(design complete; execution gated on designer + user, not on any prior increment's code)
+**Design:** `docs/design/admin-portal.md` §16.10 (breakpoints, layout mechanism, structural
+enforcement rule, file allow-list). **Files:** `admin-portal/app/globals.css`, `admin-portal/app/
+layout.tsx`, `admin-portal/app/(app)/layout.tsx`, `admin-portal/app/login/page.tsx`, `admin-portal/app/
+(app)/watchlist/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, `admin-portal/app/(app)/tunables/
+page.tsx`, `admin-portal/app/(app)/track-record/page.tsx`, `admin-portal/components/AuthGuard.tsx`,
+`admin-portal/components/KillSwitchToggle.tsx`, and at most one new presentational component (e.g.
+`admin-portal/components/NavToggle.tsx`) — no other file, in any directory (`sql/`, `scripts/`,
+`lib/*.ts`, `tests/`), is in scope. **No config-schema change** — presentation-layer only.
+
+**Blocking dependency (hard gate, distinct from the normal "no increment starts before the previous
+passes QA" rule):** dev may not begin a build plan for INC-13 until (a) designer has published
+`docs/ux-spec.md` with 2–3 mockup directions covering all five screens (login, watchlist, holdings,
+tunables, track-record), and (b) the user has selected one direction. **As of this writing,
+`docs/ux-spec.md` does not exist.** This increment plan entry defines the mechanism the chosen direction
+will be built through (breakpoints, responsive-table strategy, structural enforcement); it is not itself
+the visual direction and does not authorize dev to start.
+
+**Structural "no functional regression" enforcement:** every file above may only change CSS, JSX/TSX
+markup, className/`data-label` attributes, and purely-presentational local component state. A `git diff`
+grep across every touched file for `supabase\.|validateHoldingsRow|validateTunableValue|is_admin|
+set_kill_switch|\.rpc\(|createClient` must return **zero** matches — this is acceptance criterion 5 below,
+not a review-only convention.
+
+**Acceptance criteria (dev self-verifiable):**
+1. At three viewport widths — **375px** (phone band, ≤639px), **768px** (tablet band, 640–1023px), and
+   **1280px** (desktop band, ≥1024px) — set via Chrome DevTools' device toolbar or
+   `page.setViewportSize()` in a Playwright/qa script, each of the five screens plus the shared
+   header/nav and kill-switch toggle renders with `document.documentElement.scrollWidth <=
+   document.documentElement.clientWidth` (no page-level horizontal scrollbar) — confirmed for all five
+   screens at all three widths (15 checks total).
+2. At 375px, the watchlist and holdings `<table>`s render as a stacked card-per-row layout (no table-level
+   horizontal overflow): every column's value is visible without sideways scrolling, each row carries a
+   `data-label` attribute per cell matching its column header (grep `data-label=` in the rendered/source
+   markup), and each row's edit/delete controls remain individually clickable/tappable.
+3. At 375px and 768px, the shared nav collapses into a control that doesn't overflow the header's own
+   width; every nav item (Watchlist, Holdings, Tunables, Track Record, sign-out) and the kill-switch
+   toggle remain reachable by clicking/tapping that control — confirmed by driving each item via a qa
+   script at both widths.
+4. At 1280px, the layout is no longer capped at the pre-INC-13 fixed 900px `main` width in a way that
+   contradicts the approved `docs/ux-spec.md` direction (checked against that direction's mockup, not a
+   fixed pixel assertion — this criterion cannot be finalized until that direction is selected).
+5. **Structural enforcement:** `git diff --name-only main..inc-13-<slug>` contains only files from the
+   allow-list above; `git diff main..inc-13-<slug> -- admin-portal/ | grep -E "supabase\.|
+   validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` returns
+   **zero** matches.
+6. Full existing `tests/admin_portal/*.test.ts` suite passes with **zero** assertion changes. qa
+   additionally re-runs INC-5/INC-6/INC-7's manual regression checklist (auth gate + allowlist reject,
+   watchlist/holdings CRUD writes confirmed in Supabase, tunables validation error paths, track-record
+   pagination, kill-switch toggle round-trip producing a `kill_switch_audit` row) at all three viewport
+   widths, confirming identical functional outcomes to pre-INC-13 — any difference is a regression, not a
+   visual choice.
+7. Best-effort accessibility (recorded, not a pass/fail gate per NFR8): keyboard-Tab reaches every
+   interactive control in DOM order at all three widths; a quick manual contrast check on body text passes
+   — recorded as a dated note in `docs/handoff.md`.
+
+**Increments NOT made stale by NFR8:** none of INC-3–INC-12 touch admin-portal visual/layout code (INC-5/
+INC-6/INC-7/INC-10 touched `admin-portal/app/**/*.tsx` for functional CRUD/validation/currency-derivation
+work only, not styling) — all twelve remain valid and IMPLEMENTED as documented above. INC-11 (live
+verification) is unrelated and unaffected. INC-13 is purely additive on top of the existing merged code.
