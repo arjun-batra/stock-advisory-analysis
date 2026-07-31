@@ -26,10 +26,49 @@ failing step and its root cause). No production code touched by qa. 1 bug filed 
 
 ---
 
-## Open bugs
+## Retest — BUG-009 — 2026-07-31
+
+**Verdict: RESOLVED.** Verified from the repo (no live DB access this session, see gap note below):
+`sql/call_log_authenticated_read_fix.sql`'s own DROP/CREATE logic is clean and idempotent — it drops
+both the stale live name (`"anon read call_log"`) and the canonical name (`anon_read_call_log`) before
+a single `create policy ... for select to anon, authenticated using (true)`, so re-running it a second
+time does not error. This matches `sql/schema.sql:112-114`'s already-documented policy shape exactly
+(confirmed by reading both files) and matches `docs/handoff.md`'s BUG-009 fix entry's description of
+root cause, fix, and file list. No other file needed a change:
+`admin-portal/app/(app)/track-record/page.tsx` does a plain `supabase.from("call_log").select(...)`
+with no other query path (confirmed by reading the file) — it only needed RLS to permit the read, which
+this fix does. Full regression run confirms zero regressions (expected, since only one new `sql/` file
+was added, no production code touched): `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` →
+**287 passed, 0 failed**; `node --experimental-strip-types --test tests/admin_portal/*.test.ts` →
+**82 passed, 0 failed** (after `npm install` in `admin-portal/` — missing `node_modules` was a
+pre-existing environment gap, not caused by this fix); `npm run lint` and `npm run build` in
+`admin-portal/` both succeed, including `/track-record` in the build's route list.
+
+**Live-application confirmation (not qa's this session):** independently confirmed twice — dev's local
+Postgres 16 scratch-cluster reproduction (bug reproduced, fix applied, verified idempotent re-apply),
+and the orchestrator's direct `pg_policies` query against production project `ikghqdtlbwifwnooytmm`
+post-apply, showing `call_log` has exactly one SELECT policy: `anon_read_call_log`, roles
+`{anon,authenticated}`, `cmd: SELECT`, `qual: true`.
+
+**Gap, stated honestly:** qa has no direct live-DB or live-portal access this session and did NOT
+re-run the original repro (sign in via Google OAuth, load `/track-record`, confirm non-empty rows)
+against the live deployed portal. This retest is a repo-level/static verification plus regression run,
+not a live re-execution of the failing step. If the user wants a genuine live re-test of the checklist
+step, that still needs to happen with real Supabase/portal access.
+
+**Unblocks:** `docs/requirements.md`'s FR31/FR32 live-execution verification checklist (Decision #36)
+step 3 ("confirm the track-record table shows real data") is no longer blocked by BUG-009 — pm should
+pick this up to formally re-run/close that checklist step (qa does not edit `requirements.md`).
+
+**Owner:** was dev (fix applied); now reviewer, to clear per the diff-scoped audit convention.
+
+---
+
+## Open bugs (resolved this pass, retained here for reviewer to clear then archive)
 
 **BUG-009 — Admin portal track-record view shows an empty table for every signed-in admin, no error
-(FR31, `docs/design/admin-portal.md` §16.5) — critical, blocks live-execution checklist step 3.**
+(FR31, `docs/design/admin-portal.md` §16.5) — critical, blocks live-execution checklist step 3.
+STATUS: RESOLVED 2026-07-31, see retest entry above — pending reviewer clearance before archiving.**
 
 **Discovered via:** `docs/requirements.md`'s live-execution verification checklist (Decision #36, "FR31,
 FR32 — Deferred, pending live execution"), step 3 ("confirm the track-record table shows real data")
