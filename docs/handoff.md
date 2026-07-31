@@ -2209,3 +2209,132 @@ real Supabase state/handlers — no new sample data, no new business logic.
   are reconciliations of the source documents as I read them, not unilateral scope changes — flagging
   for tech-lead to fold back into `docs/design/admin-portal.md` §16.10 if it agrees, or correct me if it
   reads the tension differently.
+
+---
+
+# Handoff — INC-13 fix cycle 1: BUG-010 (tablet card styling) + BUG-011 (track-record cards)
+
+**Date:** 2026-07-31. Branch: `inc-13-admin-portal-ui-modernization` (fix commit `3d1cdb3`, on top of the
+original build commit `ea68f5b`). qa's INC-13 run (`docs/test-report.md`) filed both bugs against the two
+judgment calls flagged in this file's prior INC-13 entry.
+
+## Build plan (written before coding)
+
+Re-read `docs/ux-spec.md` §7.3.2 (density table), §7.4/§7.4.2 (Direction G), the mockup's watchlist and
+`#trackrecord` sections (`docs/ux-mockups/direction-g-compact-toggle.html`), and
+`docs/design/admin-portal.md` §16.10's "Layout mechanism per current file" paragraph (the literal
+instruction that the tablet/desktop bands keep the existing `<table>` layout — this sentence is about the
+DOM/CSS-display *mechanism*, not about withholding card *styling*, which is a distinct instruction from
+AC7(a)/§7.3.1's shadow/radius tokens). Both bugs are presentation-only fixes inside the already-approved
+file allow-list (`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`) — no
+design deviation, nothing to flag to tech-lead. Approach: (a) BUG-010 — add a `.crud-table-wrap` container
+around the existing `<table class="crud-table">` in watchlist/holdings, transparent by default, and only
+at the tablet media query (`640–1023px`) given `background/border-radius/box-shadow` (Direction G's
+`--color-surface`/`--radius-md`/`--shadow-card` tokens) — the table's own DOM/display mechanism (real
+`<table>`, `<tr>` as `table-row`) is untouched, satisfying admin-portal.md §16.10's literal text, while
+the wrap now supplies the card surface AC7(a) requires (a `<tr>` with `display:table-row` can't reliably
+paint its own `box-shadow` across browsers, hence styling the wrapper, not the row). Phone/desktop stay
+exactly as qa already passed (`.crud-table-wrap` has no rule outside that one media query, so the
+per-row/per-grid-cell card styling already in place is untouched). (b) BUG-011 — replace track-record's
+`<table class="log-table">` inside `.table-scroll` with a genuine `.tr-cards`/`.tr-card` grid (3-col
+desktop / 2-col tablet / 1-col phone, same three-tier breakpoint pattern already used for
+`.tunable-grid`), matching the mockup's `#trackrecord` section field-for-field (ticker + verdict pill,
+rationale, then the remaining fields — confidence/price/parse status/label/alerted — in a `<dl>`, then the
+timestamp). The sortable `<th>` click handlers have no home in a card layout (no column-header row), so
+`toggleSort(column)` is replaced with two controls in a `.sort-controls` bar: a `<select>` for
+`sortColumn` (`changeSortColumn`, resets `sortAscending` to `false` on column change — same reset
+semantics `toggleSort` used when switching columns) and a separate button for `toggleSortDirection`
+(flips `sortAscending`) — the underlying `sortColumn`/`sortAscending` state and the `.order()`-driven
+`loadRows()` query are byte-for-byte unchanged, only the control surface changed. Removed the now-unused
+`.table-scroll`/`.log-table` CSS (dead code once track-record no longer renders a `<table>`). Verify: full
+existing suite (82 TS / 286 Python, same pre-existing Python failure qa already flagged as unrelated),
+`npm run build`/`npm run lint`, the AC5 structural grep re-run on this fix's own diff, and a Playwright
+pass against a static harness built from the exact same class names/markup structure the edited `.tsx`
+files emit (see "How verified" below — chosen over full Supabase-network mocking since this fix touches
+zero query/auth logic, only CSS/markup, and the pre-installed Chromium + globally-installed `playwright`
+npm package are available per this session's environment notes, `playwright install` still blocked).
+
+## What changed, per bug
+
+**BUG-010 (watchlist/holdings: zero card styling at 768px tablet width).**
+- `admin-portal/app/globals.css` — added `.crud-table-wrap` (transparent by default; at
+  `@media (min-width: 640px) and (max-width: 1023px)` it gets `background: var(--color-surface)`,
+  `border-radius: var(--radius-md)`, `box-shadow: var(--shadow-card)`, `padding: var(--space-3)`).
+- `admin-portal/app/(app)/watchlist/page.tsx` / `holdings/page.tsx` — wrapped the existing
+  `<table className="crud-table">` in `<div className="crud-table-wrap">`. No other line changed — same
+  columns, same `data-label` attributes, same CRUD handlers.
+- Result: at 768px the table now renders inside a single visible card surface (white background, 8px
+  radius, single-layer shadow) instead of a flush, boundary-less table. At 375px/1280px `.crud-table-wrap`
+  contributes no visual change (still transparent outside the tablet media query) — the row-level
+  (phone) and grid-cell-level (desktop) card styling qa already passed is untouched.
+
+**BUG-011 (track-record: never rendered as cards at any width).**
+- `admin-portal/app/globals.css` — removed `.table-scroll`/`.log-table` (dead code, no longer
+  referenced); added `.sort-controls`, `.tr-cards` (1-col phone / 2-col tablet / 2-col-min-1024 3-col
+  desktop, mirroring `.tunable-grid`'s three-tier pattern), `.tr-card`, `.verdict-pill`
+  (`.buy`/`.sell`/`.hold`), and the card's internal `.top`/`.rationale`/`.tr-fields`/`.foot` rules —
+  card anatomy matches the mockup's `#trackrecord` section (`background: var(--color-surface)`,
+  `border-radius: var(--radius-md)`, `box-shadow: var(--shadow-card)`).
+- `admin-portal/app/(app)/track-record/page.tsx` — replaced the `<table>` render with a
+  `.tr-cards` grid of `.tr-card` divs (ticker + verdict pill, rationale, a `<dl>` of the remaining
+  fields, timestamp footer). Replaced the three sortable `<th>` buttons with a `.sort-controls` bar: a
+  `<select>` (`changeSortColumn`) for `sortColumn` and a direction-toggle `<button>`
+  (`toggleSortDirection`) for `sortAscending`. `loadRows()`, `CALL_LOG_SELECT`, `PAGE_SIZE`,
+  `appliedFilters`/filter form, and pagination are all byte-for-byte unchanged.
+- Result: track-record now genuinely renders as cards at all three widths (3-col desktop / 2-col tablet /
+  1-col phone), and sort is still fully reachable (dropdown + direction button) without a `<th>`.
+
+## How verified
+
+- **Structural grep (AC5), re-run on this fix's own diff:** `git diff -- admin-portal/ | grep -E
+  "supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"` —
+  **zero matches.** `git status --short` confirms only the four allow-listed files changed
+  (`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, `track-record/page.tsx`).
+- **Existing suite:** `node --experimental-strip-types --test tests/admin_portal/*.test.ts` — **82
+  passed, 0 failed**, zero assertion changes (none of the static-source checks constrain track-record's
+  markup, only its query/filter/pagination logic, which is untouched — confirmed by re-reading
+  `tests/admin_portal/kill_switch_static.test.ts` lines 143–193 before editing). `SKIP_TUNABLES_FETCH=true
+  python3 -m pytest -q --tb=short` — **286 passed, 1 failed** (`test_ingest.py`'s
+  date-sensitive/pre-existing failure qa already flagged as unrelated to `admin-portal/`, reproduced
+  identically here).
+- **Build/lint:** `cd admin-portal && npm run build` — compiles cleanly, all 8 routes present, TypeScript
+  check passes; `npm run lint` — zero errors/warnings.
+- **Visual/computed-style verification:** built a static HTML harness (this session's scratchpad, not
+  committed) reusing the exact class names/DOM structure the edited `.tsx` files emit, linked against the
+  real `admin-portal/app/globals.css`, driven by Playwright + the pre-installed Chromium
+  (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) at 375/768/1280px:
+  - **375px:** `.crud-table-wrap` computed `background: rgba(0,0,0,0)` / `box-shadow: none` (no visual
+    effect, as intended — phone already uses per-row cards); `.crud-table tbody tr` itself is still
+    `background: rgb(255,255,255)` / `box-shadow: 0 1px 2px rgba(20,20,43,.08)` / `border-radius: 8px`
+    (unchanged, still a card). `.tr-cards` computed `display: grid`, one column
+    (`grid-template-columns: 375px`), 3 `.tr-card`s present, each with the same card background/shadow/
+    radius. No page-level horizontal scroll.
+  - **768px:** `.crud-table-wrap` now computed `background: rgb(255,255,255)`, `box-shadow: rgba(20,20,
+    43,.08) 0 1px 2px`, `border-radius: 8px` — **BUG-010 fixed** (was `rgba(0,0,0,0)`/`none`/`0px`).
+    `.crud-table tbody`/`tr` remain `table-row-group`/`table-row` (the literal `<table>` mechanism
+    admin-portal.md §16.10 calls for at this band is unchanged). `.tr-cards` computed 2 columns
+    (`379px 379px`) — **BUG-011 fixed** (previously 0 `.tr-card` elements existed at any width).
+  - **1280px:** `.crud-table-wrap` back to transparent (desktop grid cells carry their own card styling,
+    confirmed unchanged: `.crud-table tbody` computed `display: grid` with 4 equal tracks, `tr` still
+    card-styled) — AC4's 4-col desktop grid, which qa already passed, is untouched. `.tr-cards` computed
+    3 columns (`420px 420px 420px`).
+  - This confirms the specific CSS/markup fix for both bugs without needing to reproduce qa's full
+    Supabase-network-mock harness (auth cookie codec, RPC/REST mocking) — appropriate here since this fix
+    touches zero query/auth/RPC logic (confirmed by the AC5 grep above), only CSS and markup.
+
+## Known limitations
+
+- The Playwright pass above is a static-harness verification (real compiled CSS + the exact markup shape
+  the edited components emit), not a render of the live Next.js app through a mocked Supabase session —
+  qa's own full real-browser pass (auth-cookie-seeded, mocked REST/RPC) is the higher-fidelity check and
+  should be re-run to confirm the same computed-style results hold through the actual React render and to
+  re-confirm AC1/AC2/AC3/AC4/AC7(b)/(c)/AC8 are still green (nothing in this fix touches those screens/
+  components, but a fresh pass is qa's call, not assumed here).
+- `.tr-card`'s field layout (ticker/verdict/rationale/a `<dl>` of confidence-price-parse_status-label-
+  alerted/timestamp) shows every field the prior table did — the mockup's sample card only shows a subset
+  (ticker, verdict, rationale, price, timestamp) since it's demo data; this build keeps every real field
+  the app already surfaces (no information dropped), styled with the same card anatomy.
+- Sort-as-dropdown (`changeSortColumn`/`toggleSortDirection`) is a new interaction shape not depicted in
+  the mockup (which uses static demo data with no interactive sort at all) — reasoned through against
+  qa's explicit suggestion in the bug report; the underlying `sortColumn`/`sortAscending`/`.order()`
+  contract is unchanged, only the control surface.
