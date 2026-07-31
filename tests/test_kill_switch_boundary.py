@@ -373,6 +373,58 @@ def test_checkpoint3_process_candidate_abort_leaves_nothing_logged(monkeypatch, 
     assert sb.abort_log[0]["real_rows_this_cycle"] == 0
 
 
+def test_checkpoint3_discovery_mixed_outcomes_before_abort_real_rows_counts_and_orders_correctly(
+        monkeypatch, wire_discovery):
+    """(C901 refactor, commit 0a24460) `_ingest_candidates`/`_judge_and_process`
+    now mutate a shared `outcomes` Counter across two extracted functions instead
+    of one inline loop -- this pins that the tally is still correct and still
+    reflects EVERY prior real outcome this cycle, not just the abort itself, once
+    ingest skips, a no-read, and an ordinary logged candidate all precede a later
+    candidate's checkpoint-3 abort in the same run. Three candidates: FAIL (bad
+    ingest data -> ingest 'skip', not a 'real row'), NOREAD (AI fail-safe ->
+    'no-read', IS a real row), HOLD (ordinary non-Buy -> 'candidate-logged', IS a
+    real row), then BUYME (a real push attempt) aborts at its own checkpoint 3."""
+    sb = wire_discovery
+    monkeypatch.setattr(run_discovery.prefilter, "find_candidates",
+                         lambda exclude, region: (
+                             [{"ticker": "FAIL", "signals": ["gainer"]},
+                              {"ticker": "NOREAD", "signals": ["gainer"]},
+                              {"ticker": "HOLD", "signals": ["gainer"]},
+                              {"ticker": "BUYME", "signals": ["gainer"]}], 1, 0,
+                             {"raw": 4, "after_dedup": 4, "passed_quality": 4, "passed_signal": 4}))
+
+    def _fake_ingest(ticker):
+        if ticker == "FAIL":
+            return {**_data(ticker), "has_price": False, "notes": ["no data"]}
+        return {**_data(ticker), "has_price": True}
+    monkeypatch.setattr(run_discovery.ingest, "get_market_data", _fake_ingest)
+    monkeypatch.setattr(run_discovery.ai_judge, "judge_batch",
+                         lambda items, models=None: {
+                             "NOREAD": _ai("Hold", parse_status="api_error"),
+                             "HOLD": _ai("Hold"),
+                             "BUYME": _ai("Buy"),
+                         })
+    # False at checkpoint 1, False at checkpoint 2, then False/False/True across
+    # the three candidates' own checkpoint-3 push gate (only BUYME reaches it,
+    # since NOREAD fails safe before any push gate and HOLD isn't a Buy).
+    monkeypatch.setattr(state, "is_paused", _sequenced_is_paused(False, False, True))
+
+    run_discovery.main()
+
+    assert sb.run_heartbeat == {}
+    assert len(sb.abort_log) == 1
+    assert sb.abort_log[0]["checkpoint"] == "push"
+    assert sb.abort_log[0]["workflow"] == "daily-discovery"
+    # FAIL's ingest-skip does not count (never reached the AI); NOREAD's
+    # fail-safe and HOLD's ordinary logged outcome both DO count -> 2.
+    assert sb.abort_log[0]["real_rows_this_cycle"] == 2
+    # BUYME itself left nothing logged -- its abort happened before any write.
+    assert not any(r["ticker"] == "BUYME" for r in sb.call_log)
+    # FAIL's ingest-skip is still skip-with-log (FR15) -- it just isn't a "real
+    # row" for FR35's causal-tie accounting, since it never reached the AI.
+    assert {r["ticker"] for r in sb.call_log} == {"FAIL", "NOREAD", "HOLD"}
+
+
 # =============================================================================
 # AC6 -- resume: next cycle retries automatically, zero new code
 # =============================================================================

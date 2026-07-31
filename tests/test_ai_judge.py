@@ -11,6 +11,7 @@ a bad batch can only ever MISS a signal, never fabricate one.
 """
 
 import json
+from collections import Counter as _Counter
 
 import config
 from conftest import FakeAPIError, FakeGeminiResponse, FakeUsageMetadata
@@ -542,3 +543,53 @@ def test_ticker_block_agreeing_currency_position_line_unchanged():
 
     assert "  Shares: 10, Cost basis: 50.0 CAD, Current price: 60.0, Unrealized P/L: 20.0%" in block
     assert "not comparable" not in block
+
+
+# --- _positional_candidate: direct unit coverage of the corroboration gate ---
+# (C901 refactor, commit 0a24460) DEEP-003 and BUG-005 both live entirely inside
+# this one now-named helper. It was previously only reachable indirectly through
+# _parse_batch's full 16-branch body; testing it directly pins the rule's exact
+# boundary independent of the surrounding extraction/dict-building logic, so a
+# future edit to _parse_batch's plumbing can't silently change this rule's
+# semantics without a directly-failing test.
+
+def test_positional_candidate_rejects_length_mismatch():
+    """Array length must equal the requested-ticker count, or there's no
+    positional correspondence to trust at all."""
+    arr = [{"verdict": "Buy"}]
+    cand, used = ai_judge._positional_candidate(0, "AAPL", arr, ["AAPL", "MSFT"], _Counter())
+    assert cand is None and used is False
+
+
+def test_positional_candidate_accepts_unlabeled_object_in_request_order():
+    """DEEP-003 legitimate path: the model just forgot the 'ticker' label."""
+    arr = [{"verdict": "Buy", "rationale": "no label"}]
+    cand, used = ai_judge._positional_candidate(0, "AAPL", arr, ["AAPL"], _Counter())
+    assert used is True and cand == arr[0]
+
+
+def test_positional_candidate_rejects_a_different_labeled_ticker_at_the_same_index():
+    """DEEP-003 misattribution case: the object at this index carries SOMEONE
+    ELSE's ticker label -- never trust it as a stand-in, even positionally."""
+    arr = [{"ticker": "MSFT", "verdict": "Buy", "rationale": "wrong company"}]
+    cand, used = ai_judge._positional_candidate(0, "AAPL", arr, ["AAPL"], _Counter({"AAPL": 1}))
+    assert cand is None and used is False
+
+
+def test_positional_candidate_accepts_unambiguous_normalized_match():
+    """BUG-005 legitimate path: suffix-stripped match, and this normalized form
+    belongs to exactly one distinct requested ticker this batch."""
+    arr = [{"ticker": "ABC", "verdict": "Buy", "rationale": "base symbol"}]
+    counts = _Counter({"ABC": 1})
+    cand, used = ai_judge._positional_candidate(0, "ABC.TO", arr, ["ABC.TO"], counts)
+    assert used is True and cand == arr[0]
+
+
+def test_positional_candidate_rejects_ambiguous_normalized_match():
+    """BUG-005 fix: two DISTINCT requested tickers normalize to the same base
+    symbol -- a normalized-only match can't tell which one it belongs to, so it
+    must fail safe rather than guess."""
+    arr = [{"ticker": "ABC", "verdict": "Buy", "rationale": "which market?"}]
+    counts = _Counter({"ABC": 2})   # ABC.TO and ABC.NS both normalize to "ABC"
+    cand, used = ai_judge._positional_candidate(0, "ABC.TO", arr, ["ABC.TO", "ABC.NS"], counts)
+    assert cand is None and used is False
