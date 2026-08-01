@@ -797,11 +797,11 @@ INC-13's merge point. No other increment is open concurrently with INC-15 at the
 **Design:** `docs/design/admin-portal.md` §16.11 (§16.11.1 nav defect root cause, §16.11.2 nav mechanism
 fix, §16.11.3 Tickers screen data model, §16.11.4 modal/FR37 workflow, §16.11.5 new RPC surface, §16.11.6
 files/nav-count/coverage). **Files (allow-list, from §16.11.6):** `admin-portal/components/NavToggle.tsx`,
-`admin-portal/components/AuthGuard.tsx`, `admin-portal/app/globals.css`, `admin-portal/app/(app)/
-tickers/page.tsx` (new), at most one new modal component (e.g. `admin-portal/components/
-TickerEditModal.tsx`), deletions of `admin-portal/app/(app)/watchlist/page.tsx` and `admin-portal/app/
-(app)/holdings/page.tsx`, and `sql/tickers_screen_rpc.sql` (new). No other file, in any directory, is in
-scope.
+`admin-portal/components/AuthGuard.tsx`, `admin-portal/app/globals.css`, `admin-portal/app/layout.tsx`
+(FR38's branding-rename `<title>` string), `admin-portal/app/(app)/tickers/page.tsx` (new), at most one new
+modal component (e.g. `admin-portal/components/TickerEditModal.tsx`), deletions of `admin-portal/app/(app)/
+watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx`, and `sql/tickers_screen_rpc.sql` (new).
+No other file, in any directory, is in scope.
 
 **Structural "no functional regression beyond FR37's genuine new gate" enforcement:** every file above may
 change CSS/JSX/TSX/component structure and the two named new RPC call sites; a `git diff` grep across
