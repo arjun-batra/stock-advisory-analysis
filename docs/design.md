@@ -105,6 +105,33 @@ measured. **INC-14** (`increment-plan.md`, "2026-08-01" section) is the fix — 
 tightened, dev-self-verifiable ACs against the mockup Arjun already approved. `admin-portal.md` §16.10 and
 §16.9's NFR8 coverage row now flag this as an open gap until INC-14 is qa/reviewer-cleared.
 
+**2026-08-01 — admin-portal redesign change request (Decision #40): FR36–FR38 added, NFR8 amended;
+`admin-portal.md` §16.11 added; INC-15 logged, BLOCKED.** Arjun's CR, itemized: merge the watchlist and
+holdings screens into one "Tickers" screen with one-card-per-row layout and a click-to-open combined
+edit/delete modal (FR36); a mandatory shares/price-per-share capture gate on a watch-only→held status
+change, and a delete-with-confirmation on held→watch-only (FR37); rename "Admin Portal" to "Sentinel
+Portal" (FR38, trivial string change, no design content needed); and a nav-mechanism amendment to NFR8 —
+**the desktop nav rendering as a vertically stacked list instead of a horizontal row is a confirmed defect
+against the already-approved INC-13/14 design, not new scope.** Root-caused: `admin-portal/components/
+AuthGuard.tsx` wraps the nav links in an extra `<nav>` element that `NavToggle.tsx`'s flex/`flex-direction`
+CSS rules never reach (they govern `.nav-panel`'s direct child, which is that one `<nav>` box, not the
+individual links) — the actual vertical stacking comes from an unrelated `display:block; width:100%`
+descendant rule, which explains why it reproduces at every width regardless of the `.nav-panel` media
+query. Full diagnosis and fix options: `admin-portal.md` §16.11.1. Also designed, per NFR8's new
+horizontal-scroll carve-out: the tablet band (640–1023px) moves from burger-collapse to a literal
+horizontal nav row with `overflow-x: auto` as a scroll-if-needed safety net — no new breakpoint tier, the
+existing phone/tablet/desktop three bands are reused unchanged (§16.11.2). The merged Tickers screen's
+architecture (no schema change, two-table client-side join, combined modal, and a new transactional
+`set_ticker_holding_status`/`delete_ticker` RPC pair — needed because `holdings.ticker`'s FK to
+`watchlist.ticker` has no `ON DELETE CASCADE` and a plain two-step client write cannot guarantee FR37's
+"held ⇔ holdings row exists" invariant survives a partial failure) is in `admin-portal.md` §16.11.3–
+§16.11.6. **INC-15 is logged in `increment-plan.md` as BLOCKED, not READY** — same gate discipline INC-13
+used before its mockups were approved: dev may not begin a build plan until designer publishes updated
+`docs/ux-spec.md` mockups covering the merged Tickers screen and new nav mechanism, and Arjun approves one
+direction. INC-15 depends on nothing else being in-flight; INC-14 has already merged to `main`. No FR/NFR
+previously IMPLEMENTED changes status; §16.1–§16.10 are unaffected except where §16.11 explicitly revises
+them (the tablet nav band's mechanism, and the eventual replacement of the watchlist/holdings screens).
+
 **Provenance:** Originally produced during the 2026-07-12 multi-agent-template adoption pass by condensing
 the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into this
 template's format. It is **reverse documentation of a shipped system**, not forward design work. `SD.md`
@@ -130,7 +157,7 @@ longer implemented or design-active. See "Retired: shadow-pilot tracks" below.
 | `docs/design/non-functional-ops.md` **(§7.3/§7.5 IMPLEMENTED, INC-9/INC-10, reviewer-CLEAR Passes 25/27; §8's repo map current)** | Cost/security/concurrency/delisting design, repo structure & module boundaries, configuration surface (tunables) | §7–§9 |
 | `docs/design/frontend.md` | Detail page & dashboard rendering authority, browser-CORS constraint, known limitations | §10–§12 |
 | `docs/design/operational-controls.md` **(§13.1–§13.5/§14 IMPLEMENTED, INC-3/INC-4; §13.6 IMPLEMENTED, INC-12, reviewer-CLEAR Pass 29 — DEEP-007 closed)** | Kill-switch (dispatch-layer enforcement, audit trail, monitor pause-awareness, in-flight boundary checks) and AI provider abstraction (interface, LiteLLM-vs-hand-rolled decision) | §13–§14 |
-| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20; §16.3's holdings-currency-derivation content IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27; §16.10 IMPLEMENTED, NFR8/INC-13, reviewer-CLEAR Pass 35, merged to `main` — Direction G)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory, responsive/visual design system | §16 (16.1–16.10) |
+| `docs/design/admin-portal.md` **(INC-5 sections IMPLEMENTED, reviewer-CLEAR Pass 17; INC-7 sections IMPLEMENTED, reviewer-CLEAR Pass 20; §16.3's holdings-currency-derivation content IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27; §16.10 IMPLEMENTED, NFR8/INC-13, reviewer-CLEAR Pass 35, merged to `main` — Direction G, known post-merge gap tracked as INC-14; §16.11 is new draft design, NFR8 amendment/FR36–FR38, INC-15 — BLOCKED, not yet gated for build)** | Admin portal: hosting/auth, authorization model (RLS/allowlist), watchlist/holdings CRUD, track-record view, kill-switch UI, secrets inventory, responsive/visual design system, nav-defect fix + merged Tickers screen (FR36–FR38) | §16 (16.1–16.11) |
 | `docs/design/admin-portal-tunables.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19; write-time-validation subsection IMPLEMENTED, INC-10, reviewer-CLEAR Pass 27)** | Tunables editor (FR30): Supabase `tunables` table schema, RLS (`select, update` only + key-registry CHECK, REV-044), seed data, portal UI. Split out of `admin-portal.md` 2026-07-27. | §16.4 |
 | `docs/design/tunables-fallback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) `scripts/config.py` half: Decision #28 cache-file fail-safe (`tunables_cache.json` at repo root, REV-046), two-tier fallback chain — table then cache, fails loud via `SystemExit` if both miss a key or a tier-1 value fails to cast (REV-036), explicit fetch timeout + offline test seam (REV-041), validated/merged cache write-back, `TUNABLES_DEGRADED` heartbeat signal (REV-045). Split out of `admin-portal-tunables.md` 2026-07-28. | §16.4 |
 | `docs/design/tunables-workflow-writeback.md` **(IMPLEMENTED, INC-6 reviewer-CLEAR Pass 19)** | Tunables editor (FR30) workflow-YAML half: which workflow commits `tunables_cache.json` back to git, and REV-040/Decision #29's race + privilege mitigations (shared `concurrency` group with `publish-prices.yml`, job-scoped `permissions`, bounded push retry), `ALERTS_ENABLED` AND-gate. Split out of `tunables-fallback.md` 2026-07-28 — INC-6 reads all three tunables files, not the rest of §16. | §16.4 |
@@ -302,7 +329,10 @@ INC-3–INC-7.**
 | NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
 | NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |
-| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39) | INC-13 merged/reviewer-CLEAR Pass 35 (commit `da50ed8`, PR #46), but a **post-merge visual-fidelity gap is open** (pill/badge markup, Add/Edit modal, desktop card elevation — `admin-portal.md` §16.10's 2026-08-01 note) — fix tracked as **INC-14** (`increment-plan.md`), not yet qa/reviewer-cleared. Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31, unchanged. |
+| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39; amended 2026-08-01, Decision #40) | INC-13 merged/reviewer-CLEAR Pass 35 (commit `da50ed8`, PR #46), but a **post-merge visual-fidelity gap is open** (pill/badge markup, Add/Edit modal, desktop card elevation — `admin-portal.md` §16.10's 2026-08-01 note) — fix tracked as **INC-14** (`increment-plan.md`), not yet qa/reviewer-cleared. Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31, unchanged. **Navigation-mechanism amendment (Decision #40): the desktop-vertical-stacking defect is root-caused and its fix + a new tablet horizontal-scroll tier are designed in `admin-portal.md` §16.11.1/§16.11.2 — tracked as INC-15, BLOCKED pending designer's updated mockups and Arjun's approval, not yet built.** |
+| FR36 (merged Tickers screen — one-card-per-row, card content, click-to-modal, added 2026-08-01, Decision #40) | Design in `admin-portal.md` §16.11.3/§16.11.4 — tracked as **INC-15, BLOCKED** pending designer's updated mockups and Arjun's approval. No schema change (Decision #40); reads/writes the existing `watchlist`/`holdings` tables joined client-side by `ticker`. |
+| FR37 (mandatory shares/price-per-share on watch-only→held; delete-with-confirmation on held→watch-only, added 2026-08-01, Decision #40) | Design in `admin-portal.md` §16.11.4 (workflow/validation) and §16.11.5 (new `set_ticker_holding_status`/`delete_ticker` transactional RPCs, `sql/tickers_screen_rpc.sql`) — tracked as **INC-15, BLOCKED**. |
+| FR38 (branding rename "Admin Portal"→"Sentinel Portal", added 2026-08-01, Decision #40) | UI string change only — no design content needed; dev/designer implement directly, not gated on INC-15's mockup approval. |
 | FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
