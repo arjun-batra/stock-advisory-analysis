@@ -35,6 +35,18 @@ which remain as-built/IMPLEMENTED exactly as documented above and require no rev
 user has selected **Direction G** ("Compact Toggle") as the final visual/interaction direction — see
 §16.10's updated content below for the exact reference files and details dev builds against.
 
+**2026-08-01 addendum (FR36–FR38, amended NFR8, Decision #40) — §16.11 added, INC-15 logged, BLOCKED.**
+Arjun's admin-portal redesign change request: merge the watchlist+holdings screens into one "Tickers"
+screen (FR36), a mandatory-field workflow gate on the watch-only↔held status transition (FR37), a
+branding rename (FR38, no design content needed), and a real defect in the already-approved nav design
+(desktop nav rendering vertically stacked instead of horizontal) plus new design intent for a
+horizontally-scrollable nav tier (amended NFR8). §16.11 below has the full root-cause diagnosis, the nav
+mechanism fix, and the merged Tickers screen's architecture (data model, modal, FR37's transactional
+status-transition RPC). **INC-15 is logged in `increment-plan.md` as BLOCKED pending designer's updated
+`docs/ux-spec.md` mockups and Arjun's approval** — not READY, same gate discipline INC-13 used before its
+mockups were approved. §16.1–§16.10 are unaffected by this addendum except where §16.11 explicitly says
+otherwise (the tablet nav band's *mechanism*, and the watchlist/holdings screens' eventual replacement).
+
 ---
 
 ## 16. Admin portal architecture (FR27–FR32, NFR5, NFR6)
@@ -316,7 +328,10 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
-| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — Direction G, INC-13 (`increment-plan.md`) merged/reviewer-CLEAR Pass 35, **but a post-merge visual-fidelity gap (pill markup, Add/Edit modal, desktop elevation) is open — fix tracked as INC-14**, not yet qa/reviewer-cleared |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — Direction G, INC-13 (`increment-plan.md`) merged/reviewer-CLEAR Pass 35, **but a post-merge visual-fidelity gap (pill markup, Add/Edit modal, desktop elevation) is open — fix tracked as INC-14**, not yet qa/reviewer-cleared. **Navigation-mechanism bullet (amended 2026-08-01, Decision #40): §16.11.1 (defect root cause/fix)/§16.11.2 (new tablet horizontal-scroll mechanism) — tracked as INC-15, BLOCKED pending mockup approval.** |
+| FR36 (merged Tickers screen: one-card-per-row, card content, click-to-modal) | §16.11.3/§16.11.4 — tracked as **INC-15, BLOCKED** pending designer's updated mockups and Arjun's approval |
+| FR37 (mandatory shares/price-per-share on watch-only→held; delete-with-confirmation on held→watch-only) | §16.11.4 (workflow/validation)/§16.11.5 (transactional RPC) — tracked as **INC-15, BLOCKED** |
+| FR38 (branding rename "Admin Portal"→"Sentinel Portal") | UI string change only — no design content needed, dev/designer implement directly |
 
 ### 16.10 Responsive & visual design system (NFR8, INC-13) — IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main`; **known post-merge gap, fix tracked as INC-14**
 
@@ -440,3 +455,293 @@ collapsible-nav toggle needs local state. No other file, in any directory, is in
 
 **Accessibility:** best-effort only per NFR8's explicit text — keyboard reachability and legible contrast
 are checked and recorded, not a pass/fail gate; no WCAG target.
+
+**2026-08-01 note — nav defect diagnosis moved to §16.11.** The desktop-vertical-stacking nav defect
+Arjun reported (routed via Decision #40, NFR8's amended navigation-mechanism bullet) is **not** a gap in
+this section's design intent — the breakpoint/mechanism described above (burger below desktop, forced
+horizontal row at ≥1024px) is what was *supposed* to render. §16.11 below documents the actual root cause
+(a DOM/CSS structural mismatch, not a wrong breakpoint value) and the fix + new nav-mechanism design
+(Decision #40's horizontal-scroll carve-out). This section's breakpoint values (639/640/1023/1024) are
+unchanged and remain correct as the phone/tablet/desktop band definitions; §16.11 revises which mechanism
+applies to the tablet band specifically.
+
+---
+
+## 16.11 Nav defect fix + horizontal-scroll tier, and the merged Tickers screen (FR36–FR38, NFR8 amendment, Decision #40) — INC-15, **BLOCKED**
+
+**Status: BLOCKED pending designer's updated `docs/ux-spec.md` mockups (merged Tickers screen + new nav
+mechanism) and Arjun's approval of one direction** — same gate discipline as INC-13's original
+"hard blocking dependency" (§16.10 above, cleared 2026-07-31). Do not begin a dev build plan against this
+section until that gate clears; see `increment-plan.md`'s INC-15 entry for the exact gate wording and
+what unblocks it. Everything below is this section's *content* (root cause, mechanism, data/API design) —
+it is final design intent, not implementation authorization.
+
+### 16.11.1 Nav defect — root cause (diagnosed against the live merged code, `da50ed8`/INC-14)
+
+**The bug is a DOM/CSS structural mismatch, not a wrong breakpoint or a wrong CSS value.**
+
+`admin-portal/components/NavToggle.tsx` renders:
+```tsx
+<div className={`nav-panel${open ? " open" : ""}`}>{children}</div>
+```
+`admin-portal/components/AuthGuard.tsx` calls it as:
+```tsx
+<NavToggle>
+  <nav>
+    <a href="/watchlist">Watchlist</a>
+    <a href="/holdings">Holdings</a>
+    <a href="/tunables">Tunables</a>
+    <a href="/track-record">Track record</a>
+    <SignOutButton />
+  </nav>
+</NavToggle>
+```
+So the actual DOM is `.nav-panel > nav > (a, a, a, a, button.link)` — **one extra level of nesting**
+between the flex container and the links. `app/globals.css`'s `.nav-panel` rules apply `display:flex` and
+toggle `flex-direction` (`column` when `.open`, forced `row` at `@media (min-width: 1024px)`) — but those
+rules govern `.nav-panel`'s *direct* children, which is a single `<nav>` box, not the five links. A
+flexbox `flex-direction` on a container with exactly one flex item has no visible effect (there is nothing
+to arrange into a row vs. a column). The actual vertical stacking is produced by a completely different,
+unrelated rule: `.nav-panel a, .nav-panel button.link { display: block; width: 100%; }` (a *descendant*
+selector, so it does reach through the extra `<nav>` wrapper) — each anchor becomes a full-width block
+inside `<nav>`'s own default (non-flex) block formatting context, so the links stack one per line
+**regardless of `.nav-panel`'s flex-direction, and regardless of viewport width.** This is why the defect
+reproduces identically at every width where `.nav-panel` is visible: at phone/tablet with the menu toggled
+open, vertical stacking happens to be the *intended* look (a dropdown menu), so nobody noticed; at
+desktop, where CSS forces `.nav-panel` open with `flex-direction: row`, the same underlying vertical
+stacking is now visibly wrong, which is exactly what Arjun's screenshot shows.
+
+**Fix approach (dev's implementation choice at build time, either is acceptable — recorded here so dev
+doesn't have to re-diagnose):**
+- **Option A (preferred — flattens the DOM to match the CSS's assumption):** remove the redundant `<nav>`
+  wrapper in `AuthGuard.tsx`; pass the `<a>`/`SignOutButton` elements directly as `NavToggle`'s children,
+  and have `NavToggle` render its own wrapper element as `<nav className="nav-panel ...">` (semantic nav
+  landmark) instead of a bare `<div>`. This makes `.nav-panel`'s direct children the actual links, so the
+  existing `flex-direction`/`display:flex` rules apply to them directly, with zero other CSS change needed
+  beyond §16.11.2's breakpoint/mechanism update below.
+- **Option B (CSS-only, if the JSX nesting must stay for another reason):** retarget the flex rules from
+  `.nav-panel` to `.nav-panel > nav` (the element that is actually the links' direct parent), and drop
+  `display:flex` from `.nav-panel` itself (it becomes a positioning/dropdown-box wrapper only, unchanged
+  for its mobile `.open` absolute-position styling).
+Either option is a **presentation-layer-only** fix — no `supabase.*` call, no `is_admin()`/RLS/validation
+logic anywhere near this file, consistent with §16.10's own scope-boundary rule.
+
+### 16.11.2 Nav mechanism — breakpoints (Decision #40's NFR8 amendment)
+
+**Kept:** the same three bands already established in §16.10 — phone ≤639px, tablet 640–1023px, desktop
+≥1024px. No new breakpoint tier is introduced; **the tablet band's *mechanism* changes**, not its pixel
+boundary, which is why this counts as staying consistent with the existing bands rather than deviating
+from them.
+
+- **Phone (≤639px): burger menu, unchanged.** `NavToggle`'s hamburger button + toggle-open dropdown panel
+  behavior is not affected by this fix — it was never the site of the reported defect (a vertical dropdown
+  list is the *correct* look at phone width).
+- **Tablet (640–1023px) — changed from burger to a literal horizontal row with a scroll safety net.**
+  The burger toggle (`.nav-toggle-btn`) is now hidden starting at 640px (not 1024px), and `.nav-panel`
+  (or `.nav-panel > nav`, per whichever fix option dev picks in §16.11.1) renders
+  `display: flex; flex-direction: row; flex-wrap: nowrap; overflow-x: auto;` starting at the same
+  640px breakpoint. This single rule satisfies NFR8's amended carve-out directly: with FR36 shrinking the
+  nav from five items (Watchlist/Holdings/Tunables/Track record/Sign out) to four (Tickers/Tunables/
+  Track record/Sign out), the row is expected to fit without visibly scrolling in the common case — but
+  `overflow-x: auto` means if it ever doesn't (a long future item label, a narrow real-device tablet), the
+  nav scrolls horizontally instead of wrapping to a second line or clipping, which is exactly the behavior
+  NFR8's narrow carve-out permits, scoped to the nav container only. No JS is added for this — it is a
+  pure CSS behavior that is a no-op (no visible scrollbar) whenever content already fits.
+- **Desktop (≥1024px): unchanged mechanism, now actually working.** Same `display:flex; flex-direction:
+  row` (`overflow-x: auto` is harmless here too — it only activates if content overflows, which it will
+  not at this width with four items) — this is the band the original defect was reported against; §16.11.1
+  is the fix that makes this band's already-correct CSS intent actually reach the links.
+
+**Rationale for reusing 640px rather than picking a separate "mid-width tier":** NFR8's carve-out text
+asks for a horizontally-scrollable nav "at some tech-lead-determined mid-width tier ... as an alternative
+to the burger control" — the tablet band **is** that tier (it is the band that used to hide behind the
+burger); moving its mechanism from burger to scroll-safe horizontal row is the literal, minimal way to
+satisfy the requirement without inventing a fourth band. No deviation from the phone/tablet/desktop
+three-band model is needed or taken.
+
+### 16.11.3 Tickers screen — merged data model (FR36)
+
+**No schema change (Decision #40, explicit).** The Tickers screen reads/writes the same two tables,
+`watchlist` and `holdings`, joined client-side by `ticker` — no new table, no new column, no view change
+beyond what already exists.
+
+- **Read (page load):** three parallel Supabase reads, same RLS-authorized pattern already used by the
+  existing watchlist/holdings/track-record pages — no new policy needed for reads:
+  1. `select * from watchlist order by ticker` (existing `anon_read_watchlist` policy already covers this
+     for the signed-in admin, same as today's watchlist page).
+  2. `select * from holdings` (existing `admin_write_holdings` policy's `using (is_admin())` clause also
+     covers `select` — `for all` includes read — same access the existing holdings page already relies on;
+     no new policy).
+  3. `select * from latest_call_per_ticker` (or equivalent — the same view/read the track-record page and
+     dashboard already use, `data-and-flow.md` §5) for each ticker's latest verdict/timestamp/rationale/
+     confidence.
+  These three result sets are merged client-side into one view-model per row:
+  ```ts
+  type TickerRow = {
+    ticker: string;
+    market: "US" | "TSX" | "NSE";
+    type: "stock" | "ETF";
+    status: "held" | "watch-only";
+    holding: { shares: number; cost_basis: number; currency: "USD" | "CAD" | "INR" } | null; // null iff watch-only
+    latestCall: {
+      verdict: "Buy" | "Sell" | "Hold";
+      timestamp: string;       // ISO, rendered per FR23's dual-timezone rule (unchanged, reused from the
+                                // existing detail-page/dashboard formatting helper — no new logic)
+      confidence: "high" | "medium" | "low";
+      rationale: string;
+    } | null; // null iff no check has run yet for this ticker (same "hidden, not placeholder" rule as FR21)
+  };
+  ```
+  `confidence` is **not new data** — it is `call_log.data_snapshot.confidence`, already produced by
+  `ai_judge.py` and already surfaced on the public dashboard/detail page (FR21/FR14, `components.md`
+  §4.7); this is a new *display surface* only, per FR36's own text and Decision #40's impact assessment.
+
+- **Card layout — one card per row, all three breakpoints (supersedes INC-13/14's 4/3/2-col density for
+  this screen only):** `.card-grid`'s `grid-template-columns` for the Tickers screen becomes a single
+  column (`1fr`) unconditionally — no per-breakpoint override, unlike the tunables/track-record grids
+  which keep their existing 3/2/1-col and 3-col/2-col/1-col density respectively (§16.10, unaffected). This
+  is a new CSS class (e.g. `.ticker-list`, to avoid changing `.card-grid`'s shared definition used
+  elsewhere) rather than a modification to the existing `.card-grid` rule.
+
+- **Card content (FR36, exact list):** (1) a status pill (`.pill.held`/`.pill.watch`, reused verbatim from
+  INC-14's existing pill classes — no new CSS token) plus, if held, shares and price-per-share (a UI label
+  only — the existing `holdings.cost_basis` value, not a new field) rendered as figures (reuse `.figures`
+  from the existing ticker-card styling); (2) the latest verdict as a `.verdict-pill` (reused from the
+  track-record card, §16.10) plus its timestamp (reuse the existing dual-timezone formatting helper) plus
+  a confidence label/badge (new small UI element — exact visual TBD in designer's updated mockup, binds to
+  `latestCall.confidence`, no new data); (3) the rationale text (reuse `.tr-card .rationale` styling). If
+  `latestCall` is null, the whole verdict/timestamp/confidence/rationale block is omitted for that card —
+  same "hidden entirely, no placeholder" rule FR21 already establishes for the dashboard.
+
+### 16.11.4 Click-to-modal + combined edit form (FR36, FR37)
+
+The entire card is the click target (a `<button>`-semantics wrapper around the card's content, not just an
+icon) opening `TickerEditModal` — reuses the `.modal-overlay`/`.form-modal` mechanism INC-14 already built
+for the Add/Edit ticker modal (centered panel tablet/desktop, bottom sheet phone), generalized to this
+screen instead of two separate per-table modals.
+
+- **Modal contents, top to bottom:** (a) read-only identifying header — ticker, market, type, status
+  (FR36's "full identifying info"); (b) the card's own content restated (verdict/timestamp/confidence/
+  rationale, read-only — this is a display block, not part of the edit form); (c) one combined edit form
+  with fields for `market` (select), `type` (select), `status` (select: held/watch-only), and,
+  conditionally, `shares`/`price per share` (number inputs) — the same fields the separate watchlist/
+  holdings edit forms already validate against (`lib/validation.ts`'s existing `validateWatchlistRow`/
+  `validateHoldingsRow`, unchanged rules, now called from one form instead of two); (d) a delete action.
+- **Conditional shares/price-per-share fields (FR37):** hidden when the form's current `status` value is
+  `watch-only` and the ticker has no existing `holding`; shown, pre-filled from `holding`, when `status` is
+  (or becomes) `held`. **New client-side validation logic, genuinely new per FR37 (this is the one
+  legitimate new-logic surface this increment adds, not banned by the "no functional regression" rule):**
+  when the form's `status` value transitions from `held` (or the ticker's existing status) to a *new*
+  value of `held` starting from `watch-only`, the form must not allow submit until both `shares > 0` and
+  `cost_basis > 0` validate (reusing the existing numeric CHECK-mirroring rules in `validateHoldingsRow`,
+  not a new validation rule — only the *trigger point* — "on this specific transition" — is new).
+- **Held→watch-only confirmation (FR37):** submitting the form with `status` changed from `held` to
+  `watch-only` shows a confirmation prompt naming the ticker and the shares/price-per-share values about to
+  be discarded (read from the ticker's current `holding` before the delete), before the write proceeds.
+  Cancelling the prompt returns to the still-open, still-unsaved form.
+- **Delete action:** removes the ticker entirely (both its `watchlist` row and, if present, its `holdings`
+  row) — see §16.11.5 for why this needs a new RPC rather than two independent client calls. Also gated
+  behind a confirmation prompt naming the ticker (existing pattern, both current watchlist/holdings delete
+  buttons already confirm before deleting — unchanged UX, just one merged action instead of two).
+
+### 16.11.5 New backend surface — exactly two RPCs, nothing else (scoping the grep rule)
+
+**Why a plain client-side two-step write is not good enough here.** `holdings.ticker` is a foreign key to
+`watchlist.ticker` with no `ON DELETE CASCADE` (`sql/schema.sql` — Decision #40 forbids a schema change, so
+this FK stays exactly as-is). Two structural facts follow directly from that: (1) a watch-only→held
+transition must create `holdings` and flip `watchlist.status` together — if only one write lands (network
+drop, tab close, RLS reject), the ticker ends up in a state FR37 explicitly says must never exist (`held`
+with no `holdings` row, or `watch-only` with an orphaned `holdings` row); (2) deleting a ticker with an
+existing `holdings` row must delete `holdings` before `watchlist`, or the FK rejects the second delete
+outright. Two independent sequential `supabase.from(...).update()/.insert()/.delete()` calls from the
+browser cannot guarantee this ordering survives a partial failure — the same class of problem this
+codebase already treats as first-class elsewhere (`set_kill_switch`'s single-transaction RPC;
+`design.md` §0 load-bearing decision #13's "checkpoint ordering must be exact, not best-effort"). The fix
+is the same pattern already established for `set_kill_switch`: **wrap both writes in one
+`SECURITY DEFINER` Postgres function**, so partial failure is structurally impossible (a Postgres function
+body is one transaction).
+
+**New file: `sql/tickers_screen_rpc.sql`** — the *only* new SQL this increment introduces:
+
+```sql
+create or replace function public.set_ticker_holding_status(
+  p_ticker text, p_status text, p_shares numeric default null, p_cost_basis numeric default null
+) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  if p_status = 'held' then
+    if p_shares is null or p_shares <= 0 or p_cost_basis is null or p_cost_basis <= 0 then
+      raise exception 'shares and cost_basis must both be > 0 to mark a ticker held';
+    end if;
+    insert into public.holdings (ticker, shares, cost_basis, currency)
+      values (p_ticker, p_shares, p_cost_basis, 'USD') -- currency is overwritten unconditionally by the
+                                                        -- existing holdings_derive_currency trigger (§16.3)
+    on conflict (ticker) do update set shares = excluded.shares, cost_basis = excluded.cost_basis;
+    update public.watchlist set status = 'held' where ticker = p_ticker;
+  elsif p_status = 'watch-only' then
+    delete from public.holdings where ticker = p_ticker;
+    update public.watchlist set status = 'watch-only' where ticker = p_ticker;
+  else
+    raise exception 'unknown status %', p_status;
+  end if;
+end; $$;
+
+grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
+
+create or replace function public.delete_ticker(p_ticker text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_admin() then
+    raise exception 'not authorized';
+  end if;
+  delete from public.holdings where ticker = p_ticker;   -- no-op if none exists
+  delete from public.watchlist where ticker = p_ticker;
+end; $$;
+
+grant execute on function public.delete_ticker(text) to authenticated;
+```
+
+Both mirror `set_kill_switch`'s exact shape (`operational-controls.md` §13, `admin-portal.md` §16.6):
+`SECURITY DEFINER`, `is_admin()`-gated, `grant execute ... to authenticated` only (no anon grant). **Plain
+field edits that do not change `status`** (e.g. editing `market`/`type` on an already-watch-only ticker, or
+editing `shares`/`cost_basis` on an already-held ticker without flipping status) are **not** routed through
+these RPCs — they remain direct `supabase.from("watchlist").update(...)` / `.from("holdings").update(...)`
+calls under the existing `admin_write_watchlist`/`admin_write_holdings` policies, exactly as today. The new
+RPCs exist only for the two operations that must be transactional: a status flip, and a full-ticker delete.
+
+**Structural enforcement (mirrors §16.10/INC-14's rule, scoped to name these two new exceptions
+explicitly):** a `git diff` grep across every file INC-15 touches for
+`supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient` is
+expected to show matches **only** for: (a) `.rpc('set_ticker_holding_status', ...)` / `.rpc('delete_ticker',
+...)` call sites (the two new RPCs this section defines), (b) `validateHoldingsRow`/`validateWatchlistRow`
+calls carried over unchanged from the pre-merge forms, and (c) `is_admin()` appearing inside
+`sql/tickers_screen_rpc.sql` itself. Any other match is out of scope and a blocker.
+
+**Known pre-existing gap, explicitly out of scope for this increment:** editing a held ticker's `market`
+(e.g. US→TSX) through the merged form does not re-run `holdings_derive_currency` (that trigger fires only
+on writes *to* `holdings`, not on `watchlist.market` changing) — this gap pre-dates INC-15 and is not
+introduced or worsened by it (the separate pre-merge watchlist/holdings screens had the identical gap).
+Not fixed here; flagged for a future increment if Arjun wants it closed.
+
+### 16.11.6 Nav item count, files, requirement coverage
+
+- **Nav goes from four items to three (plus sign-out):** `AuthGuard.tsx`'s nav renders `Tickers` (replaces
+  `Watchlist`), `Tunables`, `Track record`, `Sign out` — the `Holdings` link is removed entirely, matching
+  FR36's explicit "4→3" text.
+- **Routes:** new `admin-portal/app/(app)/tickers/page.tsx` replaces both `admin-portal/app/(app)/
+  watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx` (both deleted). No redirect needed —
+  single-user tool, no external links to the old routes to preserve.
+- **Files INC-15 may touch (allow-list):** `admin-portal/components/NavToggle.tsx`,
+  `admin-portal/components/AuthGuard.tsx`, `admin-portal/app/globals.css`, `admin-portal/app/(app)/
+  tickers/page.tsx` (new), and one new modal component (e.g. `admin-portal/components/
+  TickerEditModal.tsx`) if the combined form needs local state beyond what the page file can hold cleanly;
+  deletions of `admin-portal/app/(app)/watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx`;
+  `sql/tickers_screen_rpc.sql` (new, §16.11.5). No other file, in any directory, is in scope — `app/
+  (app)/tunables/page.tsx`, `app/(app)/track-record/page.tsx`, `components/KillSwitchToggle.tsx`, and every
+  `scripts/*.py`/`lib/*.ts` file outside the two RPC call sites are untouched.
+- **Requirement coverage:** FR36 → §16.11.3/§16.11.4; FR37 → §16.11.4/§16.11.5; FR38 (branding rename) →
+  dev/designer directly, no design content needed (trivial string change, per the orchestrator's brief);
+  NFR8's navigation-mechanism bullet → §16.11.1 (defect fix)/§16.11.2 (new mechanism).
