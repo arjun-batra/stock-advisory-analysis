@@ -1,4 +1,4 @@
-# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46)
+# Increment plan — 2026-07-26 change request — INC-3–INC-7 all IMPLEMENTED; 2026-07-30 `/big-guns` fix round — INC-8/INC-9/INC-10 IMPLEMENTED (reviewer-CLEAR Passes 24/25/27); INC-11 approved, not yet executed; INC-12 (DEEP-007) IMPLEMENTED, reviewer-CLEAR Pass 29 — fix round complete; 2026-07-31 NFR8 change request — INC-13 IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46); 2026-08-01 post-merge production defect found — INC-14 logged (visual fidelity fix, corrects INC-13's AC gap, not new scope) — dev implementing
 
 **Status:** GATE 3 was passed by the user for this plan. **INC-3 (kill-switch), INC-4 (AI provider
 abstraction), and INC-5 (admin portal: auth, hosting, watchlist & holdings CRUD) are IMPLEMENTED** —
@@ -658,3 +658,105 @@ not a review-only convention.
 INC-6/INC-7/INC-10 touched `admin-portal/app/**/*.tsx` for functional CRUD/validation/currency-derivation
 work only, not styling) — all twelve remain valid and IMPLEMENTED as documented above. INC-11 (live
 verification) is unrelated and unaffected. INC-13 is purely additive on top of the existing merged code.
+
+---
+
+## 2026-08-01 — post-merge production defect on INC-13 (NFR8) — INC-14 logged
+
+**Root cause (orchestrator diagnosis, confirmed against the live merged code, not a new report from qa or
+reviewer):** INC-13's acceptance criteria above (AC1–AC9) were satisfied literally — the responsive
+breakpoint mechanics, no-horizontal-scroll structural rule, and BUG-010/BUG-011 fixes all landed and were
+independently reviewer-cleared (Pass 35). But AC7's "visual conformance" wording named only shadow/radius
+tokens, the tunables friendly-label mapping, and the always-visible-cards rule — it never explicitly
+required the two other components the approved mockup shows just as plainly: pill/badge markup for
+market/type/status values, and a real open/close modal for Add/Edit ticker (not a permanently-visible
+inline form). Confirmed directly in the merged code: zero `.pill`/`.ticker-card`/`.form-modal`/`.fab`
+classes exist anywhere in `admin-portal/app/globals.css`; watchlist/holdings still render raw text
+(`<td data-label="Market">{row.market}</td>`) and the pre-INC-13 permanently-visible inline form. This is
+an **acceptance-criteria gap in the design/increment-plan tech-lead wrote**, not a dev conformance failure
+against what was written — dev built exactly what INC-13's AC7/AC8 asked for, literally. INC-14 exists to
+close that gap.
+
+### INC-14 — Admin portal visual fidelity fix (NFR8 conformance) — corrects INC-13
+
+**This is not new scope.** It is bringing the already-approved Direction G implementation
+(`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4, both selected and approved
+by Arjun on 2026-07-31, unchanged since) into actual conformance with the mockup he already signed off on.
+No new FR/NFR, no new user-facing decision, no design change — INC-13's design content
+(`docs/design/admin-portal.md` §16.10) already specified this correctly in prose (see the fix-round
+`.crud-table`/card-grid mechanism, unchanged); what was missing was an explicit, dev-self-verifiable AC
+that would have caught the gap between "the CSS mechanism is structurally correct" and "the specific
+components the mockup shows actually exist in the markup." **Design does not change** — this increment's
+job is tightening the AC list, not re-designing anything. Same file allow-list, same structural
+no-functional-regression rule, and same "presentation-layer only" boundary as INC-13
+(`docs/design/admin-portal.md` §16.10's scope-boundary paragraph applies unchanged).
+
+**Design:** `docs/design/admin-portal.md` §16.10 (updated below to record this gap and point here).
+**Files:** same allow-list as INC-13 — `admin-portal/app/globals.css`, `admin-portal/app/(app)/
+watchlist/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, and, if a real open/close modal
+requires local component state beyond what the existing page files can hold cleanly, at most one new
+presentational component (e.g. `admin-portal/components/TickerFormModal.tsx`) — no other file, in any
+directory (`sql/`, `scripts/`, `lib/*.ts`, `tests/`), is in scope. No config-schema change —
+presentation-layer only, identical posture to INC-13.
+
+**Depends on:** INC-13 (merged, `da50ed8`) — this increment's diff is scoped against `main` at INC-13's
+merge point, not against a stale branch.
+
+**Acceptance criteria (dev self-verifiable):**
+1. **Pill/badge markup for market/type/status — exact match to the mockup, not a paraphrase.** Watchlist
+   and holdings cards render: (a) the market value (`US`/`TSX`/`NSE`) inside a `<span class="mkt">`
+   element per `docs/ux-mockups/direction-g-compact-toggle.html` lines 228/234/240/246/252 (secondary-text
+   styling, *not* a colored pill — the mockup does not badge market, only type/status; do not over-build
+   this) — no `<td>`/raw-text rendering of `row.market` remains (grep confirms `data-label="Market"`
+   raw-text `<td>` markup is gone from both `watchlist/page.tsx` and `holdings/page.tsx`); (b) the type
+   value (`Stock`/`ETF`) inside a `<span class="pill type">` element (mockup lines 229/235/241/247/253);
+   (c) the status value inside `<span class="pill held">&#9679; Held</span>` or
+   `<span class="pill watch">&#9675; Watch-only</span>` — icon + text, not color-only (mockup same lines,
+   `docs/ux-spec.md` line 71's "visually distinct, not color-only" requirement). `admin-portal/app/
+   globals.css` defines `.pill`, `.pill.type`, `.pill.held`, `.pill.watch`, and `.mkt` with the color
+   tokens named in `docs/ux-spec.md`'s Direction G color table (§7.3/§7.4's `color-info-bg/-fg`,
+   `color-success-bg/-fg`, `#F3F4F6`/secondary-text respectively) — grep confirms all five classes exist
+   with non-empty `background`/`color` declarations (except `.mkt`, which is text-color only by design).
+2. **Add/Edit ticker is a real modal, not a permanently-visible inline section — verified by interaction,
+   not CSS presence.** On both watchlist and holdings pages: (a) the Add/Edit form is **not** rendered in
+   the DOM (or is `display:none`/unmounted) until triggered; (b) at desktop/tablet widths (768px, 1280px),
+   an "Add ticker" button (mockup line 224, `.toolbar .btn`) opens a centered `.form-modal` panel
+   (`docs/ux-spec.md` line 513, mockup lines 259–269) — a qa Playwright test clicks the button, asserts
+   the modal becomes visible, asserts the page background/other content is not directly interactable while
+   open (a scrim, `aria-modal`, or equivalent — dev's choice of mechanism, but *some* modal-blocking
+   behavior must exist, not just an absolutely-positioned div sitting on top with no focus/click trap);
+   (c) at phone width (375px), a `.fab` button (mockup lines 143/161–165, bottom-right, `+`) triggers the
+   same form rendered as a full-screen bottom sheet (`docs/ux-spec.md` line 264, mockup line 171 —
+   `border-radius` only on the top two corners, `max-width:100%`); (d) a Cancel button and/or a scrim
+   click closes the modal/sheet without submitting, returning to the card grid with the DOM in the same
+   state as before opening (qa asserts via a subsequent read that no row was added); (e) Edit (the pencil
+   icon button, mockup line 231) opens the same modal pre-filled with that row's values — qa asserts at
+   least one field's value matches the row edited.
+3. **Desktop-width (1280px) card elevation is measured directly, not assumed.** A qa/Playwright script
+   loads the watchlist page at a 1280px viewport, reads the computed `box-shadow` and `background-color`
+   of a rendered card grid cell (`.ticker-card` or whatever the actual desktop grid-cell selector becomes
+   post-AC1/AC2) via `getComputedStyle`, and asserts: `box-shadow` is not `none` and not empty, and the
+   card's `background-color` differs from `document.body`'s (or the page's outer container's) computed
+   `background-color` — i.e. the card is visually distinct from the page background at desktop width, not
+   merely inherited from the mobile-first base rule and never re-verified at this breakpoint. This closes
+   the gap left by INC-13 AC6, which only re-ran the regression checklist at 375/768/1280px for
+   *functional* outcomes, not this specific computed-style assertion at 1280px.
+4. **Structural no-regression grep (unchanged rule from INC-13 AC5, re-run here since this increment
+   touches the same files again):** `git diff main..inc-14-<slug> -- admin-portal/ | grep -E
+   "supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"`
+   returns **zero** matches. `git diff --name-only main..inc-14-<slug>` contains only files from this
+   increment's allow-list above.
+5. Full existing `tests/admin_portal/*.test.ts` suite passes with zero assertion changes to pre-existing
+   tests (new tests for AC1–AC3 are additive); qa re-runs INC-13 AC1–AC3's viewport/no-scroll/nav checks
+   at 375px/768px/1280px to confirm this increment didn't regress them (same three widths, no new bands
+   introduced).
+6. Tunables and track-record screens are explicitly **out of scope** for this increment — the orchestrator's
+   diagnosis found the gap only in watchlist/holdings (pill markup) and the Add/Edit interaction pattern
+   (both screens share the same form); INC-13's tunables-card and track-record-card ACs (AC7 sub-bullets
+   (b)/(c), track-record's `.tr-cards`) already matched the mockup and are not reopened here. If qa's
+   regression pass finds either of those screens also drifted from the mockup, file it as a new bug, not
+   silently folded into this increment's scope.
+
+**This increment does not touch `requirements.md`, `docs/ux-spec.md`, or any file outside the allow-list
+above** — the mockup/spec were already accurate; only the implementation and this increment's AC list
+needed correcting.

@@ -96,6 +96,15 @@ in for the kill-switch control only, plus the friendly-label pattern for all 10 
 reference implementation and is unblocked. No FR/NFR previously IMPLEMENTED changes status; none of
 INC-3–INC-12 are made stale by this addition (`increment-plan.md`'s INC-13 entry states why).
 
+**2026-08-01 — post-merge production defect on INC-13, INC-14 logged.** Arjun reported the live admin
+portal doesn't match the approved Direction G mockup; root cause was an AC gap in INC-13, not a design
+error — `admin-portal.md` §16.10's mechanism description was and remains correct, but its AC list never
+explicitly required pill/badge markup for market/type/status or a real Add/Edit modal (vs. the
+pre-existing permanently-visible inline form), and desktop-width card elevation was never explicitly
+measured. **INC-14** (`increment-plan.md`, "2026-08-01" section) is the fix — not new scope, just
+tightened, dev-self-verifiable ACs against the mockup Arjun already approved. `admin-portal.md` §16.10 and
+§16.9's NFR8 coverage row now flag this as an open gap until INC-14 is qa/reviewer-cleared.
+
 **Provenance:** Originally produced during the 2026-07-12 multi-agent-template adoption pass by condensing
 the existing, code-verified solution design `requirements_docs/SD.md` (v20, ~1400 lines) into this
 template's format. It is **reverse documentation of a shipped system**, not forward design work. `SD.md`
@@ -293,7 +302,7 @@ INC-3–INC-7.**
 | NFR3 (Disclaimer) | `components.md` §4.7 (Decision #17, "informational data is the accepted rationale") |
 | NFR4 | `components.md` §4.1 cadence; `frontend.md` §11 freshness posture |
 | NFR7 (Core security posture — added by pm 2026-07-28, REV-058) | `non-functional-ops.md` §7.2 (retitled "Security (NFR7)"); `data-and-flow.md` §5 (RLS on every table); `components.md` §4.7 (UUID-only detail-page URLs) |
-| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39) | **IMPLEMENTED** — `admin-portal.md` §16.10, INC-13 (`increment-plan.md`), reviewer-CLEAR Pass 35, merged to `main` (commit `da50ed8`, PR #46). Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31. |
+| NFR8 (admin-portal UI/UX modernization: responsive + modern, zero functional regression — added 2026-07-31, Decision #39) | INC-13 merged/reviewer-CLEAR Pass 35 (commit `da50ed8`, PR #46), but a **post-merge visual-fidelity gap is open** (pill/badge markup, Add/Edit modal, desktop card elevation — `admin-portal.md` §16.10's 2026-08-01 note) — fix tracked as **INC-14** (`increment-plan.md`), not yet qa/reviewer-cleared. Direction G (`docs/ux-mockups/direction-g-compact-toggle.html`, `docs/ux-spec.md` §7.3/§7.4) selected by the user 2026-07-31, unchanged. |
 | FR24–FR30 (2026-07-12 US/CA shadow pilot), NFR5 (old) | **RETIRED 2026-07-16** — formerly the US/CA shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history (deleted outright from `docs/requirements.md`). Note: `docs/requirements.md`'s retirement pass freed these IDs, and the 2026-07-26 CR below reassigns FR24–FR33/NFR5–6 to entirely new, unrelated requirements (kill-switch/portal/AI-abstraction) — same numbers, no relation to the retired content; not a collision. |
 | FR31 (old, shared wallet-sim harness) | **RETIRED 2026-07-16** — see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |
 | FR32–FR39 (old), NFR6 (old) | **RETIRED 2026-07-16** — formerly the NSE shadow pilot; see "Retired: shadow-pilot tracks" above. FR text preserved only in git history. |

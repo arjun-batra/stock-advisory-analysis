@@ -316,9 +316,9 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
-| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — **IMPLEMENTED**, Direction G, INC-13 (`increment-plan.md`), reviewer-CLEAR Pass 35, merged to `main` |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — Direction G, INC-13 (`increment-plan.md`) merged/reviewer-CLEAR Pass 35, **but a post-merge visual-fidelity gap (pill markup, Add/Edit modal, desktop elevation) is open — fix tracked as INC-14**, not yet qa/reviewer-cleared |
 
-### 16.10 Responsive & visual design system (NFR8, INC-13) — IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main`
+### 16.10 Responsive & visual design system (NFR8, INC-13) — IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main`; **known post-merge gap, fix tracked as INC-14**
 
 **Gate cleared 2026-07-31:** designer published `docs/ux-spec.md` with mockup directions covering all
 five screens, and the user (Arjun) selected **Direction G — "Compact Toggle"**
@@ -327,6 +327,20 @@ Direction F's density §7.3 and Direction E's toggle component §7.2). INC-13 is
 merged to `main`** (commit `da50ed8`, PR #46; reviewer Pass 35 CLEAR, zero blockers/majors). This section defines the **technical mechanism** (breakpoints, layout system,
 structural enforcement) that Direction G is implemented through; the visual/interaction language itself
 is designer's + the user's call and is specified in `docs/ux-spec.md`, not restated here.
+
+**2026-08-01 — known gap, do not treat this section as describing what's actually live.** A post-merge
+production defect (Arjun, reported against `sentinel-admin.arjunbatra.xyz`) found the live watchlist/
+holdings screens still render market/type/status as raw text (zero `.pill`/`.ticker-card` classes in the
+built `admin-portal/app/globals.css`) and still render Add/Edit ticker as a permanently-visible inline
+form section (zero `.form-modal`/`.fab` classes) — neither matches the mockup this section and §16.10's
+prose below describe. INC-13's own acceptance criteria (`docs/design/increment-plan.md`) never explicitly
+named these two components, so dev satisfied what was literally written without building them; this was a
+gap in the AC list, not a design error — the mechanism/prose below was and remains correct. **The fix is
+tracked as INC-14** (`docs/design/increment-plan.md`, "2026-08-01 — post-merge production defect on
+INC-13"), which tightens the AC list against this exact gap; no content in this section changes as a
+result. Desktop-width (1280px) card elevation is also unverified in production pending INC-14's AC3.
+Treat §16.10's description below as the **design intent**, confirmed live again only once INC-14 is
+qa-tested and reviewer-cleared.
 
 **Direction G — what dev implements (reference files, not restated in full — read the sources):**
 - **Visual baseline — Direction F's compact density** (`docs/ux-spec.md` §7.3, mockup
