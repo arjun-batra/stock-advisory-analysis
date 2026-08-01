@@ -137,12 +137,39 @@ test("holdings page: no currency <select>/<input> in the add or edit form", () =
   assert.doesNotMatch(src, /CURRENCIES\.map/);
 });
 
+// Extracts the literal argument text of every `.insert(...)`/`.update(...)` call by
+// counting paren/bracket/brace depth from the opening `(` to its true matching `)`,
+// rather than a regex that (QA-observed, INC-14 handoff) depends on incidental
+// "}<no-gap>)" shapes appearing elsewhere in the file to terminate a lazy match —
+// that regex could silently start passing/failing based on unrelated function
+// ordering (confirmed by removing openEditModal in a scratch test: match count
+// dropped from 2 to 1 even though the currency-payload behavior didn't change).
+function extractCallArgs(src: string, methodNames: string[]): { method: string; args: string }[] {
+  const results: { method: string; args: string }[] = [];
+  const callRe = new RegExp(`\\.(${methodNames.join("|")})\\(`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = callRe.exec(src)) !== null) {
+    const openParenIdx = m.index + m[0].length - 1;
+    let depth = 0;
+    let i = openParenIdx;
+    for (; i < src.length; i++) {
+      if (src[i] === "(" || src[i] === "[" || src[i] === "{") depth++;
+      else if (src[i] === ")" || src[i] === "]" || src[i] === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    results.push({ method: m[1], args: src.slice(openParenIdx + 1, i) });
+  }
+  return results;
+}
+
 test("holdings page: insert()/update() payloads never send `currency` (server derives it unconditionally)", () => {
   const src = readFileSync(HOLDINGS_PAGE, "utf8");
-  const writeCalls = [...src.matchAll(/\.(insert|update)\(\s*\{?\[?\{?([\s\S]*?)\}\]?\)/g)];
+  const writeCalls = extractCallArgs(src, ["insert", "update"]);
   assert.ok(writeCalls.length >= 2, "expected both an insert() and an update() call in holdings page.tsx");
   for (const call of writeCalls) {
-    assert.doesNotMatch(call[2], /currency\s*:/, `${call[1]}() payload must not send currency: ${call[2]}`);
+    assert.doesNotMatch(call.args, /currency\s*:/, `${call.method}() payload must not send currency: ${call.args}`);
   }
 });
 
