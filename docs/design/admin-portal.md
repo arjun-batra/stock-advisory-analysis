@@ -35,17 +35,20 @@ which remain as-built/IMPLEMENTED exactly as documented above and require no rev
 user has selected **Direction G** ("Compact Toggle") as the final visual/interaction direction — see
 §16.10's updated content below for the exact reference files and details dev builds against.
 
-**2026-08-01 addendum (FR36–FR38, amended NFR8, Decision #40) — §16.11 added, INC-15 logged, BLOCKED.**
+**2026-08-01 addendum (FR36–FR38, amended NFR8, Decision #40) — §16.11 added, INC-15 READY.**
 Arjun's admin-portal redesign change request: merge the watchlist+holdings screens into one "Tickers"
 screen (FR36), a mandatory-field workflow gate on the watch-only↔held status transition (FR37), a
 branding rename (FR38, no design content needed), and a real defect in the already-approved nav design
 (desktop nav rendering vertically stacked instead of horizontal) plus new design intent for a
 horizontally-scrollable nav tier (amended NFR8). §16.11 below has the full root-cause diagnosis, the nav
 mechanism fix, and the merged Tickers screen's architecture (data model, modal, FR37's transactional
-status-transition RPC). **INC-15 is logged in `increment-plan.md` as BLOCKED pending designer's updated
-`docs/ux-spec.md` mockups and Arjun's approval** — not READY, same gate discipline INC-13 used before its
-mockups were approved. §16.1–§16.10 are unaffected by this addendum except where §16.11 explicitly says
-otherwise (the tablet nav band's *mechanism*, and the watchlist/holdings screens' eventual replacement).
+status-transition RPC). **2026-08-01 update — gate cleared:** Arjun approved the mockup
+`docs/ux-mockups/direction-g-tickers-merge.html` (designer marking it SELECTED/APPROVED in
+`docs/ux-spec.md` in parallel) — **INC-15 is now READY in `increment-plan.md`; dev may begin a build
+plan.** §16.11's acceptance criteria below have been reviewed against this mockup and finalized (several
+corrected — see §16.11.3/§16.11.4's revision notes). §16.1–§16.10 are unaffected by this addendum except
+where §16.11 explicitly says otherwise (the tablet nav band's *mechanism*, and the watchlist/holdings
+screens' eventual replacement).
 
 ---
 
@@ -328,9 +331,9 @@ library files for the GitHub-PAT proxy alone).
 | NFR5 (portal cost) | §16.1 |
 | NFR6 (auth-gated writes, RLS at the database layer for every write incl. tunables) | §16.2, §16.4, §16.7 |
 | NFR7 (RLS scopes access to what each surface needs — extended here to `admin_allowlist`, RLS-enabled with zero anon/authenticated policies, REV-033) | §16.2 |
-| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — Direction G, INC-13 (`increment-plan.md`) merged/reviewer-CLEAR Pass 35, **but a post-merge visual-fidelity gap (pill markup, Add/Edit modal, desktop elevation) is open — fix tracked as INC-14**, not yet qa/reviewer-cleared. **Navigation-mechanism bullet (amended 2026-08-01, Decision #40): §16.11.1 (defect root cause/fix)/§16.11.2 (new tablet horizontal-scroll mechanism) — tracked as INC-15, BLOCKED pending mockup approval.** |
-| FR36 (merged Tickers screen: one-card-per-row, card content, click-to-modal) | §16.11.3/§16.11.4 — tracked as **INC-15, BLOCKED** pending designer's updated mockups and Arjun's approval |
-| FR37 (mandatory shares/price-per-share on watch-only→held; delete-with-confirmation on held→watch-only) | §16.11.4 (workflow/validation)/§16.11.5 (transactional RPC) — tracked as **INC-15, BLOCKED** |
+| NFR8 (responsive & modern admin-portal UI/UX, zero functional regression) | §16.10 — Direction G, INC-13 (`increment-plan.md`) merged/reviewer-CLEAR Pass 35, **but a post-merge visual-fidelity gap (pill markup, Add/Edit modal, desktop elevation) is open — fix tracked as INC-14**, not yet qa/reviewer-cleared. **Navigation-mechanism bullet (amended 2026-08-01, Decision #40): §16.11.1 (defect root cause/fix)/§16.11.2 (new tablet horizontal-scroll mechanism) — tracked as INC-15, READY** (mockup gate cleared 2026-08-01 — Arjun approved `docs/ux-mockups/direction-g-tickers-merge.html`; dev may start). |
+| FR36 (merged Tickers screen: one-card-per-row, card content, click-to-modal) | §16.11.3/§16.11.4 — tracked as **INC-15, READY**, built against `docs/ux-mockups/direction-g-tickers-merge.html` (approved 2026-08-01) |
+| FR37 (mandatory shares/price-per-share on watch-only→held; delete-with-confirmation on held→watch-only) | §16.11.4 (workflow/validation)/§16.11.5 (transactional RPC) — tracked as **INC-15, READY** |
 | FR38 (branding rename "Admin Portal"→"Sentinel Portal") | UI string change only — no design content needed, dev/designer implement directly |
 
 ### 16.10 Responsive & visual design system (NFR8, INC-13) — IMPLEMENTED, reviewer-CLEAR Pass 35, merged to `main`; **known post-merge gap, fix tracked as INC-14**
@@ -467,14 +470,15 @@ applies to the tablet band specifically.
 
 ---
 
-## 16.11 Nav defect fix + horizontal-scroll tier, and the merged Tickers screen (FR36–FR38, NFR8 amendment, Decision #40) — INC-15, **BLOCKED**
+## 16.11 Nav defect fix + horizontal-scroll tier, and the merged Tickers screen (FR36–FR38, NFR8 amendment, Decision #40) — INC-15, **READY**
 
-**Status: BLOCKED pending designer's updated `docs/ux-spec.md` mockups (merged Tickers screen + new nav
-mechanism) and Arjun's approval of one direction** — same gate discipline as INC-13's original
-"hard blocking dependency" (§16.10 above, cleared 2026-07-31). Do not begin a dev build plan against this
-section until that gate clears; see `increment-plan.md`'s INC-15 entry for the exact gate wording and
-what unblocks it. Everything below is this section's *content* (root cause, mechanism, data/API design) —
-it is final design intent, not implementation authorization.
+**Status: READY — gate cleared 2026-08-01.** Arjun approved the mockup
+`docs/ux-mockups/direction-g-tickers-merge.html` (designer records SELECTED/APPROVED in `docs/ux-spec.md`
+in parallel). Dev builds directly against that mockup's exact markup/class names and interaction states —
+it is now the authoritative visual/interaction reference for this increment, superseding this section's
+earlier illustrative class names where the two differ (noted inline below, §16.11.1/§16.11.3/§16.11.4).
+The root cause, mechanism, and data/API design below remain unchanged design intent; only the acceptance
+criteria and a handful of presentation details have been corrected against the approved mockup.
 
 ### 16.11.1 Nav defect — root cause (diagnosed against the live merged code, `da50ed8`/INC-14)
 
@@ -525,6 +529,20 @@ doesn't have to re-diagnose):**
   for its mobile `.open` absolute-position styling).
 Either option is a **presentation-layer-only** fix — no `supabase.*` call, no `is_admin()`/RLS/validation
 logic anywhere near this file, consistent with §16.10's own scope-boundary rule.
+
+**2026-08-01 note — approved mockup names the actual markup, superseding this subsection's illustrative
+class names.** `docs/ux-mockups/direction-g-tickers-merge.html` restructures the header as
+`.app-header > (.app-header-brand, .nav-strip-wrap > .nav-strip > a×3, .nav-toggle-btn,
+.nav-panel-mobile, .app-header-right)` — the nav links are direct flex children of `.nav-strip` (no
+intervening `<nav>` wrapper), which is the same root-cause fix as Option A above, just under new class
+names. Dev follows the mockup's exact class names, not the illustrative `.nav-panel`/`NavToggle` naming
+above — the diagnosis (remove the extra DOM nesting level between the flex container and the links) stays
+correct and is what the mockup's structure already does. **`SignOutButton` is not one of the 3
+`.nav-strip`/`.nav-panel-mobile` links** — the mockup places it in `.app-header-right` alongside the
+kill-switch toggle and user chip, persistently visible at every viewport (not hidden behind the phone
+burger). This is the only self-consistent reading of the mockup (which shows no sign-out affordance inside
+either nav list) and does not change requirements — sign-out remains present and functional everywhere, it
+simply isn't counted among the "3 nav items."
 
 ### 16.11.2 Nav mechanism — breakpoints (Decision #40's NFR8 amendment)
 
@@ -603,15 +621,22 @@ beyond what already exists.
   is a new CSS class (e.g. `.ticker-list`, to avoid changing `.card-grid`'s shared definition used
   elsewhere) rather than a modification to the existing `.card-grid` rule.
 
-- **Card content (FR36, exact list):** (1) a status pill (`.pill.held`/`.pill.watch`, reused verbatim from
-  INC-14's existing pill classes — no new CSS token) plus, if held, shares and price-per-share (a UI label
-  only — the existing `holdings.cost_basis` value, not a new field) rendered as figures (reuse `.figures`
-  from the existing ticker-card styling); (2) the latest verdict as a `.verdict-pill` (reused from the
-  track-record card, §16.10) plus its timestamp (reuse the existing dual-timezone formatting helper) plus
-  a confidence label/badge (new small UI element — exact visual TBD in designer's updated mockup, binds to
-  `latestCall.confidence`, no new data); (3) the rationale text (reuse `.tr-card .rationale` styling). If
-  `latestCall` is null, the whole verdict/timestamp/confidence/rationale block is omitted for that card —
-  same "hidden entirely, no placeholder" rule FR21 already establishes for the dashboard.
+- **Card content (FR36, exact list, corrected 2026-08-01 against the approved mockup's `.ticker-row-card`
+  markup):** (1) a header row: ticker symbol, a plain-text market label (`.mkt`, e.g. "US"/"TSX"/"NSE" —
+  not a pill), a type pill (`.pill.type`, "Stock"/"ETF"), and a status pill (`.pill.held`/`.pill.watch`,
+  reused verbatim from INC-14's existing pill classes — no new CSS token); (2) if held, a shares/
+  price-per-share line (`.holding-line`, a UI label only — the existing `holdings.cost_basis` value, not a
+  new field); omitted entirely (no empty row) if watch-only; (3) the latest verdict as a `.verdict-pill`
+  (reused from the track-record card, §16.10) plus its timestamp (reuse the existing dual-timezone
+  formatting helper) plus a confidence label — **resolved by the approved mockup as plain inline text**
+  ("Confidence: {high|medium|low}"), not a distinct badge/pill (the "exact visual TBD" note from the prior
+  draft is now closed); binds to `latestCall.confidence`, no new data; (4) the rationale text (reuse
+  `.tr-card .rationale` styling). If `latestCall` is null, the whole verdict/timestamp/confidence/rationale
+  block is omitted — **the mockup shows a short italic explanatory note in its place** (e.g. "No checks
+  logged yet for this ticker — results will appear here after the next run.") rather than rendering
+  nothing at all; this is consistent with FR21's "hidden, not a placeholder" rule (no fabricated
+  verdict/confidence data is shown), not a contradiction of it — the note names the absence, it does not
+  simulate a result.
 
 ### 16.11.4 Click-to-modal + combined edit form (FR36, FR37)
 
@@ -620,13 +645,19 @@ icon) opening `TickerEditModal` — reuses the `.modal-overlay`/`.form-modal` me
 for the Add/Edit ticker modal (centered panel tablet/desktop, bottom sheet phone), generalized to this
 screen instead of two separate per-table modals.
 
-- **Modal contents, top to bottom:** (a) read-only identifying header — ticker, market, type, status
-  (FR36's "full identifying info"); (b) the card's own content restated (verdict/timestamp/confidence/
-  rationale, read-only — this is a display block, not part of the edit form); (c) one combined edit form
-  with fields for `market` (select), `type` (select), `status` (select: held/watch-only), and,
-  conditionally, `shares`/`price per share` (number inputs) — the same fields the separate watchlist/
-  holdings edit forms already validate against (`lib/validation.ts`'s existing `validateWatchlistRow`/
-  `validateHoldingsRow`, unchanged rules, now called from one form instead of two); (d) a delete action.
+- **Modal contents, top to bottom (corrected 2026-08-01 against the approved mockup's `.modal-static`
+  markup):** (a) read-only identifying header — ticker (as heading) and a `market · type` subhead line;
+  **status is not repeated as separate read-only text** — it is represented by the pre-filled `status`
+  select in the form below (b), which is sufficient for FR36's "full identifying info" since the value is
+  immediately visible there, not hidden behind an extra interaction. **The prior draft's "card content
+  restated (verdict/timestamp/confidence/rationale, read-only)" display block does not appear in the
+  approved mockup and is dropped from this design** — the card itself already shows that information, and
+  the modal does not repeat it; (b) one combined edit form with fields for `market` (select), `type`
+  (select), `status` (select: held/watch-only), a read-only derived-currency chip (carried over unchanged
+  from INC-10's existing "no currency input, derived label" behavior, §16.3), and, conditionally,
+  `shares`/`price per share` (number inputs) — the same fields the separate watchlist/holdings edit forms
+  already validate against (`lib/validation.ts`'s existing `validateWatchlistRow`/`validateHoldingsRow`,
+  unchanged rules, now called from one form instead of two); (c) a delete action.
 - **Conditional shares/price-per-share fields (FR37):** hidden when the form's current `status` value is
   `watch-only` and the ticker has no existing `holding`; shown, pre-filled from `holding`, when `status` is
   (or becomes) `held`. **New client-side validation logic, genuinely new per FR37 (this is the one
@@ -635,14 +666,35 @@ screen instead of two separate per-table modals.
   value of `held` starting from `watch-only`, the form must not allow submit until both `shares > 0` and
   `cost_basis > 0` validate (reusing the existing numeric CHECK-mirroring rules in `validateHoldingsRow`,
   not a new validation rule — only the *trigger point* — "on this specific transition" — is new).
-- **Held→watch-only confirmation (FR37):** submitting the form with `status` changed from `held` to
-  `watch-only` shows a confirmation prompt naming the ticker and the shares/price-per-share values about to
-  be discarded (read from the ticker's current `holding` before the delete), before the write proceeds.
-  Cancelling the prompt returns to the still-open, still-unsaved form.
+- **Held→watch-only confirmation (FR37):** the form's `status` select can be changed to `watch-only` freely
+  (Save stays enabled — this differs from the watch-only→held direction above, where Save is blocked until
+  validation passes). **Clicking Save** when `status` has changed from `held` to `watch-only` replaces the
+  form with a confirmation panel, in the same modal (per the approved mockup's `.confirm-panel` — not a
+  separate dialog/prompt), naming the ticker and the exact shares/price-per-share values about to be
+  discarded (read from the ticker's current `holding` before the delete) — e.g. "Switch AAPL to
+  watch-only? This deletes the recorded 10 sh @ $150.00 USD holding — this can't be undone." The write
+  (`set_ticker_holding_status`) fires only on confirming, never on the Save click itself. Cancelling
+  returns to the still-open, still-unsaved form with the original `held` data untouched.
 - **Delete action:** removes the ticker entirely (both its `watchlist` row and, if present, its `holdings`
   row) — see §16.11.5 for why this needs a new RPC rather than two independent client calls. Also gated
-  behind a confirmation prompt naming the ticker (existing pattern, both current watchlist/holdings delete
-  buttons already confirm before deleting — unchanged UX, just one merged action instead of two).
+  behind its own confirmation prompt naming the ticker (existing pattern, both current watchlist/holdings
+  delete buttons already confirm before deleting — unchanged UX, just one merged action instead of two;
+  distinct from the held→watch-only confirmation above, which fires on a *status change*, not on the
+  Delete button).
+
+- **"+ Add ticker" (toolbar button, per the approved mockup — pre-existing capability, not new logic):**
+  opens the existing add-to-watchlist form (INC-5's FR27 CRUD, unchanged validation), which creates a new
+  ticker with `status='watch-only'` and no `holdings` row — consistent with the RPC design in §16.11.5,
+  whose `set_ticker_holding_status` only `update`s an existing `watchlist` row (it has no `insert` path) —
+  a ticker must exist watch-only before it can be promoted to held via the FR37-gated transition. This is
+  not a new create-as-held path; none is needed or requested.
+
+- **Toolbar search input (per the approved mockup):** client-side-only filter by ticker text, no backend
+  call, no new data. **Flagged to pm (non-blocking):** neither FR36 nor FR37's text mentions search — this
+  appears to be a designer addition within the approved mockup. It is low-risk (no RPC/schema/data-model
+  touch) and does not block INC-15's READY status, but pm may want a one-line FR36 amendment for
+  traceability. Tech-lead includes it in scope here since dev must build against the approved mockup
+  as-is.
 
 ### 16.11.5 New backend surface — exactly two RPCs, nothing else (scoping the grep rule)
 
