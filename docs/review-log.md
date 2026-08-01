@@ -4295,16 +4295,14 @@ closure.sql`).
 Files changed (new `tickers/page.tsx`, new `TickerEditModal.tsx`, new `sql/tickers_screen_rpc.sql`, deleted
 `watchlist/page.tsx`/`holdings/page.tsx`, modified `NavToggle.tsx`/`AuthGuard.tsx`/`globals.css`/`layout.tsx`,
 plus `docs/handoff.md`/`docs/test-report.md`) — all nine source files are justified: eight are the exact
-§16.11.6/`increment-plan.md` allow-list; `layout.tsx` is the ninth. **`layout.tsx`'s omission from both
-`admin-portal.md` §16.11.6's and `increment-plan.md`'s formal allow-lists is a real doc-accuracy gap, not a
-scope violation** — both documents' own requirement-coverage rows assign FR38's title rename to this
-increment ("FR38 (branding rename) → dev/designer directly, no design content needed"), so the file's
-inclusion is correctly authorized by the very same documents that fail to list it in their file-allow-list
-tables. Confirmed the actual change (`layout.tsx`'s `<title>` metadata string, one line) is exactly what FR38
-asks for and nothing else — no business logic, no new import, no structural change. **Logged below as
-REV-155**, routed to tech-lead: add `layout.tsx` to §16.11.6's/`increment-plan.md`'s allow-list tables
-(a documentation-completeness fix, since the file was correctly in-scope regardless of the table's own
-omission).
+§16.11.6/`increment-plan.md` allow-list; `layout.tsx` is the ninth, correctly authorized by both documents'
+own requirement-coverage rows (FR38's rename) despite the allow-list tables themselves omitting it.
+
+**REV-155 — `[DESIGN-GAP]` — minor — owner: tech-lead — RESOLVED 2026-08-01, Pass 38.** `layout.tsx` was
+missing from `admin-portal.md` §16.11.6's and `increment-plan.md`'s formal allow-lists (not a scope
+violation — the file's inclusion was already correctly authorized elsewhere). Full original finding +
+closing verification: `docs/archive/review-log-archive.md` ("REV-151/REV-152/REV-153/REV-155 — INC-15
+Tickers-merge fix-cycle findings + closure").
 
 ### 2. New RPC security review — `sql/tickers_screen_rpc.sql` (highest-risk surface this increment introduces)
 
@@ -4330,47 +4328,15 @@ function body the design's own rationale (§16.11.5) calls for. `currency` is ha
 `BEFORE INSERT OR UPDATE` trigger (confirmed the trigger fires on the `ON CONFLICT DO UPDATE` path too, not
 just plain `INSERT`) — not a real hardcoding gap, correctly commented in the SQL file.
 
-**REV-151 — `[SECURITY]` — major — both new RPCs are missing the `revoke execute ... from public, anon,
-authenticated` statement that precedes the `grant execute ... to authenticated` line for every other
-`SECURITY DEFINER` RPC in this codebase.** PostgreSQL grants `EXECUTE` on a newly created function to `PUBLIC`
-by default (`GRANT` reference: "the default privileges are ... EXECUTE for functions granted to PUBLIC") —
-this codebase itself has repeatedly needed and applied the belt-and-suspenders fix for exactly this default:
-`sql/kill_switch.sql:115` (`revoke execute on function public.set_kill_switch(boolean, text) from public,
-anon, authenticated;`, at the point that function was first created, INC-3), and the same pattern in
-`sql/scheduler_pgcron.sql:92-93,156` and `sql/phase5_monitoring.sql:300-303,340` for every other `SECURITY
-DEFINER` function in the schema. `grep -rn "revoke execute" sql/` confirms every one of those files has this
-line; `sql/tickers_screen_rpc.sql` has none — it goes straight from `create or replace function` to `grant
-execute ... to authenticated`, which (absent a prior `REVOKE`, and this repo has no schema-level `ALTER
-DEFAULT PRIVILEGES` statement anywhere that would change the default) means `PUBLIC`'s default grant is left
-standing, so `anon` (a fully unauthenticated caller, no session at all) and every other role can still invoke
-`set_ticker_holding_status`/`delete_ticker` over PostgREST's `/rpc/` endpoint using nothing but the public
-anon key. **This is not currently exploitable to bypass authorization** — `is_admin()`'s runtime check inside
-the function body independently blocks any such call from mutating data (an anon-key request carries no
-`email` JWT claim that resolves inside `admin_allowlist`, so it always hits `raise exception 'not
-authorized'` regardless of the missing REVOKE) — but it is a genuine least-privilege gap, identical in kind
-and precedent to REV-081 (`admin_allowlist` TRUNCATE grant)/REV-086 (`tunables` TRUNCATE grant)/REV-117
-(`kill_switch_abort_log` TRUNCATE grant), each independently rediscovered and closed in this exact codebase
-before. Unlike those three (which were table-privilege gaps RLS structurally can't cover), this one is a
-function-EXECUTE-privilege gap on a brand-new attack surface, arguably a closer miss to the established
-pattern than any prior instance, since `grant execute ... to authenticated` was copied from `set_kill_
-switch`'s shape but the preceding `revoke` line was not.
-Location: `sql/tickers_screen_rpc.sql:53,65` (the two `grant execute` lines, missing a preceding `revoke`);
-`docs/design/admin-portal.md:744,756` (the design's own SQL block has the identical omission — dev correctly
-implemented the design's literal block, so **the gap originates in the design, not dev's transcription**,
-same finding shape as REV-117/`operational-controls.md`).
-Suggested fix: add, immediately before the first `grant execute` line,
-```sql
-revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
-revoke execute on function public.delete_ticker(text) from public, anon, authenticated;
-```
-mirroring `sql/kill_switch.sql:115`'s exact shape (both functions have no legitimate anon/unauthenticated
-caller — `authenticated`+`is_admin()` is the only intended path).
-Owner: **tech-lead** (`admin-portal.md` §16.11.5's SQL block) + **dev** (the two-line SQL fix, same pattern
-as REV-081/086/117's fix commits). **Blocks live application of `sql/tickers_screen_rpc.sql`** — the file is
-confirmed **not yet applied live** (`docs/handoff.md`/`docs/test-report.md` both state this explicitly) — the
-orchestrator/release must not apply it until this is fixed. **Does not block merging this branch's
-`admin-portal/` TSX/CSS files**, which are independent of this file's content and are independently verified
-correct in §3–5 below.
+**REV-151 — `[SECURITY]` — major — owner: tech-lead + dev — RESOLVED 2026-08-01, Pass 38.** Both new RPCs
+were missing the `revoke execute ... from public, anon, authenticated` statement that precedes the `grant
+execute ... to authenticated` line for every other `SECURITY DEFINER` RPC in this codebase (PostgreSQL
+grants `EXECUTE` to `PUBLIC` by default), identical in kind to REV-081/086/117. Not currently exploitable to
+bypass authorization (`is_admin()`'s runtime check independently blocks any unauthenticated mutation) but a
+genuine least-privilege gap; the design's own SQL block (`docs/design/admin-portal.md:744,756`) had the
+identical omission, so the gap originated in the design, not dev's transcription. Full original finding +
+closing verification: `docs/archive/review-log-archive.md` ("REV-151/REV-152/REV-153/REV-155 — INC-15
+Tickers-merge fix-cycle findings + closure").
 
 **Plain-field-edit routing — correct, independently re-derived.** Confirmed directly from `TickerEditModal.
 tsx`'s `doSave()` (not just qa's trace): `market`/`type` always go through a direct `supabase.from("watchlist")
@@ -4457,32 +4423,14 @@ fix cycle. Not re-logged as a new ID; noted here as REV-150's closing dispositio
 
 ### 5. `[CODE-GAP]` — new functional finding, independently found (not surfaced by dev/qa)
 
-**REV-152 — `[CODE-GAP]` — major — `TickerEditModal.tsx`'s held→watch-only confirmation path silently
-discards any unsaved `market`/`type` edit made in the same modal session.** Traced `doSave()`/
-`handleSaveClick()`/`confirmSwitchToWatchOnly()` line-by-line: `handleSaveClick` (lines 98-106) intercepts
-*before* `doSave()` runs whenever `ticker.status === "held" && form.status === "watch-only"`, setting
-`confirming = true` and returning immediately — `doSave()` (the only place that ever issues `supabase.from(
-"watchlist").update({market, type})`) is never called on this path. `confirmSwitchToWatchOnly()` (lines
-167-182), the function the "Confirm — remove holding" button actually calls, issues only `supabase.rpc(
-"set_ticker_holding_status", { p_ticker, p_status: "watch-only" })` — no `market`/`type` write of any kind.
-Concretely: if an admin opens the edit modal for a held ticker, changes `market` (e.g. US→TSX) **and**
-changes `status` to watch-only in the same sitting, then clicks Save → Confirm, the status transition and
-holdings deletion both succeed correctly, but the `market` edit is silently dropped — never sent to the
-database, no error shown, the modal simply closes as if the save fully succeeded. This is not covered by any
-of the 14 finalized ACs (AC8 only tests a pure status-only transition — `docs/design/increment-plan.md`'s own
-AC8 text never combines it with a field edit) and was not exercised by dev's 54-assertion script or qa's 31
-supplementary checks (confirmed via `Grep` — no assertion in either script changes `market`/`type` and
-`status` in the same modal session before saving). **Does not falsify any of the 14 literal ACs** (same
-"outside literal AC scope" framing as this codebase's own REV-116 precedent) — **does not block merging this
-diff's 14-AC-scoped functionality** — but is a genuine, silent-data-loss correctness gap in new code this
-increment ships, and should be fixed in a near-term follow-up rather than left indefinitely: either write
-`market`/`type` inside `confirmSwitchToWatchOnly()` too (mirroring `doSave()`'s own unconditional watchlist-
-update-first pattern), or gate the confirm-panel transition so entering it first persists any pending
-`market`/`type` change.
-Location: `admin-portal/components/TickerEditModal.tsx:98-106` (interception point), `:167-182`
-(`confirmSwitchToWatchOnly`, the write that's missing the field-edit).
-Owner: **dev** (one small routing fix, no design change needed — §16.11.4/§16.11.5 don't need to change,
-this is an implementation completeness gap in how the two write paths were split, not a design gap).
+**REV-152 — `[CODE-GAP]` — major — owner: dev — RESOLVED 2026-08-01, Pass 38.** `TickerEditModal.tsx`'s
+held→watch-only confirmation path silently discarded any unsaved `market`/`type` edit made in the same
+modal session: `confirmSwitchToWatchOnly()` issued only the `set_ticker_holding_status` RPC, never the
+`watchlist` update, so a combined market/type edit + held→watch-only switch would lose the edit with no
+error shown. Not covered by any of the 14 finalized ACs (AC8 only tests a pure status-only transition); does
+not falsify any AC but was a genuine silent-data-loss correctness gap. Full original finding + closing
+verification: `docs/archive/review-log-archive.md` ("REV-151/REV-152/REV-153/REV-155 — INC-15
+Tickers-merge fix-cycle findings + closure").
 
 ### 6. Lean code — dead-code check after the watchlist/holdings→tickers consolidation
 
@@ -4505,24 +4453,13 @@ new-this-increment dead CSS strictly speaking.
 
 ### 7. Structural (`docs/code-map.md` currency)
 
-**REV-153 — `[STRUCTURE]` — major — owner: tech-lead. `docs/code-map.md`'s `admin-portal/` inventory is
-stale against this increment's actual structure change, the same class of gap as REV-145 (Pass 34) and
-REV-143/118 before it.** `docs/code-map.md:24-27` still lists `(app)/watchlist|holdings|tunables|track-
-record/` and `components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`, `NavToggle.tsx` (with `NavToggle.tsx`'s
-description still describing the pre-INC-15 "CSS forces the panel open at desktop widths" mechanism, now
-false) — with no mention of the new `tickers/` route, the deleted `watchlist`/`holdings` routes, the new
-`TickerEditModal.tsx` component, or the new `sql/tickers_screen_rpc.sql` file (the `sql/` file inventory at
-`:34-45` doesn't list it either). `docs/design/increment-plan.md`'s own INC-15 entry already anticipates this
-exact fix ("tech-lead refreshes `docs/code-map.md` before this increment's merge commit... Not done yet,
-since INC-15 has not merged") — this finding simply confirms, at review time, that the anticipated refresh
-still hasn't happened. Per `CLAUDE.md`'s explicit git-workflow rule ("If the increment changed structure,
-tech-lead refreshes docs/code-map.md before the merge commit") and this project's own Pass-34/REV-145
-precedent (an identical stale-code-map finding held that pass NOT CLEAR on this basis alone, with the
-explicit framing "it does not mean the UI/UX work itself has a defect... it means the specific `CLAUDE.md`
-precondition for merging a structure-changing increment is not yet met"), this is the same situation here:
-**this specific precondition, not the application code, is what's missing before the actual merge commit.**
-Owner: tech-lead, a mechanical multi-line update (route list, component list + `NavToggle.tsx`'s description,
-`sql/` file list) — no re-test implied, the underlying code is independently verified correct in §2–6 above.
+**REV-153 — `[STRUCTURE]` — major — owner: tech-lead — RESOLVED 2026-08-01, Pass 38.** `docs/code-map.md`'s
+`admin-portal/` inventory was stale against this increment's structure change (still listing deleted
+`watchlist`/`holdings` routes, missing the new `tickers/` route, `TickerEditModal.tsx`, and
+`sql/tickers_screen_rpc.sql`) — same class of gap as REV-145 (Pass 34). Not an application-code defect; the
+specific `CLAUDE.md` precondition for merging a structure-changing increment. Full original finding +
+closing verification: `docs/archive/review-log-archive.md` ("REV-151/REV-152/REV-153/REV-155 — INC-15
+Tickers-merge fix-cycle findings + closure").
 
 ### Previously logged items re-checked this pass
 
@@ -4569,4 +4506,115 @@ REV-153 code-map refresh (both fast, mechanical), dev applies the REV-152 routin
 and this pass's re-verification of just those three diffs (same pattern as Pass 35's narrow REV-145/146/147
 re-check) should be sufficient to clear INC-15 for merge without a full qa re-run, since none of the three
 findings touch any of the 14 ACs qa already independently verified.
+
+---
+
+## Pass 38 — 2026-08-01 (INC-15 fix-cycle closing verification — REV-151/152/153/155) — **CLEAR**
+
+**Scope.** Branch `inc-15-tickers-merge-nav-fix`, HEAD `7f41080`. Two fix commits since Pass 37's tip
+(`d6e6ad7`): dev's `d9702aa` (REV-151/REV-152) and tech-lead's `157b805` (REV-153, REV-155, and the
+admin-portal.md §16.11.5 SQL-block grant-pattern sync). No shell `git show`/`git diff` access this pass
+(consistent with the constraint already documented at Pass 35); confirmed both commits' scope by direct
+content inspection plus a `Glob`-based mtime-ordering cross-check (`admin-portal/**`, `sql/**`, `docs/**`),
+and by reading qa's independent re-verification entry in `docs/test-report.md` ("INC-15 fix cycle 1"), which
+itself records `git diff --name-status main..inc-15-tickers-merge-nav-fix` output naming exactly the expected
+file set.
+
+### REV-151 — RESOLVED, independently re-verified
+
+`sql/tickers_screen_rpc.sql:53-54,66-67` now reads, for both functions:
+```
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
+```
+and the equivalent pair for `delete_ticker(text)` — byte-for-byte the same statement order and three-role
+list as `sql/kill_switch.sql:115`'s established pattern. **RESOLVED.**
+
+### REV-152 — RESOLVED, independently re-verified
+
+Read `admin-portal/components/TickerEditModal.tsx` directly (not accepted on dev's/tech-lead's account
+alone): a shared `applyMarketTypeEdit()` helper (lines 115-130) now performs the single
+`supabase.from("watchlist").update({market, type})` call, validated via the existing `validateWatchlistRow`.
+`doSave()` (line 136) and `confirmSwitchToWatchOnly()` (line 178) both call this helper before their
+respective write (the `set_ticker_holding_status` RPC for the latter, at line 185) — a pending market/type
+edit is applied on the held→watch-only confirm path, not silently dropped. Call-site count confirmed
+unchanged from Pass 37's trace: one `watchlist.update` (now shared, not duplicated), one `holdings.update`,
+two `set_ticker_holding_status` RPC call sites, one `delete_ticker` RPC call site — no new call site
+introduced. **RESOLVED.**
+
+**Regression tests — both meaningful.** `tests/admin_portal/static_source_checks.test.ts` adds exactly two
+tests (16 in the file now, 84 in the suite): one regexes `sql/tickers_screen_rpc.sql` for the
+revoke-immediately-before-grant pair for both function signatures (REV-151 guard); one extracts
+`confirmSwitchToWatchOnly()`'s body via `src.match(/async function confirmSwitchToWatchOnly\(\)[\s\S]*?\n
+\}/)` and asserts `applyMarketTypeEdit()`'s source index is lower than the RPC call's (REV-152 guard). Both
+are genuine regression guards, not tautologies — qa's `test-report.md` entry independently confirms both fail
+against the pre-fix `d6e6ad7` content (no revoke lines; no `applyMarketTypeEdit()` call inside
+`confirmSwitchToWatchOnly()` at all) and pass against the fix, and this pass's own read of the test bodies
+corroborates the assertions target exactly the defects REV-151/152 named — not a weaker or unrelated check.
+
+### REV-153 — RESOLVED, independently re-verified
+
+`docs/code-map.md:26-32` now lists `(app)/tickers|tunables|track-record/` (no more `watchlist`/`holdings`),
+`TickerEditModal.tsx` with an accurate description ("combined watch-only/held edit form + FR37's
+mandatory-field and delete/status-change confirmation workflow, calls the two new transactional RPCs
+below"), and `NavToggle.tsx`'s description no longer contains the stale pre-INC-15 "CSS forces the panel open
+at desktop widths" claim. `docs/code-map.md:46-48`'s `sql/` inventory now names `tickers_screen_rpc.sql`
+explicitly (INC-15, FR36/FR37, both RPC names). The file's own header line records the refresh
+("refreshed again 2026-08-01 (REV-153, Pass 37...)"). **RESOLVED.**
+
+### REV-155 — RESOLVED, independently re-verified
+
+`docs/design/admin-portal.md:795-800`'s and `docs/design/increment-plan.md:798-804`'s file-allow-list tables
+both now name `admin-portal/app/layout.tsx` explicitly (with the FR38 branding-rename annotation). **RESOLVED.**
+
+### RPC design-doc grant-pattern sync — confirmed
+
+`docs/design/admin-portal.md:744-745,757-758`'s SQL block now carries the identical revoke-then-grant pair
+for both functions, matching `sql/tickers_screen_rpc.sql` exactly (previously the design's own block had the
+same omission REV-151 flagged in the SQL — both are now in sync, and the design's surrounding prose
+(`:761-766`) explicitly documents the belt-and-suspenders pattern and cites `sql/kill_switch.sql:115` as
+precedent).
+
+### Previously logged carried items re-checked this pass — confirmed not silently dropped or falsely resolved
+
+**REV-149 (INC-14, carried, color-token mismatch, minor)** — not in scope of this fix cycle's two commits
+(neither touches `globals.css`); confirmed still logged as open in Pass 37's "Previously logged items"
+section, un-touched by this pass's edits above — still accurately tracked as open, not silently dropped or
+falsely marked resolved. **REV-154 (dead CSS, minor, `globals.css:199,267`)** — same: not in scope of this
+fix cycle (no `globals.css` change in either fix commit), still logged as open in Pass 37 and left untouched
+by this pass — accurately tracked as open, not silently dropped or falsely marked resolved.
+
+### Fix-commit scoping — sanity check
+
+No shell access to run `git show --stat` directly this pass. Cross-checked scope via three independent
+sources instead: (1) direct content read of every file each commit was expected to touch — dev's expected
+set (`sql/tickers_screen_rpc.sql`, `TickerEditModal.tsx`, `static_source_checks.test.ts`, `docs/handoff.md`)
+and tech-lead's expected set (`docs/code-map.md`, `docs/design/admin-portal.md`,
+`docs/design/increment-plan.md`) each contain exactly the fix described and nothing unrelated; (2) qa's
+`docs/test-report.md` "INC-15 fix cycle 1" entry, which explicitly states "Files touched this cycle:
+`sql/tickers_screen_rpc.sql`, `admin-portal/components/TickerEditModal.tsx`,
+`tests/admin_portal/static_source_checks.test.ts`" for dev's commit, and separately notes REV-153 was
+"tech-lead's doc-only fix" confirmed by qa to not touch `tests/`; (3) dev's own `docs/handoff.md` fix-cycle
+entry, which states its files-touched list matches (1) and separately documents that qa's build/lint/test
+suites (287 Python, 84 TypeScript) pass clean after the fix, with no unexpected file appearing in the
+`git diff -U0` structural grep re-run it also ran. No evidence of drift in either direction — dev's commit is
+confined to SQL/TSX/tests/handoff, tech-lead's commit is confined to docs.
+
+### Open items after Pass 38
+
+**Blockers: 0. Majors: 0 (REV-151/152/153 all resolved above, none new).** Minors: 22 carried unaffected +
+REV-149 carried still-open + REV-154 carried still-open (REV-155 resolved above) = 24 open.
+
+### Verdict — Pass 38
+
+**CLEAR.** All four findings from Pass 37 (REV-151/152/153 majors, REV-155 minor) are independently confirmed
+resolved against the actual current state of `sql/tickers_screen_rpc.sql`, `admin-portal/components/
+TickerEditModal.tsx`, `docs/code-map.md`, `docs/design/admin-portal.md`, and `docs/design/increment-plan.md`
+— not merely accepted from the fix commits' messages. Both fix commits are correctly scoped to their owning
+agent's territory (dev: SQL/TSX/tests/handoff; tech-lead: docs only), cross-checked via qa's independent
+`test-report.md` trace since no direct shell `git show` access was available this pass. The two carried,
+non-blocking minors (REV-149, REV-154) remain accurately tracked as open — neither silently dropped nor
+falsely marked resolved. **INC-15 is cleared to merge to `main`** per `CLAUDE.md`'s git-workflow rule
+(merge after reviewer clears with zero blockers). Resolved entries (REV-151, REV-152, REV-153, REV-155)
+archived to `docs/archive/review-log-archive.md` per doc-hygiene rule.
 
