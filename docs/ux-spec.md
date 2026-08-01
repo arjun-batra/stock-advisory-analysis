@@ -750,7 +750,7 @@ Resize the browser window to see the phone/tablet/desktop behavior described abo
 | E — Minimal / Card Hybrid (baseline: A + C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-e-hybrid.html` |
 | F — Compact Cards (baseline: C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-f-compact-cards.html` |
 | G — Compact Toggle (baseline: F density + E's kill-switch toggle) | **SELECTED / APPROVED by Arjun (2026-07-31) — dev implements this for INC-13** | `docs/ux-mockups/direction-g-compact-toggle.html` |
-| G — Tickers merge extension (FR36–FR38, 2026-08-01 CR; baseline: G, §7.4.3/§11) | **Extends the selected/approved direction — canonical for the merged Tickers screen + nav redesign** | `docs/ux-mockups/direction-g-tickers-merge.html` |
+| G — Tickers merge extension (FR36–FR38, 2026-08-01 CR; baseline: G, §7.4.3/§11) | **SELECTED / APPROVED by Arjun (2026-08-01) — dev implements this for INC-15** | `docs/ux-mockups/direction-g-tickers-merge.html` |
 
 Each file includes: Login, Watchlist & Holdings CRUD (with an open Add/Edit form example), Tunables
 editor, Track-record view, and the kill-switch toggle in its header — all five FR27–FR32 screens, with
@@ -800,10 +800,16 @@ Next steps now that the gate is cleared:
 
 ---
 
-## 11. Extension — FR36–FR38 Tickers merge, click-to-modal, nav redesign (2026-08-01 change request; Decision #40)
+## 11. Extension — FR36–FR38 Tickers merge, click-to-modal, nav redesign (2026-08-01 change request; Decision #40) — **SELECTED / APPROVED by Arjun (2026-08-01)**
 
-**Status: this section documents an approved change request against the already-SELECTED Direction G
-(§7.4/§7.4.3).** It is an extension of Direction G, not a new direction and not a re-opening of the NFR8
+> **Status: SELECTED / APPROVED.** Arjun reviewed this section and `direction-g-tickers-merge.html` and
+> approved them on 2026-08-01 — this is the NFR8-style gate being cleared for INC-15. This is the final,
+> canonical reference dev implements for INC-15. No further iteration on this piece precedes INC-15; any
+> future visual change to the Tickers screen or nav is a change request against this approved extension,
+> not a re-opening of this review.
+
+This section documents an approved change request against the already-SELECTED Direction G
+(§7.4/§7.4.3). It is an extension of Direction G, not a new direction and not a re-opening of the NFR8
 direction gate — no other direction (A–F) is affected or a candidate again. Every token referenced below
 is Direction F/G's existing set (§7.3.1) — **no new color, spacing, type, radius, or shadow token is
 introduced by this change request.**
