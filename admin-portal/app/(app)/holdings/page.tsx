@@ -225,8 +225,14 @@ export default function HoldingsPage() {
 
       {isModalOpen && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="form-modal" onClick={(e) => e.stopPropagation()}>
-            <h2>{isEditing ? "Edit holding" : "Add holding"}</h2>
+          <div
+            className="form-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="holdings-modal-heading"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="holdings-modal-heading">{isEditing ? "Edit holding" : "Add holding"}</h2>
             <form
               onSubmit={
                 isEditing

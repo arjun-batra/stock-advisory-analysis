@@ -207,8 +207,14 @@ export default function WatchlistPage() {
 
       {isModalOpen && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="form-modal" onClick={(e) => e.stopPropagation()}>
-            <h2>{isEditing ? "Edit ticker" : "Add ticker"}</h2>
+          <div
+            className="form-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="watchlist-modal-heading"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="watchlist-modal-heading">{isEditing ? "Edit ticker" : "Add ticker"}</h2>
             <form
               onSubmit={
                 isEditing
