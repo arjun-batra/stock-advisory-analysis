@@ -158,8 +158,66 @@ main {
   white-space: nowrap;
 }
 
-.nav-toggle-wrap {
+/* ---------- nav: tickers/tunables/track-record (FR36/FR38, amended NFR8,
+   INC-15, docs/design/admin-portal.md §16.11.1/§16.11.2) ----------
+   Root-cause fix for the INC-13/14 defect: NavToggle now renders its
+   `children` (bare <a> elements, no wrapping <nav>) as the *direct* flex
+   children of `.nav-strip`/`.nav-panel-mobile` below, instead of one extra
+   <nav> level breaking `flex-direction`'s effect. Both blocks are always in
+   the DOM; only `display` toggles which is visible at a given width. */
+
+.nav-strip-wrap {
+  display: none;
   position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-strip a {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.nav-strip a.active {
+  background: var(--color-success-bg);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.nav-strip a:hover {
+  background: var(--color-bg);
+}
+
+/* Scroll-edge indicator (NFR8's narrow horizontal-scroll carve-out,
+   §16.11.2) -- a no-op fade whenever .nav-strip isn't actually overflowing,
+   since it's just an absolutely-positioned overlay. */
+.nav-strip-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  background: linear-gradient(to right, transparent, var(--color-surface));
+  pointer-events: none;
 }
 
 .nav-toggle-btn {
@@ -173,22 +231,20 @@ main {
   background: var(--color-surface);
   font-size: var(--font-size-base);
   padding: 0;
+  flex-shrink: 0;
 }
 
-/* Below desktop, the nav panel is hidden until NavToggle's local `open`
-   state says otherwise; at desktop CSS forces it open regardless of that
-   state (docs/design/admin-portal.md §16.10). */
-.nav-panel {
+.nav-panel-mobile {
   display: none;
 }
 
-.nav-panel.open {
+.nav-panel-mobile.open {
   display: flex;
   flex-direction: column;
   position: absolute;
   top: calc(100% + var(--space-2));
-  left: 0;
-  min-width: 200px;
+  left: var(--space-3);
+  min-width: 180px;
   background: var(--color-surface);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
@@ -197,8 +253,7 @@ main {
   z-index: 20;
 }
 
-.nav-panel a,
-.nav-panel button.link {
+.nav-panel-mobile a {
   display: block;
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -209,37 +264,37 @@ main {
   text-align: left;
 }
 
-.nav-panel a:hover,
-.nav-panel button.link:hover {
+.nav-panel-mobile a.active {
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.nav-panel-mobile a:hover {
   background: var(--color-bg);
 }
 
-@media (min-width: 1024px) {
+/* Tablet (>=640px, per §16.11.2 -- burger hides starting here, not 1024px)
+   and desktop alike: single horizontal row, real fix for the vertical-
+   stacking defect (same mechanism at both tiers, harmless overflow-x:auto
+   no-op at desktop width where 3 items always fit). */
+@media (min-width: 640px) {
+  .nav-strip-wrap {
+    display: block;
+  }
   .nav-toggle-btn {
     display: none;
   }
-  .nav-panel {
-    display: flex !important;
-    flex-direction: row;
-    align-items: center;
-    position: static;
-    box-shadow: none;
-    padding: 0;
-    gap: var(--space-4);
-    background: transparent;
-  }
-  .nav-panel a,
-  .nav-panel button.link {
-    width: auto;
-    padding: var(--space-1) var(--space-2);
+  .nav-panel-mobile {
+    display: none !important;
   }
 }
 
-.app-header-user {
+.app-header-right {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-sm);
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 
 .user-chip {
@@ -371,18 +426,23 @@ button.secondary {
   border: 1px solid var(--color-border);
 }
 
-button.icon-btn {
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  font-size: var(--font-size-xs);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+button.danger {
+  color: var(--color-danger-fg);
+  border-color: var(--color-danger-fg);
+}
+
+button.danger:hover {
+  background: var(--color-danger-bg);
+}
+
+button.danger.primary {
+  background: var(--color-danger-fg);
+  border-color: var(--color-danger-fg);
+  color: #fff;
+}
+
+button.danger.primary:hover {
+  background: #7f1616;
 }
 
 form.crud-form {
@@ -403,75 +463,102 @@ form.crud-form label {
   color: var(--color-text-secondary);
 }
 
-/* ---------- watchlist / holdings: ticker-card grid (FR28/FR29, INC-14) ----------
-   Real div-based card grid reproducing docs/ux-mockups/direction-g-compact-toggle.html's
-   .card-grid/.ticker-card markup 1:1 (ticker heading, market/type/status pill badges,
-   shares/cost-basis figures, edit/delete icon buttons) -- replaces the pre-INC-14
-   <table>+data-label hybrid, which rendered plain text with zero pill styling and never
-   matched the approved Direction G mockup (docs/handoff.md's INC-14 entry). Density:
-   2-col phone (base) / 3-col tablet (>=640px) / 4-col desktop (>=1024px), matching the
-   density docs/design/admin-portal.md §16.10 already documents in prose. */
+/* ---------- Tickers screen: one card per row at every breakpoint (FR36,
+   INC-15, docs/design/admin-portal.md §16.11.3) ----------
+   Supersedes the pre-merge watchlist/holdings screens' 2/3/4-col card-grid
+   density (INC-13/14) -- this screen uses a single flex column
+   unconditionally (matching the approved mockup's actual mechanism,
+   docs/ux-mockups/direction-g-tickers-merge.html: display:flex;
+   flex-direction:column on .tickers-list, not CSS Grid). The whole card is
+   the click target -- no more per-row edit/delete icon buttons. */
 
 .toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: var(--space-3);
   margin: var(--space-4) 0 var(--space-3) 0;
   flex-wrap: wrap;
 }
 
-.toolbar-add-btn {
-  display: none;
+.search {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: var(--font-size-sm);
+  flex: 1;
+  max-width: 280px;
 }
 
-@media (min-width: 640px) {
-  .toolbar-add-btn {
-    display: inline-flex;
-  }
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.tickers-list {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-3);
+  max-width: 720px;
 }
 
-@media (min-width: 640px) {
-  .card-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-@media (min-width: 1024px) {
-  .card-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-.ticker-card {
+.ticker-row-card {
   background: var(--color-surface);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: var(--space-3);
+  padding: var(--space-4);
+  cursor: pointer;
+  transition: box-shadow 0.12s ease;
 }
 
-.ticker-card .top {
+.ticker-row-card:hover,
+.ticker-row-card:focus-visible {
+  box-shadow: 0 2px 6px rgba(20, 20, 43, 0.12);
+}
+
+.ticker-row-card .head {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
   gap: var(--space-2);
-  margin-bottom: var(--space-1);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.ticker-card .top strong {
-  font-size: var(--font-size-base);
+.ticker-row-card .head strong {
+  font-size: var(--font-size-lg);
 }
 
-.ticker-card .mkt {
+.ticker-row-card .mkt {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
+}
+
+.holding-line {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-2);
+}
+
+.holding-line strong {
+  font-weight: 700;
+}
+
+.verdict-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ticker-row-card .rationale {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.cold-start-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-style: italic;
 }
 
 .pill {
@@ -499,38 +586,25 @@ form.crud-form label {
   color: var(--color-text-secondary);
 }
 
-.ticker-card .figures {
-  margin: var(--space-2) 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.ticker-card .figures strong {
-  color: var(--color-text-primary);
-  display: block;
-  font-size: var(--font-size-sm);
-}
-
-.ticker-card .card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-}
-
 .empty-state {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  padding: var(--space-4) 0;
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
 }
 
-/* ---------- add/edit modal (FR28/FR29, INC-14) ----------
+.empty-state .primary {
+  margin-top: var(--space-3);
+}
+
+/* ---------- ticker edit/add modal (FR28/FR29/FR36/FR37, INC-14/INC-15) ----------
    Centered panel on tablet/desktop; full-width bottom sheet on phone, matching
-   docs/ux-mockups/direction-g-compact-toggle.html's .form-modal + its
-   @media (max-width:599px) override, and docs/ux-spec.md §6.2's stated
+   docs/ux-mockups/direction-g-tickers-merge.html's .modal-static markup + its
+   phone bottom-sheet override, and docs/ux-spec.md §6.2's stated
    "rounded bottom-sheet on phone, centered modal card on tablet/desktop". Both
-   Add and Edit render through this one modal (pre-filled for Edit) instead of
-   the pre-INC-14 permanently-visible inline form / inline-row-edit pattern. */
+   Add and the FR36 combined Edit modal render through this one .form-modal
+   mechanism (pre-filled for Edit) instead of a permanently-visible inline
+   form / inline-row-edit pattern. */
 
 .modal-overlay {
   position: fixed;
@@ -559,6 +633,12 @@ form.crud-form label {
   font-size: var(--font-size-lg);
 }
 
+.modal-subhead {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+}
+
 .field {
   margin-bottom: var(--space-3);
 }
@@ -569,6 +649,10 @@ form.crud-form label {
   color: var(--color-text-secondary);
   margin-bottom: var(--space-1);
   font-weight: 600;
+}
+
+.field label .req {
+  color: var(--color-danger-fg);
 }
 
 .field input,
@@ -591,14 +675,66 @@ form.crud-form label {
   margin: var(--space-1) 0 0 0;
 }
 
+.field .error {
+  color: var(--color-danger-fg);
+  font-size: var(--font-size-xs);
+  margin-top: var(--space-1);
+}
+
+/* FR37 watch-only -> held: the two newly-required fields are visually set
+   apart (docs/ux-spec.md §11.4). */
+.new-fields {
+  border-left: 3px solid var(--color-accent);
+  padding-left: var(--space-3);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  margin: var(--space-3) 0;
+  background: #f0fdf9;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.new-fields-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+/* FR37 held -> watch-only: in-modal confirmation panel, replaces the form
+   (not a separate dialog type) until confirmed or cancelled
+   (docs/ux-spec.md §11.5). */
+.confirm-panel {
+  background: #fff7f7;
+  border: 1px solid var(--color-danger-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.confirm-panel strong {
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+.confirm-panel .confirm-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  justify-content: flex-end;
+}
+
 .modal-actions {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
 
-.fab {
-  display: none;
+.modal-actions .right {
+  display: flex;
+  gap: var(--space-2);
 }
 
 @media (max-width: 639px) {
@@ -610,23 +746,6 @@ form.crud-form label {
     max-width: 100%;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     max-height: 85vh;
-  }
-  .fab {
-    display: flex;
-    position: fixed;
-    bottom: var(--space-6);
-    right: var(--space-4);
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--color-accent);
-    color: #fff;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-    box-shadow: var(--shadow-card);
-    border: none;
-    z-index: 25;
   }
 }
 
