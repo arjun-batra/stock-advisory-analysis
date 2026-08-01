@@ -5,165 +5,117 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-15 — Tickers merge + nav defect fix + horizontal-scroll tier (FR36/FR37/FR38, amended NFR8) — 2026-08-01
+## INC-15 fix cycle 1 — REV-151/REV-152 re-verification — 2026-08-01
 
-**Scope.** Branch `inc-15-tickers-merge-nav-fix` (`main`@`98947f9`, commit `40eccb2`). Files touched (matches
-the allow-list in `docs/design/increment-plan.md`'s INC-15 section exactly, `git diff --name-status main`):
-`admin-portal/components/NavToggle.tsx`, `admin-portal/components/AuthGuard.tsx`,
-`admin-portal/app/globals.css`, `admin-portal/app/layout.tsx`, new `admin-portal/app/(app)/tickers/page.tsx`,
-new `admin-portal/components/TickerEditModal.tsx`, deleted `admin-portal/app/(app)/watchlist/page.tsx` +
-`admin-portal/app/(app)/holdings/page.tsx`, new `sql/tickers_screen_rpc.sql`.
+**Scope.** Branch `inc-15-tickers-merge-nav-fix`, dev's fix commit `d9702aa` (on top of reviewer's Pass 37
+tip `d6e6ad7`). Files touched this cycle: `sql/tickers_screen_rpc.sql`,
+`admin-portal/components/TickerEditModal.tsx`, `tests/admin_portal/static_source_checks.test.ts` (2 new
+regression tests, dev-authored per the orchestrator's explicit instruction).
 
-### 1. Structural no-regression check — reinterpreted per dev's flag, not applied literally
+### REV-151 (SQL missing revoke-execute) — RESOLVED, independently re-verified
 
-Dev correctly flagged that a literal "zero matches beyond 3 named exceptions" reading of the grep rule is
-impossible for this design (the merged screen necessarily contains ordinary `watchlist`/`holdings` CRUD).
-Verified the *substantive* bar instead: every `supabase.*`/`createClient`/`.rpc(` call site in the diff,
-traced individually against `git show main:admin-portal/app/(app)/watchlist/page.tsx` and
-`.../holdings/page.tsx` (the deleted originals):
+Read `sql/tickers_screen_rpc.sql` directly (not taken on dev's word) and diffed the pattern against
+`sql/kill_switch.sql:115` byte-for-byte. Both new functions now read:
+```
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
+```
+and the equivalent pair for `delete_ticker(text)` — identical statement order, identical three-role list
+(`public, anon, authenticated`), no blank line inserted, matching `kill_switch.sql:115`'s established shape
+exactly. **RESOLVED.**
 
-- **`tickers/page.tsx` reads** — `supabase.from("watchlist").select("*").order("ticker")` (identical to old
-  `watchlist/page.tsx`'s `loadRows()`), `supabase.from("holdings").select("*")` (identical table/columns to
-  old `holdings/page.tsx`'s `loadAll()`, RLS-covered the same way — `.order("ticker")` dropped since the
-  merge no longer needs a second independently-sorted list, a presentational simplification, not a new
-  read), and `supabase.from("latest_call_per_ticker").select(...)` — a genuinely new *read* of an
-  **existing** view (same one the track-record page already reads), consistent with §16.11.3's explicit
-  "three parallel reads, no new policy" design.
-- **`tickers/page.tsx` write** — `supabase.from("watchlist").insert([{ticker, market, type, status:
-  "watch-only"}])` for "+ Add ticker": same shape as old `watchlist/page.tsx`'s `handleAdd`, narrowed to
-  always send `status: "watch-only"` (matches AC12's explicit "not a new create-as-held path" requirement,
-  not a functional expansion).
-- **`TickerEditModal.tsx` writes** — `supabase.from("watchlist").update({market, type})` (subset of old
-  `watchlist/page.tsx`'s `handleUpdate`, which also included `status` — status now exclusively routes
-  through the new RPC, confirmed no code path lets a plain field-edit Save also silently flip `status` via
-  the direct call: `doSave()` only ever sends `market`/`type` to `watchlist`, `status` always goes through
-  `set_ticker_holding_status` when changed); `supabase.from("holdings").update({shares, cost_basis})` (same
-  shape as old `holdings/page.tsx`'s `handleUpdate`, reached only when `status` is unchanged and already
-  `held` — confirmed by reading `doSave()`'s `else if (form.status === "held")` branch, which is mutually
-  exclusive with the `statusChanged` branch above it); `supabase.rpc("set_ticker_holding_status", ...)` (×2
-  call sites: the watch-only→held Save path and the held→watch-only confirm path) and
-  `supabase.rpc("delete_ticker", ...)` (×1, the Delete button) — exactly the two named new RPCs, used only
-  for status transitions/deletion, never as a shortcut for a plain field edit (confirmed: no other call site
-  routes a non-status-changing edit through either RPC).
-- **Old `holdings/page.tsx`'s direct `insert()`/`delete()` calls have no equivalent direct call in the new
-  code** — correctly absorbed into `set_ticker_holding_status`'s `insert ... on conflict` and
-  `delete_ticker`'s `delete from holdings`, respectively. This is the intended consolidation (§16.11.5's own
-  rationale: two independent client calls can't guarantee atomicity against the `holdings.ticker` FK with no
-  cascade) — not a functional expansion, and not a change dev could have avoided while satisfying FR37.
-- **`is_admin()`** — appears only inside `sql/tickers_screen_rpc.sql`'s two new functions (confirmed via
-  `git diff main -- admin-portal/ sql/ | grep -n "is_admin"` — zero hits outside that file).
-- **`set_kill_switch`/`validateTunableValue`/kill-switch or tunables validation** — zero live-code matches
-  anywhere in the diff; `set_kill_switch` appears only in `sql/tickers_screen_rpc.sql`'s doc-comment prose
-  citing it as the precedent pattern, not a call. `git diff --name-only main -- admin-portal/lib/
-  admin-portal/app/\(app\)/tunables admin-portal/app/\(app\)/track-record` returns empty — confirmed
-  untouched.
-- **`validateHoldingsRow`/`validateWatchlistRow`** — both carried over unchanged from the pre-merge forms
-  (same functions, same rules, imported into `TickerEditModal.tsx`/`tickers/page.tsx` instead of the deleted
-  files) — no new validation rule invented.
+### REV-152 (silent data loss on combined edit+status-switch) — RESOLVED, independently re-verified
 
-**Verdict: clean consolidation.** Every write in the diff is either (a) the same table/columns/RLS-gated
-operation the deleted pre-merge pages already performed, relocated, or (b) one of the two named RPCs used
-only for status transitions/deletion. No plain field edit is routed through an RPC; no RPC does anything
-beyond what §16.11.5 specifies. Dev's own self-report reached the same conclusion — independently
-re-traced call-site-by-call-site against the actual deleted file contents (not just dev's characterization)
-and confirm it.
+Read `TickerEditModal.tsx` directly: `applyMarketTypeEdit()` is now a shared helper called from both
+`doSave()` and `confirmSwitchToWatchOnly()`, in that order (edit write, then the
+`set_ticker_holding_status` RPC) — matches dev's account in `docs/handoff.md`'s fix-cycle entry.
 
-### 2. `tests/admin_portal/static_source_checks.test.ts`'s 3 known-broken tests — fixed (qa's territory)
+Wrote an independent real-browser Playwright script from scratch (not a re-run of dev's script) —
+`next build && next start` (port 4174/4175), Supabase REST+RPC mocked at `context.route()` with an
+in-memory fixture store, a `@supabase/ssr`-shaped auth cookie built via the real installed
+`stringToBase64URL` codec, pre-installed Chromium (`/opt/pw-browsers/chromium-1194`), no `playwright
+install` run. Three scenarios, 24 checks, all passed:
+- **Scenario A (combined edit — the exact reported bug)**: AAPL held, changed Market US→TSX, Type
+  Stock→ETF, Status Held→Watch-only, Save, Confirm. 12/12 checks passed: exactly one `watchlist` PATCH
+  fired carrying the EDITED values (`market: "TSX"`, `type: "ETF"`), fired strictly before the single
+  `set_ticker_holding_status` RPC (`p_status: "watch-only"`), no error, modal closed cleanly, and the
+  in-memory store reflects the edited market/type/status plus holdings row removed.
+- **Scenario B (plain-edit-only, status unchanged, held)**: changed Market only, left Status as `held`.
+  6/6 checks passed: exactly one `watchlist` PATCH with the edited value, **zero** RPC calls (confirms the
+  fix didn't introduce an RPC call on the no-status-change path), holdings untouched.
+- **Scenario C (pure-status-switch-only, no field edit, held→watch-only)**: 6/6 checks passed: RPC fires
+  once with `p_status: "watch-only"`, no error, store reflects unchanged market/type (proving no field
+  corruption) and the status flip. Noted (informational, not a failure) that `applyMarketTypeEdit()` now
+  fires unconditionally on this path too, writing back unchanged values — harmless by design, mirrors
+  `doSave()`'s own unconditional pattern, not a functional regression.
 
-The 3 failing assertions referenced the now-deleted `holdings/page.tsx` by literal path
-(`HOLDINGS_PAGE` constant). Repointed at the post-merge files, preserving the exact behavioral guarantee
-each was checking (not deleted, not rubber-stamped):
-- "no currency `<select>`/`<input>` in the form" → now checks both `tickers/page.tsx` (add form) and
-  `TickerEditModal.tsx` (edit form) for the same absence.
-- "insert()/update() payloads never send `currency`" → now extracts `insert`/`update`/`rpc` call args from
-  both `tickers/page.tsx` and `TickerEditModal.tsx` (the `rpc()` calls added to the checked method set since
-  `set_ticker_holding_status`/`delete_ticker` are now where the old direct `holdings.insert`/`.delete` calls'
-  responsibility moved to) and asserts none carry a `currency:` key.
-- "displays a read-only derived currency, not an editable field" → repointed at `TickerEditModal.tsx`;
-  the approved mockup's `.field .derived` chip mechanism is unchanged (`MARKET_CURRENCY`-looked-up value +
-  `(from {market})`), but the old page's literal "Derived from market — not editable." hint sentence is
-  genuinely absent from the approved mockup/new modal (not a regression — the mockup never included it) so
-  the assertion was changed from matching that literal sentence to asserting the same underlying guarantee:
-  a `className="derived"` span (never an `<input>`/`<select>`) showing the derived value.
+**Discriminating-power sanity check (own test, not dev's):** re-ran Scenario A's script against the
+pre-fix `TickerEditModal.tsx` (`git show d6e6ad7:...`, temporarily swapped in, rebuilt) — **6/12 checks
+failed** exactly as expected (zero `watchlist` PATCH fired, edited market/type never reached the store),
+confirming the script actually exercises the reported defect rather than trivially passing. Restored the
+fixed file afterward (confirmed byte-identical to the committed version via diff).
 
-Result: `node --experimental-strip-types --test tests/admin_portal/static_source_checks.test.ts` →
-**14 passed, 0 failed** (was 11/14 before the fix).
+**RESOLVED.**
 
-### 3. Real-browser Playwright verification (independent, not a re-run of dev's script)
+### New regression tests in `tests/admin_portal/static_source_checks.test.ts` — meaningful, verified independently
 
-Real `next build && next start` (port 4173, `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY` set to disposable marker
-values so the mocked network layer's hostname match works and the build statically inlines them), Supabase
-REST + RPC mocked at `context.route()` with an in-memory fixture store, a pre-seeded `@supabase/ssr`-shaped
-auth cookie so `AuthGuard`'s `checkAuthorization()` resolves without a live project, pre-installed Chromium
-(`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, no `playwright install` run), globally-installed
-`playwright@1.56.1` driver.
+Confirmed both of dev's 2 new tests are genuine regression guards, not tautologies, by checking them against
+`d6e6ad7` (pre-fix) content directly:
+- `tickers_screen_rpc.sql: both RPCs have revoke execute ... (REV-151)` — regex requires the revoke line
+  immediately before each grant line; against `d6e6ad7`'s SQL (no revoke lines at all) this fails.
+- `edit modal: held->watch-only confirm path applies any pending market/type edit ... (REV-152)` — extracts
+  `confirmSwitchToWatchOnly()`'s body and asserts `applyMarketTypeEdit()` appears at a lower index than the
+  RPC call; against `d6e6ad7`'s version (no `applyMarketTypeEdit()` call exists in that function at all)
+  this fails on the `assert.ok(editCallIdx >= 0, ...)` line.
 
-- **Re-ran dev's own 54-assertion script independently, unmodified apart from the executable path** — **54
-  passed, 0 failed** — corroborates AC1–AC12, AC7/AC8's exact write-timing/RPC-argument claims, and the "+
-  Add ticker"/search-no-network behavior, all against the real build, not taken on trust.
-- **Supplementary qa-authored script (31 additional independent checks)**, covering ground dev's own script
-  didn't exercise:
-  - FR38 (2 checks): `<title>` and `.app-header-brand` both read "Sentinel Portal".
-  - AC14's regression half — tunables/track-record at 375/768/1280px (18 checks): correct nav mechanism per
-    tier (burger <640px, `.nav-strip` ≥640px) on **every** authenticated route, not just `/tickers`; zero
-    page-level horizontal scroll/clipping; kill-switch toggle still present; tunables' friendly-label
-    rendering and track-record's verdict-pill rendering both still functioning (INC-13/14 regression
-    checklist re-run, automated rather than dev's manual spot-check).
-  - Login page unaffected (1 check).
-  - Edge case — empty watchlist (2 checks): zero cards render without crashing, empty-state message shown.
-  - Invalid-input case — negative shares + non-numeric price on a watch-only→held transition (2 checks):
-    Save stays blocked, no RPC fires.
-  - Sign-out button is functional, not just visible (2 checks): exactly one control in `.app-header-right`,
-    clicking it actually navigates to `/login`.
-  - 4 remaining checks distributed across the above groupings.
-  All **31 passed, 0 failed**.
-- **Exact-breakpoint boundary spot-check (not in either script above):** burger visible at 639px, hidden at
-  640px — confirms §16.11.2's breakpoint is the literal pixel value, not "approximately 640."
+Both tests fail against the exact pre-fix code they guard against and pass against the fix — meaningful.
 
-**Total independent real-browser verification: 85/85 checks passed** (54 re-run + 31 new), across
-375/768/1280px plus a 639/640px boundary pair.
+### Automated suites — full re-run
 
-### 4. Automated suites
+```
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short                 # 287 passed, 0 failed
+node --experimental-strip-types --test tests/admin_portal/*.test.ts      # 84 passed, 0 failed (was 82; +2 new)
+cd admin-portal && npm run build && npm run lint                          # 7 routes, clean build, zero lint errors/warnings
+```
+Both counts match the expected baseline exactly (287 Python, 84 TypeScript = 82 + 2 new).
 
-- `python -m pytest -q --tb=short` → **287 passed, 0 failed.**
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` (all 6 files) → **82 passed, 0
-  failed** (5 + 6 + 21 + 14 + 20 + 16 — includes the 14/14 from the fixed `static_source_checks.test.ts`
-  above).
+### Structural no-regression check — re-run against the FULL branch diff (`main..inc-15-tickers-merge-nav-fix`)
 
-### 5. Regression checklist — auth, RLS, kill-switch, tunables
+`git diff --name-status main..inc-15-tickers-merge-nav-fix` shows the same file set as qa's original INC-15
+pass (no new files snuck in this fix cycle beyond the 2 named + the test file + docs). Re-ran the
+call-site-tracing content grep (`supabase\.|validateHoldingsRow|validateTunableValue|validateWatchlistRow|
+is_admin|set_kill_switch|\.rpc\(|createClient|revoke execute|grant execute`, `-U0`, full diff not just the
+fix commit) — same matches as qa's original pass (§1 of the archived original entry) plus the two new
+`revoke execute`/`grant execute` line pairs. No new call site, no new RPC, no new validation logic —
+confirms nothing beyond what's already accounted for.
 
-- **Auth:** `admin_guard.test.ts` (5/5) unaffected; login page loads and still offers only Google OAuth
-  (confirmed live in the browser pass above, §3).
-- **RLS:** `static_source_checks.test.ts`'s `admin_write_watchlist`/`admin_write_holdings`/`admin_allowlist`/
-  `is_admin()` shape checks (3 tests) pass unchanged — `sql/admin_portal_rls.sql` itself is untouched by this
-  diff (`git diff --name-only main -- sql/` shows only the new `tickers_screen_rpc.sql`).
-  `sql/tickers_screen_rpc.sql`'s two new functions are correctly `is_admin()`-gated and `grant execute ... to
-  authenticated` only (no anon grant), read directly from the file (§16.11.5's copied-verbatim SQL, matches
-  `set_kill_switch`'s established shape).
-- **Kill-switch:** zero drift — `kill_switch_static.test.ts` (21/21) unaffected;
-  `KillSwitchToggle.tsx`/`kill_switch.sql`/`kill_switch_portal_grant.sql` untouched by this diff (not in
-  `git diff --name-only`); browser pass confirms the toggle still renders in `.app-header-right` on every
-  route.
-- **Tunables:** zero drift — `tunables_static.test.ts` (20/20) unaffected; `tunables/page.tsx`,
-  `lib/validation.ts`'s `validateTunableValue`, `sql/admin_portal_tunables.sql`,
-  `sql/tunables_validate_trigger.sql` all untouched (not in `git diff --name-only`); browser pass confirms
-  the tunables screen still renders/functions (friendly labels present) at all 3 widths.
+### Spot-check of original 14 ACs + original 31 supplementary checks — quick re-run (only 2 files changed)
 
-### 6. `sql/tickers_screen_rpc.sql` — not applied live (same constraint as every prior `sql/*.sql` file)
+Since only `sql/tickers_screen_rpc.sql` and `TickerEditModal.tsx` changed this cycle, re-ran only the AC
+paths that share the changed file rather than a full from-scratch redo:
+- **AC7 (watch-only→held)** — 2/2 checks passed: exactly one `set_ticker_holding_status` RPC fires with
+  the correct `p_shares`/`p_cost_basis`, holdings row created, status flips to `held`.
+- **AC9 (delete)** — 2/2 checks passed: exactly one `delete_ticker` RPC fires, both `watchlist` and
+  `holdings` rows removed.
+- **AC8 (held→watch-only) and AC10 (plain field edit, zero RPC calls)** — re-covered directly by Scenarios A
+  and B above (same assertions, stronger since they also probe the combined-edit case AC8's original text
+  never tested).
+- Nav/breakpoint/card-layout/AC1–6/11–14 checks are untouched by this fix cycle's diff (no nav, CSS, or
+  `tickers/page.tsx` changes) — not re-run from scratch; confirmed via `git diff --name-only d6e6ad7..HEAD`
+  that neither file is in this cycle's changed set.
 
-No live Supabase/MCP credentials available in this session — the RPC contract is exercised only against the
-mock fixture (§3), matching the exact function signatures/behavior in the file, not a real Postgres function.
-Release must apply this file before the modal's watch-only↔held/delete actions work against real data (same
-pattern every prior `sql/` file in this project has followed).
+### Verdict — INC-15 fix cycle 1
 
-### Verdict — INC-15
-
-**PASS.** 287/0 Python, 82/0 TypeScript (3 previously-known-broken tests fixed by qa, same suite now fully
-green), 85/85 independent real-browser checks (54 re-run from dev's own script + 31 new qa-authored checks +
-a breakpoint boundary spot-check) across 375/768/1280px, structural no-regression check reinterpreted
-per dev's flag and independently traced call-site-by-call-site against the deleted originals (clean
-consolidation confirmed, not rubber-stamped), zero drift on auth/RLS/kill-switch/tunables. Zero new bugs
-filed.
+**PASS.** REV-151 and REV-152 both confirmed fixed by independent re-verification (not re-running dev's own
+checks): REV-151 by direct SQL diff against the established pattern, REV-152 by an independently-authored
+24-check Playwright script (plus a discriminating-power sanity check proving the script would have caught
+the original bug) covering the reported combined-edit case and both edge cases (plain-edit-only,
+pure-status-switch-only) — neither edge case broke. Both of dev's new regression tests verified meaningful.
+287/0 Python, 84/0 TypeScript (matches expected 287 + 82+2 exactly). Structural diff re-check against the
+full branch (not just the fix commit) shows nothing new beyond what's already accounted for. Zero new bugs
+filed. **This clears qa's side — recommend routing back to reviewer next**, per the pipeline (reviewer's
+Pass 37 was the source of REV-151/152/153; REV-153 was tech-lead's doc-only fix, out of qa's scope to
+re-verify beyond confirming it doesn't touch `tests/` — not re-checked here).
 
 ---
 
