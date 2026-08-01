@@ -365,6 +365,26 @@ button.link {
   font-size: var(--font-size-sm);
 }
 
+button.secondary {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+button.icon-btn {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 form.crud-form {
   display: grid;
   gap: var(--space-3);
@@ -383,123 +403,230 @@ form.crud-form label {
   color: var(--color-text-secondary);
 }
 
-/* ---------- responsive tables -> cards (watchlist / holdings, FR28/FR29) ----------
-   Phone (base): stacked card-per-row -- each <tr> becomes a card, each <td> a
-   labelled row via its own data-label attribute, no header row shown.
-   Tablet (>=640px): a real <table> again -- these tables have few enough
-   columns to fit without horizontal scroll at this width.
-   Desktop (>=1024px): Direction G's 4-column compact card grid
-   (docs/ux-mockups/direction-g-compact-toggle.html), matching Direction F's
-   density table (docs/ux-spec.md §7.3.2).
+/* ---------- watchlist / holdings: ticker-card grid (FR28/FR29, INC-14) ----------
+   Real div-based card grid reproducing docs/ux-mockups/direction-g-compact-toggle.html's
+   .card-grid/.ticker-card markup 1:1 (ticker heading, market/type/status pill badges,
+   shares/cost-basis figures, edit/delete icon buttons) -- replaces the pre-INC-14
+   <table>+data-label hybrid, which rendered plain text with zero pill styling and never
+   matched the approved Direction G mockup (docs/handoff.md's INC-14 entry). Density:
+   2-col phone (base) / 3-col tablet (>=640px) / 4-col desktop (>=1024px), matching the
+   density docs/design/admin-portal.md §16.10 already documents in prose. */
 
-   BUG-010 fix: admin-portal.md §16.10 keeps a real <table> layout mechanism
-   at the tablet band (no <div>-based card grid, no data-label/attr(content)
-   trick) — that part is unchanged. What was missing is Direction G's card
-   *styling* (shadow/radius/background tokens) at that width: .crud-table-wrap
-   below supplies it around the table as a single card surface, since a real
-   `display:table-row` element can't reliably paint its own box-shadow. At
-   phone/desktop widths .crud-table-wrap stays transparent — each row (phone)
-   or grid cell (desktop) already carries its own card treatment, so the wrap
-   would otherwise double up. */
-
-.crud-table-wrap {
-  /* transparent by default (phone/desktop); tablet media query below adds
-     the card surface */
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-3) 0;
+  flex-wrap: wrap;
 }
 
-@media (min-width: 640px) and (max-width: 1023px) {
-  .crud-table-wrap {
-    background: var(--color-surface);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-card);
-    padding: var(--space-3);
-  }
-}
-
-.crud-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: var(--space-4);
-}
-
-.crud-table thead {
+.toolbar-add-btn {
   display: none;
 }
 
-.crud-table tbody {
-  display: block;
+@media (min-width: 640px) {
+  .toolbar-add-btn {
+    display: inline-flex;
+  }
 }
 
-.crud-table tr {
-  display: block;
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
-  padding: var(--space-3);
-  margin-bottom: var(--space-3);
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
-.crud-table td {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-  border: none;
-  padding: var(--space-1) 0;
-}
-
-.crud-table td::before {
-  content: attr(data-label);
-  flex-shrink: 0;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.crud-table td select,
-.crud-table td input {
-  max-width: 60%;
-}
-
-@media (min-width: 640px) and (max-width: 1023px) {
-  .crud-table thead {
-    display: table-header-group;
-  }
-  .crud-table tbody {
-    display: table-row-group;
-  }
-  .crud-table tr {
-    display: table-row;
-    background: none;
-    box-shadow: none;
-    border-radius: 0;
-    padding: 0;
-    margin-bottom: 0;
-  }
-  .crud-table th,
-  .crud-table td {
-    display: table-cell;
-    text-align: left;
-    padding: var(--space-2);
-    border-bottom: 1px solid var(--color-border);
-  }
-  .crud-table td::before {
-    content: none;
-  }
-  .crud-table td select,
-  .crud-table td input {
-    max-width: none;
+@media (min-width: 640px) {
+  .card-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (min-width: 1024px) {
-  .crud-table tbody {
-    display: grid;
+  .card-grid {
     grid-template-columns: repeat(4, 1fr);
-    gap: var(--space-3);
   }
-  .crud-table tr {
-    margin-bottom: 0;
+}
+
+.ticker-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-3);
+}
+
+.ticker-card .top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.ticker-card .top strong {
+  font-size: var(--font-size-base);
+}
+
+.ticker-card .mkt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.pill {
+  padding: 3px var(--space-3);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pill.type {
+  background: var(--color-info-bg);
+  color: var(--color-info-fg);
+}
+
+.pill.held {
+  background: var(--color-success-bg);
+  color: var(--color-success-fg);
+}
+
+.pill.watch {
+  background: #f3f4f6;
+  color: var(--color-text-secondary);
+}
+
+.ticker-card .figures {
+  margin: var(--space-2) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ticker-card .figures strong {
+  color: var(--color-text-primary);
+  display: block;
+  font-size: var(--font-size-sm);
+}
+
+.ticker-card .card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.empty-state {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--space-4) 0;
+}
+
+/* ---------- add/edit modal (FR28/FR29, INC-14) ----------
+   Centered panel on tablet/desktop; full-width bottom sheet on phone, matching
+   docs/ux-mockups/direction-g-compact-toggle.html's .form-modal + its
+   @media (max-width:599px) override, and docs/ux-spec.md §6.2's stated
+   "rounded bottom-sheet on phone, centered modal card on tablet/desktop". Both
+   Add and Edit render through this one modal (pre-filled for Edit) instead of
+   the pre-INC-14 permanently-visible inline form / inline-row-edit pattern. */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 17, 21, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 30;
+}
+
+.form-modal {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+  max-width: 400px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.form-modal h2 {
+  margin-top: 0;
+  font-size: var(--font-size-lg);
+}
+
+.field {
+  margin-bottom: var(--space-3);
+}
+
+.field label {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  width: 100%;
+}
+
+.field .derived {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  background: var(--color-success-bg);
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.field .hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin: var(--space-1) 0 0 0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.fab {
+  display: none;
+}
+
+@media (max-width: 639px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .form-modal {
+    max-width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 85vh;
+  }
+  .fab {
+    display: flex;
+    position: fixed;
+    bottom: var(--space-6);
+    right: var(--space-4);
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    color: #fff;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    box-shadow: var(--shadow-card);
+    border: none;
+    z-index: 25;
   }
 }
 

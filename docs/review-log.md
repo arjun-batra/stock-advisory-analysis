@@ -4072,6 +4072,163 @@ every substantive check (structural no-regression, traceability, hardcoding, lea
 this pass. It means the specific `CLAUDE.md` precondition for merging a structure-changing increment
 (code-map currency) is not yet met, which is a fast tech-lead fix, not a return to dev or qa.
 
+---
+
+## Pass 36 — 2026-08-01 (INC-14 diff-scoped audit — admin portal visual fidelity fix, corrects INC-13, NFR8)
+— **CLEAR**
+
+**Scope.** Diff-scoped audit per `CLAUDE.md` Phase 3d: `git diff --name-only main..
+inc-14-admin-portal-visual-fidelity-fix` (branch off `main`@`da50ed8`+, INC-13's merge point, last
+clearance Pass 35). Read for context: `docs/design/increment-plan.md`'s INC-14 entry (6 ACs, file
+allow-list, root-cause note), `docs/design/admin-portal.md` §16.10's 2026-08-01 gap addendum, `docs/
+handoff.md`'s INC-14 entry, `docs/test-report.md`'s INC-14 PASS entry (162/162 independent browser
+checks), `docs/ux-mockups/direction-g-compact-toggle.html`.
+
+### 1. Diff scope / allow-list
+
+Files reported changed: `admin-portal/app/globals.css`, `admin-portal/app/(app)/watchlist/page.tsx`,
+`admin-portal/app/(app)/holdings/page.tsx`, `docs/handoff.md`, `docs/test-report.md`, `docs/archive/
+test-report-archive.md`, `tests/admin_portal/static_source_checks.test.ts`. All seven are within
+INC-14's allow-list (`increment-plan.md`: same three `admin-portal/` files as INC-13, plus at most one new
+presentational component — not created here, not required) or are the expected doc/test-hygiene
+companions (handoff, test-report, its archive rollover, qa's own test-file hardening, which `CLAUDE.md`
+permits qa to do to its own tests). No `sql/`, `scripts/`, `lib/*.ts`, or `components/` file touched —
+confirmed via `Glob` (`admin-portal/lib/*.ts`, `admin-portal/components/**/*`) showing only the three
+pre-existing files INC-10/INC-13 already established, no new file. **Clean — no scope-boundary
+violation.**
+
+### 2. Structural no-regression (independent re-check)
+
+No shell/`git diff` access this session; reproduced the brief's grep against the two changed page files
+and `globals.css` directly (`Grep` for `supabase\.|validateHoldingsRow|validateTunableValue|is_admin|
+set_kill_switch|\.rpc\(|createClient`). `globals.css`: zero matches (pure CSS, expected). `watchlist/
+page.tsx`/`holdings/page.tsx`: `validateWatchlistRow`/`validateHoldingsRow` calls are present but are the
+same pre-existing call sites `handoff.md` and Pass 34 already established (import + `handleAdd`/
+`handleUpdate` call, unchanged in argument shape) — consistent with dev's and qa's own `-U0`-scoped `git
+diff` grep both reporting zero *added/removed* matches. No `supabase.from(...)` call site's arguments
+differ from Pass 34's already-verified shape (`loadRows`/`loadAll`/`handleAdd`/`handleUpdate`/
+`handleDelete` bodies read byte-identical to the pre-INC-14 versions save for `setIsModalOpen` calls added
+around the existing success/reset paths). **Zero forbidden functional-code touches — pass.**
+
+### 3. Visual conformance vs. `docs/ux-mockups/direction-g-compact-toggle.html` (markup-level, not just
+structural)
+
+Read the mockup's actual CSS/DOM alongside the built `globals.css`/`watchlist/page.tsx`/`holdings/
+page.tsx` line-for-line, the exact class of check Pass 34/35 did not do for INC-13:
+
+- `.pill`, `.pill.type`, `.pill.held`, `.pill.watch`, `.mkt` — CSS declarations in `globals.css` (lines
+  472–500) are verbatim matches (same `background`/`color`/`padding`/`border-radius`) to the mockup's
+  lines 87–90. `watchlist/page.tsx` renders `<span className="mkt">{row.market}</span>`, `<span
+  className="pill type">`, and `<span className={`pill ${row.status === "held" ? "held" : "watch"}`}>` —
+  matches mockup DOM shape (lines 228–229, 234–235, etc.) exactly, including the icon+text convention
+  (`● Held` / `○ Watch-only`, not color-only). `holdings/page.tsx` renders `.mkt` correctly; confirmed AC1
+  is satisfied for market on both pages.
+- `.card-grid`/`.ticker-card`/`.figures`/`.card-actions` — density breakpoints (2/3/4-col at
+  base/640px/1024px) match the mockup's 2/3/4-col bands (mockup's illustrative 599/1023px vs. the
+  portal's 640/1024px — an already-accepted tech-lead breakpoint-pixel decision per `ux-spec.md` §1, not a
+  new deviation). `.ticker-card`'s shadow/radius/padding tokens are byte-identical to the mockup's.
+- `.modal-overlay`/`.form-modal`/`.field`/`.fab` — centered-panel-desktop / bottom-sheet-phone structure
+  matches the mockup's `.form-modal` + its `@media (max-width:599px)` override (portal uses 639px, same
+  accepted tech-lead-breakpoint pattern as above). `role="dialog"`/`aria-modal="true"` satisfy AC2(b)'s
+  "some modal-blocking behavior must exist." qa's independently-authored Playwright pass (162/162,
+  `test-report.md`) corroborates this via real computed-style/interaction checks, not just source
+  reading — cross-checked against the source and consistent.
+- **Minor discrepancy found:** `globals.css:579–586`'s new `.field .derived` rule (added this increment
+  for the holdings currency badge inside the new modal) uses `background: var(--color-success-bg)`
+  (`#DCFCE7`) where the mockup (`direction-g-compact-toggle.html:106`) uses a distinct, dedicated
+  highlight tint (`#D1FAE5`, the same tint the mockup also uses for its active-nav/active-filter-chip
+  accents, deliberately different from the `.pill.held` status color). The portal instead reuses the
+  "held" status pill's exact color for this unrelated derived-currency badge. Visually near-identical
+  (both light emerald tints) and not covered by any AC's literal wording (AC1 only names pill/mkt classes;
+  AC3 only checks card shadow/background) — **not a blocker**, but a genuine, if small, mockup-conformance
+  miss worth a follow-up. Logged below as REV-149.
+
+### 4. `docs/ux-spec.md` §2.2 ambiguity qa flagged — independently investigated, not just relayed
+
+Confirmed qa's finding (`test-report.md` §6) independently and went one step further: `docs/ux-spec.md`
+§2.2 ("One combined screen: a table of watchlist entries; holdings fields... appear inline for rows where
+`status = held`") is not just stale prose — **the approved mockup itself encodes the same combined-screen
+assumption**: `direction-g-compact-toggle.html`'s `#watchlist` section renders single cards showing
+type/status pills **and** shares/cost-basis figures together (e.g. its AAPL card: `pill type` + `pill
+held` + `10 sh / $150.00 USD`, lines 227–232) — i.e. the mockup was built as if watchlist and holdings were
+one entity/one screen. The actual, longstanding architecture (predating INC-5, confirmed via `holdings`
+table's schema having no `type`/`status` column, per qa's git-log check) is two separate pages/tables. This
+means dev's INC-14 build (pills only on watchlist, figures only on holdings, matching each page's own
+data model) is the only reading consistent with the explicit "no functional change" boundary every one of
+NFR8/INC-13/INC-14 states — reconciling the mockup literally would require merging two data sources onto
+one screen, which is a functional/data-model change outside a presentation-only fix's scope and would need
+its own pm/design cycle. **Verdict: pre-existing stale doc + a mockup built on an assumption that doesn't
+match the shipped (and out-of-scope-to-change) two-table architecture — not something INC-14 could or
+should have fixed.** Logged below as REV-150, routed to designer (ux-spec.md text) and tech-lead
+(reconcile whether a future increment should actually unify the two screens, or whether the mockup/spec
+should be annotated as aspirational-but-superseded by the two-page reality) — non-blocking.
+
+### 5. Lean code — dead-code check after the table+data-label removal
+
+Grepped the full `admin-portal/` tree for `data-label` and `crud-table`: **zero matches** anywhere (CSS or
+TSX) — the old `<table>`/`.crud-table*`/`.crud-table-wrap` mechanism is fully removed, no orphaned rules.
+`form.crud-form` (kept, per dev's handoff note) is still genuinely referenced —
+`track-record/page.tsx:141`'s filter form is the only remaining consumer, confirmed live. No unused
+imports found in either touched page file (`MARKETS`/`TYPES`/`STATUSES`/`MARKET_CURRENCY` all used in
+JSX). **Clean.**
+
+### 6. Traceability (NFR8 conformance, no FR27–32 creep)
+
+INC-14's six ACs (pill/badge markup, real modal, desktop-elevation measurement, structural no-regression,
+regression-suite pass, tunables/track-record out-of-scope) are all independently confirmed satisfied per
+§§1–5 above and qa's 162/162 independent browser verification. No new FR/NFR introduced; INC-14 is
+correctly scoped as an AC-gap correction to INC-13, not new scope (`increment-plan.md`'s own framing,
+confirmed accurate). `docs/design/admin-portal.md` §16.9's coverage row and §16.10's 2026-08-01 addendum
+are current and consistent with the diff.
+
+### NEW FINDINGS — Pass 36
+
+**REV-149 — `[DESIGN-GAP]` — minor — owner: dev (or tech-lead, whoever picks up the next admin-portal CSS
+touch) — non-blocking.** `admin-portal/app/globals.css:582`'s `.field .derived` rule uses
+`var(--color-success-bg)` (`#DCFCE7`) instead of the mockup's dedicated `#D1FAE5` highlight tint
+(`docs/ux-mockups/direction-g-compact-toggle.html:106`). Cosmetically near-identical, not covered by any
+existing AC — fold into the next presentation-layer touch to this file rather than a standalone fix cycle.
+
+**REV-150 — `[DESIGN-GAP]` — minor — owner: designer (`docs/ux-spec.md` §2.2 text) + tech-lead (decide
+whether the mockup's combined-card assumption should be annotated as superseded, or whether unifying
+watchlist/holdings onto one screen becomes a future increment) — non-blocking, does not hold up INC-14's
+merge.** `docs/ux-spec.md` §2.2 describes "one combined screen" for watchlist/holdings; the approved
+Direction G mockup's own markup encodes the same assumption (combined pill+figures cards); the actual,
+functionally-frozen architecture is two separate tables/pages, predating INC-13/INC-14 and out of either
+increment's presentation-only scope to change. First surfaced by qa (`test-report.md` §6); independently
+confirmed here with the added observation that the mockup itself — not just the spec's prose — carries the
+same stale assumption, so a future increment reusing this mockup as "ground truth" could reintroduce this
+exact ambiguity if not reconciled.
+
+### Previously logged items re-checked this pass
+
+**All 23 minors carried from Pass 32/33/34** (REV-063+071, REV-065, REV-066+052 tech-lead half, REV-067,
+REV-097/100/101, REV-102/127, REV-109, REV-114, REV-123, REV-136, REV-144, plus qa-tracked BUG-007) are
+**unaffected by this diff** — none of their referenced files (`scripts/*.py`, `sql/*.sql`,
+`requirements.md`, `non-functional-ops.md`) are touched by INC-14, which is confined to `admin-portal/`
+presentation files plus doc/test hygiene. Not re-verified line-by-line this pass (diff-scope rule); carried
+forward as-is. Pass 34's REV-145/146/147 remain RESOLVED (Pass 35); nothing in this diff reopens them.
+
+### Open items after Pass 36
+
+**Blockers: 0. Majors: 0.** Minors: 23 carried unaffected + 2 new this pass (REV-149, REV-150) = 25 open,
+none blocking.
+
+### Verdict — Pass 36
+
+**CLEAR.** INC-14's diff (`admin-portal/app/globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`, plus
+`docs/handoff.md`/`docs/test-report.md`/its archive/`tests/admin_portal/static_source_checks.test.ts`) is
+independently verified: correctly scoped (no functional-code touches, no scope creep beyond the allow-list),
+genuinely closes the three gaps Arjun reported (pill/badge markup, real Add/Edit modal, measured
+desktop-width card elevation) against the actual mockup DOM/CSS — not just plausibly similar — and leaves
+no dead code behind from the table+data-label removal. qa's hardening of
+`static_source_checks.test.ts`'s regex is a legitimate test-quality fix (traced and independently confirmed
+sound, not a workaround) that keeps the same currency-absence property enforced, now more robustly. Two new
+non-blocking minors logged (REV-149 cosmetic color-token mismatch, REV-150 a pre-existing mockup/spec
+"combined screen" assumption that predates and is out of scope for both INC-13 and INC-14). **INC-14 is
+cleared to merge to `main`** per `CLAUDE.md`'s git-workflow rule (reviewer clears with zero
+blockers/majors).
+
 ## Pass 35 — 2026-07-31 (INC-13 follow-up, narrow re-check of REV-145/146/147)
 
 Scope: tech-lead's fix commit `f67c54c` ("fix REV-145/146/147 - add NavToggle to code-map, accurate §16.10
