@@ -223,6 +223,52 @@ test("holdings_currency_derivation.sql: does not redefine the holdings table or 
   assert.doesNotMatch(sql, /drop policy/i);
 });
 
+// --- REV-151 (Pass 37 review): both new SECURITY DEFINER RPCs must revoke the
+// PUBLIC-default EXECUTE grant before re-granting only to `authenticated`,
+// matching the established pattern (sql/kill_switch.sql:115,
+// sql/scheduler_pgcron.sql:92-93,156, sql/phase5_monitoring.sql:300-303,340) ---
+
+const TICKERS_RPC_SQL = path.join(REPO_ROOT, "sql", "tickers_screen_rpc.sql");
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+test("tickers_screen_rpc.sql: both RPCs have revoke execute from public/anon/authenticated immediately before grant execute to authenticated (REV-151)", () => {
+  const sql = readFileSync(TICKERS_RPC_SQL, "utf8");
+  for (const sig of ["set_ticker_holding_status(text, text, numeric, numeric)", "delete_ticker(text)"]) {
+    const fn = escapeRegex(`public.${sig}`);
+    const re = new RegExp(
+      `revoke execute on function ${fn} from public, anon, authenticated;\\s*\\n` +
+        `grant execute on function ${fn} to authenticated;`
+    );
+    assert.match(sql, re, `missing revoke-before-grant pair for ${sig}`);
+  }
+});
+
+// --- REV-152 (Pass 37 review): a market/type edit made alongside a
+// held->watch-only status change must not be silently discarded when the
+// user confirms the switch -- the confirm path must apply the pending
+// market/type edit before (or alongside) the status-change RPC, not skip it. ---
+
+test("edit modal: held->watch-only confirm path applies any pending market/type edit before the status-change RPC (REV-152 regression guard)", () => {
+  const src = readFileSync(TICKER_EDIT_MODAL, "utf8");
+  const fnMatch = src.match(/async function confirmSwitchToWatchOnly\(\)[\s\S]*?\n  \}/);
+  assert.ok(fnMatch, "confirmSwitchToWatchOnly() not found in TickerEditModal.tsx");
+  const body = fnMatch![0];
+  const editCallIdx = body.indexOf("applyMarketTypeEdit()");
+  const rpcCallIdx = body.indexOf('supabase.rpc("set_ticker_holding_status"');
+  assert.ok(
+    editCallIdx >= 0,
+    "confirmSwitchToWatchOnly() must apply the pending market/type edit (REV-152: it was previously discarded silently)"
+  );
+  assert.ok(rpcCallIdx >= 0, "confirmSwitchToWatchOnly() must still call set_ticker_holding_status");
+  assert.ok(
+    editCallIdx < rpcCallIdx,
+    "market/type edit must be applied before the status-change RPC fires (REV-152 silent data loss)"
+  );
+});
+
 test("holdings_currency_derivation.sql: trigger creation is idempotent -- create or replace, never a bare create trigger (BUG-008 regression guard)", () => {
   const sql = readFileSync(HOLDINGS_CURRENCY_SQL, "utf8");
   // Same defect class as tunables_validate_trigger.sql's BUG-008: a bare `create trigger` errors

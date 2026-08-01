@@ -52,7 +52,9 @@ interface EditForm {
  *    pass the same >0 rule `validateHoldingsRow` already enforces.
  *  - held -> watch-only: Save does NOT write immediately — it reveals an
  *    in-modal confirmation panel naming the ticker and the exact
- *    shares/price about to be discarded; only confirming calls
+ *    shares/price about to be discarded; confirming applies any pending
+ *    market/type edit first (same direct watchlist update as a plain edit,
+ *    so it is never silently discarded) and then calls
  *    `set_ticker_holding_status(p_ticker, 'watch-only')`. Cancelling
  *    reverts `status` to "held" in the still-open form, nothing written.
  *  - Delete: `delete_ticker(p_ticker)`, gated behind its own confirmation.
@@ -105,10 +107,12 @@ export default function TickerEditModal({
     await doSave();
   }
 
-  async function doSave() {
-    setSaving(true);
-    setError(null);
-
+  // Plain field edit — market/type never go through an RPC, regardless of
+  // whether status also changes in this same Save (§16.11.5). Shared by
+  // doSave and confirmSwitchToWatchOnly so a pending market/type edit is
+  // never silently dropped on the held->watch-only confirmation path
+  // (REV-152).
+  async function applyMarketTypeEdit(): Promise<string | null> {
     const watchlistErrors = validateWatchlistRow({
       ticker: ticker.ticker,
       market: form.market,
@@ -116,19 +120,22 @@ export default function TickerEditModal({
       status: form.status,
     });
     if (watchlistErrors.length > 0) {
-      setError(watchlistErrors.join(" "));
-      setSaving(false);
-      return;
+      return watchlistErrors.join(" ");
     }
-
-    // Plain field edit — market/type never go through an RPC, regardless of
-    // whether status also changes in this same Save (§16.11.5).
     const { error: watchlistError } = await supabase
       .from("watchlist")
       .update({ market: form.market, type: form.type })
       .eq("ticker", ticker.ticker);
-    if (watchlistError) {
-      setError(watchlistError.message);
+    return watchlistError ? watchlistError.message : null;
+  }
+
+  async function doSave() {
+    setSaving(true);
+    setError(null);
+
+    const watchlistEditError = await applyMarketTypeEdit();
+    if (watchlistEditError) {
+      setError(watchlistEditError);
       setSaving(false);
       return;
     }
@@ -167,6 +174,14 @@ export default function TickerEditModal({
   async function confirmSwitchToWatchOnly() {
     setSaving(true);
     setError(null);
+
+    const watchlistEditError = await applyMarketTypeEdit();
+    if (watchlistEditError) {
+      setError(watchlistEditError);
+      setSaving(false);
+      return;
+    }
+
     const { error: rpcError } = await supabase.rpc("set_ticker_holding_status", {
       p_ticker: ticker.ticker,
       p_status: "watch-only",

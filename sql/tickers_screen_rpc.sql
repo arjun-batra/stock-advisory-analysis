@@ -50,6 +50,7 @@ begin
   end if;
 end; $$;
 
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
 grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
 
 create or replace function public.delete_ticker(p_ticker text) returns void
@@ -62,6 +63,7 @@ begin
   delete from public.watchlist where ticker = p_ticker;
 end; $$;
 
+revoke execute on function public.delete_ticker(text) from public, anon, authenticated;
 grant execute on function public.delete_ticker(text) to authenticated;
 
 -- Known pre-existing gap, explicitly out of scope for this increment: editing

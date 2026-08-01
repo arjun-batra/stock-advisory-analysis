@@ -2695,3 +2695,132 @@ as pending in `increment-plan.md`) should add `layout.tsx` to INC-15's actual fi
 - The pre-existing gap flagged in `docs/design/admin-portal.md` §16.11.5 (editing a held ticker's `market`
   doesn't re-run `holdings_derive_currency`) is unchanged, not introduced or worsened by this increment —
   carried forward as documented, not fixed here.
+
+# Handoff — INC-15 fix cycle 1: REV-151 (RPC revoke-execute) and REV-152 (silent data loss on combined edit)
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read reviewer's Pass 37 entries (`docs/review-log.md` REV-151/REV-152) and the two named files
+(`sql/tickers_screen_rpc.sql`, `admin-portal/components/TickerEditModal.tsx`). **Approach:** (1) REV-151 —
+add the missing `revoke execute ... from public, anon, authenticated;` line immediately before each of the
+two existing `grant execute ... to authenticated;` lines, copying the exact established pattern verbatim
+from `sql/kill_switch.sql:115` (no rewording, no new revoke target list). (2) REV-152 — extract the
+existing single `supabase.from("watchlist").update({market, type})` call (previously inlined only in
+`doSave()`) into a shared `applyMarketTypeEdit()` helper, and call it from `confirmSwitchToWatchOnly()`
+before firing the `set_ticker_holding_status` RPC, so a pending market/type edit is applied on the
+held->watch-only confirm path instead of being silently dropped. No new call sites, no new tables/RPCs —
+same single `watchlist.update` call, now reachable from two places instead of duplicated. **Files touched:**
+`sql/tickers_screen_rpc.sql`, `admin-portal/components/TickerEditModal.tsx`,
+`tests/admin_portal/static_source_checks.test.ts` (2 new regression tests, added per the review's explicit
+instruction since this gap wasn't covered by any of INC-15's 14 ACs — flagging this crosses into qa's
+`tests/` ownership, done here only because the orchestrator's brief explicitly directed it, same posture as
+the INC-14 `layout.tsx` precedent). **Verify:** full Python + TS suites, a real-browser Playwright script
+against the mocked Supabase network layer proving the combined edit+status-change no longer drops the
+market/type write, and the structural diff-scoped grep re-run against `d6e6ad7` (reviewer's Pass 37 tip).
+
+## What was changed
+
+**REV-151 — `sql/tickers_screen_rpc.sql`:** added
+```
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
+```
+immediately before the existing `grant execute ... to authenticated;` line for `set_ticker_holding_status`,
+and the equivalent revoke line for `delete_ticker(text)` before its grant line. Byte-for-byte matches the
+established pattern (`sql/kill_switch.sql:115`, `sql/scheduler_pgcron.sql:92-93,156`,
+`sql/phase5_monitoring.sql:300-303,340`) — same three-role revoke list, same statement order (revoke, then
+grant), nothing else changed in the file. Not applied to a live database this session (no Supabase
+credentials available, same constraint as every prior `sql/` file — release applies it per the runbook).
+
+**REV-152 — `admin-portal/components/TickerEditModal.tsx`:** extracted the market/type
+`supabase.from("watchlist").update({market, type})` call (previously only invoked inline inside `doSave()`)
+into a new `applyMarketTypeEdit(): Promise<string | null>` helper (validates via the existing
+`validateWatchlistRow`, returns an error string or `null`). `doSave()` now calls this helper instead of
+inlining the same logic. `confirmSwitchToWatchOnly()` — previously only called
+`supabase.rpc("set_ticker_holding_status", { p_status: "watch-only" })` — now calls
+`applyMarketTypeEdit()` first and surfaces any error before calling the RPC, so a market/type edit made in
+the same modal session as a held->watch-only status switch is applied, not silently discarded. Updated the
+component's doc-comment (lines describing the held->watch-only path) to reflect this. No new call sites:
+still exactly one literal `.from("watchlist").update` (now shared by two callers instead of duplicated),
+one `.from("holdings").update`, two `.rpc("set_ticker_holding_status")` call sites (watch-only->held Save,
+held->watch-only confirm — same two call sites qa's INC-15 test-report already traced), one
+`.rpc("delete_ticker")`.
+
+**New regression tests — `tests/admin_portal/static_source_checks.test.ts`** (16 tests in this file now, was
+14; 84 total in the suite, was 82):
+- `tickers_screen_rpc.sql: both RPCs have revoke execute ... immediately before grant execute ... (REV-151)`
+  — asserts the exact revoke-then-grant statement pair for both function signatures.
+- `edit modal: held->watch-only confirm path applies any pending market/type edit before the status-change
+  RPC (REV-152 regression guard)` — extracts `confirmSwitchToWatchOnly()`'s body and asserts
+  `applyMarketTypeEdit()` is called at a lower source index than the `set_ticker_holding_status` RPC call,
+  so a future regression that re-inlines the old (buggy) body without the edit-apply call fails this test.
+
+## Self-verification
+
+**REV-151, line-by-line against `sql/kill_switch.sql`:** `sql/kill_switch.sql:115` reads
+`revoke execute on function public.set_kill_switch(boolean, text) from public, anon, authenticated;`
+immediately before its `grant execute ... to authenticated;` line (`kill_switch_portal_grant.sql:59`).
+`sql/tickers_screen_rpc.sql` now has the identical shape for both new functions — same statement keyword
+order, same three-role list (`public, anon, authenticated`), same placement (immediately before the grant,
+no blank line inserted in between). Confirmed via direct `Read`/`grep -n "revoke execute\|grant execute"
+sql/` — both new revoke lines present, correctly paired.
+
+**REV-152, real-browser Playwright** (session scratchpad, not committed — same posture as every prior
+admin-portal Playwright pass documented earlier in this file): `cd admin-portal && npm run build && npm run
+start -- -p 4173`, Supabase REST + RPC mocked at `context.route()` for `https://ikghqdtlbwifwnooytmm
+.supabase.co/*` (one fixture: `AAPL`, `US`/`stock`/`held`, 10 sh @ 150 USD), a pre-seeded `@supabase/ssr`
+-shaped auth cookie (built via the real installed `stringToBase64URL` codec, same method as prior passes)
+so `AuthGuard` resolves an authenticated/admin session with zero bootstrap round-trip, pre-installed
+Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, no `playwright install` run),
+globally-installed `playwright@1.56.1`. Script: opened the AAPL card's edit modal, changed Market
+US->TSX and Type Stock->ETF, changed Status Held->Watch-only, clicked Save (confirm panel appears),
+clicked Confirm. **10/10 checks passed**, all against the actual network calls captured by the mock
+route handler:
+- exactly one `watchlist` PATCH fired, carrying `market: "TSX"` and `type: "ETF"` (the edited values, not
+  the originals) — this is the exact assertion that would have failed against the pre-fix code, since the
+  old `confirmSwitchToWatchOnly()` fired zero `watchlist` writes.
+- exactly one `set_ticker_holding_status` RPC fired with `p_status: "watch-only"`.
+- the `watchlist` PATCH fired strictly before the RPC call (edit applied, not raced or dropped).
+- no error message rendered, modal closed cleanly after confirm (no crash, no silent no-op).
+Sanity-checked the test's own discriminating power by re-reading the pre-fix `confirmSwitchToWatchOnly()`
+body (no `applyMarketTypeEdit()` call) — it structurally cannot produce a `watchlist` PATCH, so this script
+would have reported 0 `watchlist` update calls and failed the corresponding checks against the reviewer's
+originally-flagged code.
+
+**Full suite re-run, no regression:**
+```
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short                 # 287 passed, 0 failed
+node --experimental-strip-types --test tests/admin_portal/*.test.ts      # 84 passed, 0 failed (was 82; +2 new)
+cd admin-portal && npm run build && npm run lint                          # builds clean, 7 routes, zero lint errors/warnings
+```
+
+**Structural no-regression grep, re-scoped to this fix cycle's own diff** (per the brief's step 5 — traces
+call sites, not a literal zero-match grep):
+```
+git diff -U0 d6e6ad7..HEAD -- admin-portal/ sql/ \
+  | grep -E "supabase\.|validateHoldingsRow|validateTunableValue|validateWatchlistRow|is_admin|set_kill_switch|\.rpc\(|createClient|revoke execute|grant execute"
+```
+Returns only the two new `revoke execute` lines (REV-151) — zero other matches, confirming the TSX fix
+introduces no new call site at all (it only relocates the existing single `watchlist.update` call into a
+shared helper called from two places, which a diff of unchanged call-site *lines* doesn't re-flag since
+the call itself moved rather than being duplicated). Directly counted call sites in the final file
+(`grep -n '\.from("watchlist")\|\.rpc(\|\.from("holdings")' TickerEditModal.tsx`): one `watchlist.update`,
+one `holdings.update`, two `set_ticker_holding_status` RPC calls, one `delete_ticker` RPC call — identical
+counts to qa's INC-15 test-report trace, confirming nothing beyond the two named RPCs plus legitimate
+carried-over CRUD was introduced.
+
+**Note on this session's git state:** this session's Edit-tool checkpointing auto-committed the fix
+mid-session under a synthesized message (`dev: fix REV-151 (RPC revoke-execute) and REV-152 (silent data
+loss on combined edit)`) before I ran my own `git commit`. Verified the auto-committed diff was
+byte-for-byte identical to the intended fix (confirmed via `git show <sha> -- admin-portal/
+components/TickerEditModal.tsx sql/tickers_screen_rpc.sql`), then amended only the commit message to the
+exact wording specified in this fix cycle's brief — no content change from the amend, since the underlying
+diff was already correct and this was the first (uncommitted-by-me) commit at the tip of this branch, not a
+prior handoff's history.
+
+## Known limitations
+
+- Same as INC-15's original handoff: `sql/tickers_screen_rpc.sql` (including these two revoke lines) is not
+  yet applied to a live database this session — release applies it per the runbook.
+- The new `tests/admin_portal/static_source_checks.test.ts` regression tests are structural (source-level),
+  not a rendered-DOM/network-level test — the real-browser Playwright verification above is the
+  network-level proof; the committed test is the permanent regression guard qa/reviewer asked for.
