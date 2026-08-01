@@ -2501,3 +2501,326 @@ code; this is an environment quirk of this session, not a project concern.
 - `tests/admin_portal/static_source_checks.test.ts`'s insert/update-payload-shape regex is fragile to
   unrelated function-declaration ordering (see `holdings/page.tsx` note above) — flagged for qa as a test
   hygiene item, not fixed directly (dev doesn't own `tests/`).
+
+# Handoff — INC-15: merge Tickers screen, fix nav bug, add horizontal-scroll tier (FR36/FR37/FR38)
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read `docs/design/increment-plan.md`'s INC-15 section (14 finalized ACs), `docs/design/admin-portal.md`
+§16.11 (all six subsections), `docs/ux-spec.md` §11, `docs/ux-mockups/direction-g-tickers-merge.html`
+(canonical markup/class names), `docs/requirements.md` FR36-FR38/amended FR28/FR29/NFR8/Decision #40, and
+the current `NavToggle.tsx`/`AuthGuard.tsx`/`watchlist`+`holdings` pages/`globals.css`. **Approach:** (1)
+nav fix — Option A (flatten the DOM): `NavToggle` now renders its `children` (bare `<a>` elements, no
+wrapping `<nav>`) twice, once inside `.nav-strip` (>=640px, `display:flex;flex-direction:row;
+overflow-x:auto`) and once inside `.nav-panel-mobile` (<640px, unchanged hamburger dropdown) — both always
+in the DOM, CSS `display` alone switches which is visible; sign-out moves out of the nav entirely into
+`.app-header-right`, persistently visible. (2) Tickers screen — new `app/(app)/tickers/page.tsx` reading
+`watchlist`+`holdings`+`latest_call_per_ticker` (3 parallel reads, no schema change) and merging
+client-side into one `TickerRow` view-model per ticker; `.tickers-list` is a flex column (not a grid) at
+every breakpoint, one card per row; whole card is the click target opening `TickerEditModal` (new, the one
+permitted new component). (3) FR37 — the modal's Save handler blocks on `validateHoldingsRow`'s existing
+`>0` rule when `status==='held'`; a `held->watch-only` status change intercepts the Save click and shows an
+in-modal `.confirm-panel` instead of writing, only confirming calls the RPC. (4) New
+`sql/tickers_screen_rpc.sql` — `set_ticker_holding_status`/`delete_ticker`, copied verbatim from the
+design's finalized SQL (`SECURITY DEFINER`, `is_admin()`-gated, `grant execute to authenticated` only).
+Plain market/type/shares/cost_basis edits that don't change status stay direct
+`supabase.from(...).update(...)` calls, never routed through the new RPCs. (5) FR38 — `layout.tsx`
+metadata title + `AuthGuard.tsx`'s header brand string, per the orchestrator's explicit brief (flagged
+below: the design doc's own §16.11.6/increment-plan.md allow-lists omit `layout.tsx`, a doc-hygiene gap —
+proceeded per the orchestrator's explicit FR38 instruction rather than escalating, since it's a one-line
+metadata string with zero business logic). **Verify:** full existing test suite (Python + `tests/
+admin_portal/*.test.ts`), real Playwright against a real `next start` build at 375/768/1280px with the
+Supabase network layer mocked (REST + RPC + a pre-seeded `@supabase/ssr` auth cookie so `checkAuthorization`
+resolves without a live project), exercising all 14 finalized ACs, and the structural grep rule.
+
+## What was built
+
+**Files changed** (matches the allow-list exactly, confirmed via `git diff --name-only main --
+admin-portal/ sql/`):
+- `admin-portal/components/NavToggle.tsx` — rewritten. Renders `children` (bare `<a>` links) as the direct
+  flex children of `.nav-strip` (>=640px) and `.nav-panel-mobile` (<640px) instead of one extra `<nav>`
+  wrapper breaking `.nav-panel`'s `flex-direction` (the exact root cause diagnosed in
+  `docs/design/admin-portal.md` §16.11.1).
+- `admin-portal/components/AuthGuard.tsx` — nav content is now `Tickers`/`Tunables`/`Track record` (was
+  `Watchlist`/`Holdings`/`Tunables`/`Track record`); `SignOutButton` moved out of the nav into
+  `.app-header-right` alongside `KillSwitchToggle`; header brand string is now "Sentinel Portal" (FR38).
+- `admin-portal/app/globals.css` — replaced the `.nav-panel`/`.nav-toggle-wrap` mechanism with
+  `.nav-strip-wrap`/`.nav-strip`/`.nav-toggle-btn`/`.nav-panel-mobile` (§16.11.2's breakpoint: burger hides
+  starting 640px, not 1024px); removed dead CSS only ever used by the deleted watchlist/holdings pages
+  (`.card-grid`, `.ticker-card`, `.icon-btn`, `.fab`, `.toolbar-add-btn`); added `.tickers-list`/
+  `.ticker-row-card`/`.holding-line`/`.verdict-row`/`.cold-start-note`/`.search`, and modal additions
+  (`.modal-subhead`, `.new-fields`/`.new-fields-note`, `.confirm-panel`, `.field .error`, `.field label
+  .req`, `button.danger`); reused `.pill`/`.verdict-pill`/`.modal-overlay`/`.form-modal`/`.field` verbatim
+  (no new tokens beyond Direction G's existing set).
+- `admin-portal/app/(app)/tickers/page.tsx` (new) — the merged Tickers screen. Three parallel reads
+  (`watchlist`, `holdings`, `latest_call_per_ticker`), client-side join into `TickerRow[]`, one flex-column
+  card per ticker, client-side search filter, "+ Add ticker" (creates `status='watch-only'` only, no status
+  field offered), click-to-modal.
+- `admin-portal/components/TickerEditModal.tsx` (new, the one permitted modal component) — combined
+  market/type/status/shares/price-per-share form + delete. Routes market/type edits and plain
+  shares/cost_basis edits (status unchanged) through direct `supabase.from(...).update(...)` calls; routes
+  only a `status` transition through `set_ticker_holding_status`, and delete through `delete_ticker`.
+- `admin-portal/app/layout.tsx` — title metadata "Stock Advisory — Sentinel Portal" (FR38).
+- `sql/tickers_screen_rpc.sql` (new) — `set_ticker_holding_status`/`delete_ticker`, copied verbatim from
+  `docs/design/admin-portal.md` §16.11.5. **Not applied live** — no Supabase MCP/DB credentials available
+  in this session; release applies it the same way every prior `sql/` file in this project has been applied
+  (per the runbook's admin-portal deploy section).
+- Deleted `admin-portal/app/(app)/watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx`.
+
+## How to run it
+
+`cd admin-portal && npm run dev` (needs `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` in
+`.env.local`, same as every prior increment). New route: `/tickers` (replaces `/watchlist` and
+`/holdings`, both now 404). `sql/tickers_screen_rpc.sql` must be applied to the live Supabase project
+before the modal's watch-only<->held transitions or delete will work against real data.
+
+## Self-verification evidence per AC (`docs/design/increment-plan.md` INC-15, 14 finalized ACs)
+
+Real Playwright (pre-installed Chromium, `/opt/pw-browsers`) against a real `next start` build (marker env
+vars, same pattern as `tests/admin_portal/build_bundle.test.ts`), with the Supabase network layer mocked at
+`context.route()` (REST reads/writes + the two new RPCs, an in-memory fixture store) and a real
+`@supabase/ssr`-shaped auth cookie pre-seeded (`sb-<project-ref>-auth-token`, base64url-encoded JSON
+session) so `checkAuthorization()` resolves "authorized" without a live project. Full script output: 54/54
+assertions passed across all three viewports (375/768/1280px). Per-AC:
+1. PASS — `.nav-strip a` all share the same `getBoundingClientRect().top` at both 768px and 1280px (3
+   links, one row each).
+2. PASS — at 768px, `.nav-strip`'s computed `overflow-x` is `auto` and `.nav-toggle-btn` is not visible.
+3. PASS — at 375px, burger is visible/reachable, opens `.nav-panel-mobile` showing the same 3 links as
+   `.nav-strip`; `.nav-strip-wrap` is hidden.
+4. PASS — at 375/768/1280px alike: every `.ticker-row-card` is full container width (no side-by-side
+   placement) and each card's `top` is strictly greater than the previous card's `bottom` (flex-column
+   mechanism, matches the approved mockup exactly, not CSS Grid); exactly 5 cards render (5 watchlist rows).
+5. PASS — AAPL (held) card shows market/type-pill/status-pill, `10 sh`/`150` price-per-share line,
+   `Buy` verdict pill, `Confidence: high` as plain text, and the rationale text. MSFT (watch-only) omits the
+   holding-line entirely. RELIANCE (cold-start, no `latest_call_per_ticker` row) shows the italic
+   "No checks logged yet..." note and no fabricated verdict/confidence text.
+6. PASS — clicking a card opens the modal with the ticker as heading, `market · type` subhead, and the
+   pre-filled `status` select (no separate read-only status text); confirmed the modal does **not** restate
+   the card's verdict/rationale block.
+7. PASS — watch-only (MSFT) -> held: shares/price fields hidden until `status` is switched to held; Save
+   disabled with empty fields and with `0`/`0` (inline error shown); Save enables once both are valid;
+   Save calls `set_ticker_holding_status('MSFT','held',20,410)`; a subsequent read shows
+   `watchlist.status='held'` **and** a `holdings` row exists (both facts asserted together).
+8. PASS — held (AAPL) -> watch-only: Save stays enabled immediately after selecting watch-only (unlike
+   AC7's block); clicking Save reveals `.confirm-panel` naming AAPL and the exact `10 sh`/`150` about to be
+   discarded, without writing anything yet; Cancel reverts the select to `held` and confirms nothing was
+   written (still held, holdings row still present); confirming calls
+   `set_ticker_holding_status('AAPL','watch-only')` and a subsequent read shows `watchlist.status=
+   'watch-only'` **and** no `holdings` row (both facts).
+9. PASS — deleting MSFT (watch-only, no holdings row) removes its watchlist row; deleting AAPL (held)
+   removes both its watchlist row and its holdings row.
+10. PASS — editing `type` on a watch-only ticker (MSFT) writes with **zero** `.rpc(` calls recorded (direct
+    `watchlist` update only) and the edit actually lands.
+11. PASS — exactly 3 links in `.nav-strip`/`.nav-panel-mobile` (`Tickers`/`Tunables`/`Track record`); Sign
+    out renders and is visible in `.app-header-right` at 375px (not hidden behind the burger).
+12. PASS — "+ Add ticker" creates a row with `status='watch-only'` and no `holdings` row, zero `.rpc(`
+    calls; the search input filters the rendered list to 1 matching card with **zero** additional network
+    requests recorded during the filter.
+13. Structural enforcement — see the dedicated section below (`git diff --name-only` file-list check +
+    content grep).
+14. `tests/admin_portal/*.test.ts`: 79/82 pass; the 3 failures are pre-existing test assumptions about
+    `holdings/page.tsx`'s literal path, flagged for qa below (not fixed by dev, per the brief). Manually
+    re-ran the INC-13/14 regression checklist (no-scroll/pill/modal) on tunables, track-record, and login at
+    375/768/1280px via the same Playwright harness — all render unchanged (only the shared header/nav
+    markup changed, confirmed by direct inspection of each page's own content).
+
+**Additional manual spot-checks:** `<title>` reads "Stock Advisory — Sentinel Portal" and
+`.app-header-brand` reads "Sentinel Portal" (FR38) — confirmed via a direct Playwright navigation +
+`page.title()`/`textContent()` check, separate from the main 54-assertion script.
+
+## Structural grep result (self-checked per the brief)
+
+`git diff --name-only main -- admin-portal/ sql/` returns exactly the 9 allow-listed files/deletions
+(`NavToggle.tsx`, `AuthGuard.tsx`, `globals.css`, `layout.tsx`, new `tickers/page.tsx`, new
+`TickerEditModal.tsx`, deleted `watchlist/page.tsx`+`holdings/page.tsx`, new `tickers_screen_rpc.sql`) —
+zero files outside scope.
+
+The content grep (`git diff main -- admin-portal/ sql/ | grep -E "supabase\.|validateHoldingsRow|
+validateTunableValue|is_admin|set_kill_switch|\.rpc\("`) does produce matches beyond the three literal
+exception categories named in the AC text — but every one of them is the ordinary, explicitly-sanctioned
+direct-CRUD pattern §16.11.5 itself requires ("Plain field edits ... remain direct
+`supabase.from(...).update(...)` calls ... exactly as today"), not a scope escalation. Breaking down every
+match found:
+- `is_admin()` — appears only inside `sql/tickers_screen_rpc.sql`'s two new functions. Matches the named
+  exception exactly.
+- `.rpc(` — appears only at 4 call sites, all `set_ticker_holding_status`/`delete_ticker` (the two named
+  RPCs). Zero other RPC names anywhere in the diff.
+- `set_kill_switch` — appears only in doc-comment prose (citing it as the precedent pattern this design
+  follows); zero literal calls. **No kill-switch touch.**
+- `validateTunableValue` — zero matches anywhere. **No tunables-validation touch.**
+- `validateHoldingsRow` — one import + one call site in `TickerEditModal.tsx` (the same validator the old,
+  now-deleted `holdings/page.tsx` used, carried over into the merged modal) + the old file's now-deleted
+  usage (`-` lines). Matches the named "carried-over" exception.
+- `supabase.`/`createClient` (the bulk of the remaining matches) — ordinary `supabase.from("watchlist"|
+  "holdings"|"latest_call_per_ticker").select/insert/update(...)` reads/writes in the new `tickers/page.tsx`
+  and `TickerEditModal.tsx`, i.e. exactly the CRUD surface a merged Tickers screen structurally needs and
+  §16.11.5 explicitly says must stay direct (not routed through an RPC). None of these touch `kill_switch`,
+  tunables validation, or introduce a third RPC — the three concrete "blocker" examples the AC text itself
+  names.
+
+**Flagging this interpretation explicitly, not silently:** the grep pattern as literally written (`supabase
+\.|...|createClient`, no anchoring to `.rpc(`) would flag *every* ordinary Supabase call in any brand-new
+file, which is unavoidable for a screen that must read/write `watchlist`/`holdings`/
+`latest_call_per_ticker` directly — an internal tension with §16.11.5's own text two paragraphs earlier,
+which mandates those same direct calls. Read literally-and-completely, the check as worded cannot pass for
+any working implementation of this increment's own design. I've treated the check's substantive intent
+(no new RPC/`is_admin`/`set_kill_switch`/tunables-validation logic beyond the two named RPCs) as the bar,
+consistent with the AC text's own "blocker" examples, and self-reported the full breakdown above rather
+than asserting a bare "zero matches." Flagging for tech-lead/reviewer to confirm this reading or tighten the
+grep pattern (e.g. anchor to `\.rpc\(` only) for future increments.
+
+**Doc-hygiene gap flagged for tech-lead:** `docs/design/admin-portal.md` §16.11.6 and
+`docs/design/increment-plan.md`'s INC-15 allow-lists both omit `admin-portal/app/layout.tsx`, even though
+the same documents' own FR38 coverage line and the orchestrator's brief both explicitly assign the
+`<title>` rename to this increment. Proceeded per the orchestrator's explicit instruction (a one-line
+metadata string, zero business logic) rather than escalating; `docs/code-map.md`'s refresh (already flagged
+as pending in `increment-plan.md`) should add `layout.tsx` to INC-15's actual file list when it updates the
+`watchlist|holdings` -> `tickers` route inventory.
+
+## Known limitations / flagged for qa
+
+- **`tests/admin_portal/static_source_checks.test.ts` has 3 failing tests** (`HOLDINGS_PAGE` constant
+  points at `admin-portal/app/(app)/holdings/page.tsx`, which INC-15 deletes per design): "holdings page: no
+  currency <select>/<input>...", "holdings page: insert()/update() payloads never send `currency`...", and
+  "holdings page: displays a read-only derived currency...". These tests exercised real, still-live
+  behavior (INC-10's currency-derivation UI contract) against a file that no longer exists — the underlying
+  behavior itself is preserved (`TickerEditModal.tsx` still shows the read-only derived-currency chip and
+  never sends `currency` in a write payload, confirmed manually and by AC7's evidence above showing
+  `set_ticker_holding_status`'s call args have no `currency` key), but the tests need to be repointed at
+  `tickers/page.tsx`/`TickerEditModal.tsx` — qa's territory per `tests/`, not edited by dev.
+- No live Supabase project access this session (same constraint as every prior increment) — `sql/
+  tickers_screen_rpc.sql` is new SQL, not yet applied; the RPC contract is exercised only against the mock
+  fixture above, not a real Postgres function. Live application + a live round-trip check belongs in a
+  release/qa pass, same pattern as every prior `sql/*.sql` file in this project.
+- The pre-existing gap flagged in `docs/design/admin-portal.md` §16.11.5 (editing a held ticker's `market`
+  doesn't re-run `holdings_derive_currency`) is unchanged, not introduced or worsened by this increment —
+  carried forward as documented, not fixed here.
+
+# Handoff — INC-15 fix cycle 1: REV-151 (RPC revoke-execute) and REV-152 (silent data loss on combined edit)
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read reviewer's Pass 37 entries (`docs/review-log.md` REV-151/REV-152) and the two named files
+(`sql/tickers_screen_rpc.sql`, `admin-portal/components/TickerEditModal.tsx`). **Approach:** (1) REV-151 —
+add the missing `revoke execute ... from public, anon, authenticated;` line immediately before each of the
+two existing `grant execute ... to authenticated;` lines, copying the exact established pattern verbatim
+from `sql/kill_switch.sql:115` (no rewording, no new revoke target list). (2) REV-152 — extract the
+existing single `supabase.from("watchlist").update({market, type})` call (previously inlined only in
+`doSave()`) into a shared `applyMarketTypeEdit()` helper, and call it from `confirmSwitchToWatchOnly()`
+before firing the `set_ticker_holding_status` RPC, so a pending market/type edit is applied on the
+held->watch-only confirm path instead of being silently dropped. No new call sites, no new tables/RPCs —
+same single `watchlist.update` call, now reachable from two places instead of duplicated. **Files touched:**
+`sql/tickers_screen_rpc.sql`, `admin-portal/components/TickerEditModal.tsx`,
+`tests/admin_portal/static_source_checks.test.ts` (2 new regression tests, added per the review's explicit
+instruction since this gap wasn't covered by any of INC-15's 14 ACs — flagging this crosses into qa's
+`tests/` ownership, done here only because the orchestrator's brief explicitly directed it, same posture as
+the INC-14 `layout.tsx` precedent). **Verify:** full Python + TS suites, a real-browser Playwright script
+against the mocked Supabase network layer proving the combined edit+status-change no longer drops the
+market/type write, and the structural diff-scoped grep re-run against `d6e6ad7` (reviewer's Pass 37 tip).
+
+## What was changed
+
+**REV-151 — `sql/tickers_screen_rpc.sql`:** added
+```
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
+```
+immediately before the existing `grant execute ... to authenticated;` line for `set_ticker_holding_status`,
+and the equivalent revoke line for `delete_ticker(text)` before its grant line. Byte-for-byte matches the
+established pattern (`sql/kill_switch.sql:115`, `sql/scheduler_pgcron.sql:92-93,156`,
+`sql/phase5_monitoring.sql:300-303,340`) — same three-role revoke list, same statement order (revoke, then
+grant), nothing else changed in the file. Not applied to a live database this session (no Supabase
+credentials available, same constraint as every prior `sql/` file — release applies it per the runbook).
+
+**REV-152 — `admin-portal/components/TickerEditModal.tsx`:** extracted the market/type
+`supabase.from("watchlist").update({market, type})` call (previously only invoked inline inside `doSave()`)
+into a new `applyMarketTypeEdit(): Promise<string | null>` helper (validates via the existing
+`validateWatchlistRow`, returns an error string or `null`). `doSave()` now calls this helper instead of
+inlining the same logic. `confirmSwitchToWatchOnly()` — previously only called
+`supabase.rpc("set_ticker_holding_status", { p_status: "watch-only" })` — now calls
+`applyMarketTypeEdit()` first and surfaces any error before calling the RPC, so a market/type edit made in
+the same modal session as a held->watch-only status switch is applied, not silently discarded. Updated the
+component's doc-comment (lines describing the held->watch-only path) to reflect this. No new call sites:
+still exactly one literal `.from("watchlist").update` (now shared by two callers instead of duplicated),
+one `.from("holdings").update`, two `.rpc("set_ticker_holding_status")` call sites (watch-only->held Save,
+held->watch-only confirm — same two call sites qa's INC-15 test-report already traced), one
+`.rpc("delete_ticker")`.
+
+**New regression tests — `tests/admin_portal/static_source_checks.test.ts`** (16 tests in this file now, was
+14; 84 total in the suite, was 82):
+- `tickers_screen_rpc.sql: both RPCs have revoke execute ... immediately before grant execute ... (REV-151)`
+  — asserts the exact revoke-then-grant statement pair for both function signatures.
+- `edit modal: held->watch-only confirm path applies any pending market/type edit before the status-change
+  RPC (REV-152 regression guard)` — extracts `confirmSwitchToWatchOnly()`'s body and asserts
+  `applyMarketTypeEdit()` is called at a lower source index than the `set_ticker_holding_status` RPC call,
+  so a future regression that re-inlines the old (buggy) body without the edit-apply call fails this test.
+
+## Self-verification
+
+**REV-151, line-by-line against `sql/kill_switch.sql`:** `sql/kill_switch.sql:115` reads
+`revoke execute on function public.set_kill_switch(boolean, text) from public, anon, authenticated;`
+immediately before its `grant execute ... to authenticated;` line (`kill_switch_portal_grant.sql:59`).
+`sql/tickers_screen_rpc.sql` now has the identical shape for both new functions — same statement keyword
+order, same three-role list (`public, anon, authenticated`), same placement (immediately before the grant,
+no blank line inserted in between). Confirmed via direct `Read`/`grep -n "revoke execute\|grant execute"
+sql/` — both new revoke lines present, correctly paired.
+
+**REV-152, real-browser Playwright** (session scratchpad, not committed — same posture as every prior
+admin-portal Playwright pass documented earlier in this file): `cd admin-portal && npm run build && npm run
+start -- -p 4173`, Supabase REST + RPC mocked at `context.route()` for `https://ikghqdtlbwifwnooytmm
+.supabase.co/*` (one fixture: `AAPL`, `US`/`stock`/`held`, 10 sh @ 150 USD), a pre-seeded `@supabase/ssr`
+-shaped auth cookie (built via the real installed `stringToBase64URL` codec, same method as prior passes)
+so `AuthGuard` resolves an authenticated/admin session with zero bootstrap round-trip, pre-installed
+Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, no `playwright install` run),
+globally-installed `playwright@1.56.1`. Script: opened the AAPL card's edit modal, changed Market
+US->TSX and Type Stock->ETF, changed Status Held->Watch-only, clicked Save (confirm panel appears),
+clicked Confirm. **10/10 checks passed**, all against the actual network calls captured by the mock
+route handler:
+- exactly one `watchlist` PATCH fired, carrying `market: "TSX"` and `type: "ETF"` (the edited values, not
+  the originals) — this is the exact assertion that would have failed against the pre-fix code, since the
+  old `confirmSwitchToWatchOnly()` fired zero `watchlist` writes.
+- exactly one `set_ticker_holding_status` RPC fired with `p_status: "watch-only"`.
+- the `watchlist` PATCH fired strictly before the RPC call (edit applied, not raced or dropped).
+- no error message rendered, modal closed cleanly after confirm (no crash, no silent no-op).
+Sanity-checked the test's own discriminating power by re-reading the pre-fix `confirmSwitchToWatchOnly()`
+body (no `applyMarketTypeEdit()` call) — it structurally cannot produce a `watchlist` PATCH, so this script
+would have reported 0 `watchlist` update calls and failed the corresponding checks against the reviewer's
+originally-flagged code.
+
+**Full suite re-run, no regression:**
+```
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short                 # 287 passed, 0 failed
+node --experimental-strip-types --test tests/admin_portal/*.test.ts      # 84 passed, 0 failed (was 82; +2 new)
+cd admin-portal && npm run build && npm run lint                          # builds clean, 7 routes, zero lint errors/warnings
+```
+
+**Structural no-regression grep, re-scoped to this fix cycle's own diff** (per the brief's step 5 — traces
+call sites, not a literal zero-match grep):
+```
+git diff -U0 d6e6ad7..HEAD -- admin-portal/ sql/ \
+  | grep -E "supabase\.|validateHoldingsRow|validateTunableValue|validateWatchlistRow|is_admin|set_kill_switch|\.rpc\(|createClient|revoke execute|grant execute"
+```
+Returns only the two new `revoke execute` lines (REV-151) — zero other matches, confirming the TSX fix
+introduces no new call site at all (it only relocates the existing single `watchlist.update` call into a
+shared helper called from two places, which a diff of unchanged call-site *lines* doesn't re-flag since
+the call itself moved rather than being duplicated). Directly counted call sites in the final file
+(`grep -n '\.from("watchlist")\|\.rpc(\|\.from("holdings")' TickerEditModal.tsx`): one `watchlist.update`,
+one `holdings.update`, two `set_ticker_holding_status` RPC calls, one `delete_ticker` RPC call — identical
+counts to qa's INC-15 test-report trace, confirming nothing beyond the two named RPCs plus legitimate
+carried-over CRUD was introduced.
+
+**Note on this session's git state:** this session's Edit-tool checkpointing auto-committed the fix
+mid-session under a synthesized message (`dev: fix REV-151 (RPC revoke-execute) and REV-152 (silent data
+loss on combined edit)`) before I ran my own `git commit`. Verified the auto-committed diff was
+byte-for-byte identical to the intended fix (confirmed via `git show <sha> -- admin-portal/
+components/TickerEditModal.tsx sql/tickers_screen_rpc.sql`), then amended only the commit message to the
+exact wording specified in this fix cycle's brief — no content change from the amend, since the underlying
+diff was already correct and this was the first (uncommitted-by-me) commit at the tip of this branch, not a
+prior handoff's history.
+
+## Known limitations
+
+- Same as INC-15's original handoff: `sql/tickers_screen_rpc.sql` (including these two revoke lines) is not
+  yet applied to a live database this session — release applies it per the runbook.
+- The new `tests/admin_portal/static_source_checks.test.ts` regression tests are structural (source-level),
+  not a rendered-DOM/network-level test — the real-browser Playwright verification above is the
+  network-level proof; the committed test is the permanent regression guard qa/reviewer asked for.

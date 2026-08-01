@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+// FR38 (Decision #40): "Admin Portal" -> "Sentinel Portal" rebrand — a string
+// swap only, no layout/token/component change follows from it.
 export const metadata: Metadata = {
-  title: "Stock Advisory — Admin Portal",
-  description: "Operational back-office: watchlist and holdings management.",
+  title: "Stock Advisory — Sentinel Portal",
+  description: "Operational back-office: ticker (watchlist + holdings) management.",
 };
 
 // INC-13 (NFR8): explicit device-width viewport so phone/tablet breakpoints

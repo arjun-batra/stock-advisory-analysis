@@ -5,150 +5,117 @@ file holds only the latest run and open bugs.
 
 ---
 
-## INC-14 — Admin portal visual fidelity fix (NFR8 conformance, corrects INC-13) — 2026-08-01
+## INC-15 fix cycle 1 — REV-151/REV-152 re-verification — 2026-08-01
 
-**Scope.** Branch `inc-14-admin-portal-visual-fidelity-fix` (`main`@`da50ed8` + commits `5882026`,
-`3ffe56f`). Files touched: `admin-portal/app/globals.css`, `admin-portal/app/(app)/watchlist/page.tsx`,
-`admin-portal/app/(app)/holdings/page.tsx` (+ `docs/handoff.md`). Verified independently against
-`docs/design/increment-plan.md`'s INC-14 AC1–AC6 — did not take dev's reported 60/60 count on trust; ran a
-fresh, independently-authored real-browser Playwright pass (mocked Supabase network, real
-`next build && next start` on port 4174, pre-installed Chromium `/opt/pw-browsers/chromium-1194`, a
-globally-installed `playwright` driver — no `playwright install` run).
+**Scope.** Branch `inc-15-tickers-merge-nav-fix`, dev's fix commit `d9702aa` (on top of reviewer's Pass 37
+tip `d6e6ad7`). Files touched this cycle: `sql/tickers_screen_rpc.sql`,
+`admin-portal/components/TickerEditModal.tsx`, `tests/admin_portal/static_source_checks.test.ts` (2 new
+regression tests, dev-authored per the orchestrator's explicit instruction).
 
-### 1. Real-browser verification (independent of dev's script)
+### REV-151 (SQL missing revoke-execute) — RESOLVED, independently re-verified
 
-Two independent Playwright scripts (session scratchpad, not committed — same posture as prior admin-portal
-browser checks), covering watchlist + holdings at 375/768/1280px, and a supplementary regression pass
-across all 4 authenticated routes (watchlist/holdings/tunables/track-record):
+Read `sql/tickers_screen_rpc.sql` directly (not taken on dev's word) and diffed the pattern against
+`sql/kill_switch.sql:115` byte-for-byte. Both new functions now read:
+```
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
+```
+and the equivalent pair for `delete_ticker(text)` — identical statement order, identical three-role list
+(`public, anon, authenticated`), no blank line inserted, matching `kill_switch.sql:115`'s established shape
+exactly. **RESOLVED.**
 
-- **Pill/badge markup (AC1), watchlist:** exactly 3 `.pill.type`, 1 `.pill.held`, 2 `.pill.watch` rendered
-  (matching 3 mocked rows — 1 held, 2 watch-only) at all 3 widths; market renders in `.mkt` (not a pill,
-  confirmed `background-color: rgba(0,0,0,0)`) — zero raw `data-label="Market"` `<td>` remains. Exact color
-  match to the mockup: `.pill.held` computed `background-color: rgb(220, 252, 231)` (`--color-success-bg`),
-  `.pill.type` computed `rgb(219, 234, 254)` (`--color-info-bg`) — confirmed distinct from each other.
-- **Card elevation (AC3), all 3 widths, both pages:** `.ticker-card` computed `box-shadow` is non-`none`
-  (`rgba(20, 20, 43, 0.08) 0px 1px 2px 0px`) and `background-color: rgb(255, 255, 255)` differs from
-  `document.body`'s `rgb(244, 245, 247)` at 375px, 768px, **and 1280px** — the specific gap INC-13 AC6 left
-  unmeasured (it only re-ran functional checks at all 3 widths, never this computed-style assertion at
-  desktop width). Confirmed measured directly, not assumed.
-- **Modal open/close via real interaction (AC2), both pages, all 3 widths:** clicking the toolbar
-  "+ Add ticker"/"+ Add holding" button (768/1280px) or the `.fab` (375px) opens `.modal-overlay`/
-  `.form-modal` with `role="dialog"`/`aria-modal="true"` and the correct "Add …" heading; clicking
-  `button.secondary` ("Cancel") or clicking the scrim (outside `.form-modal`, verified via a real
-  `page.mouse.click` at a scrim corner, not a CSS-class assertion) closes it without adding a row (row
-  count confirmed unchanged via a post-close DOM read); clicking an edit icon opens the same modal
-  pre-filled (watchlist ticker input = `"AAPL"`; holdings shares input = `"10"`) with an "Edit …" heading.
-  111 checks in the primary script, all passed.
-- **Supplementary regression (INC-13 AC1–AC3 re-check, AC5's explicit instruction):** zero horizontal
-  scroll and zero console errors on all 4 authenticated routes at all 3 widths (12 combinations); 4-item nav
-  reachable at every width; `.card-grid` `grid-template-columns` resolves to 2/3/4 tracks at 375/768/1280px
-  on both watchlist and holdings; `.fab`/`.toolbar-add-btn` visibility is mutually exclusive per band on
-  both pages. 51 checks, all passed.
-- **Total independent browser verification: 162/162 checks passed** (111 + 51), corroborating dev's
-  60/60 claim with a separately-authored script and a fresh session, not a re-run of dev's own script.
+### REV-152 (silent data loss on combined edit+status-switch) — RESOLVED, independently re-verified
 
-### 2. Automated suites
+Read `TickerEditModal.tsx` directly: `applyMarketTypeEdit()` is now a shared helper called from both
+`doSave()` and `confirmSwitchToWatchOnly()`, in that order (edit write, then the
+`set_ticker_holding_status` RPC) — matches dev's account in `docs/handoff.md`'s fix-cycle entry.
 
-- `SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short` → **287 passed, 0 failed.**
-- `node --experimental-strip-types --test tests/admin_portal/*.test.ts` → **82 passed, 0 failed**
-  (after a qa-owned hardening of `static_source_checks.test.ts`, see §3 below — same pass count as before
-  hardening, no assertion intent changed).
-- `cd admin-portal && npm run build && npm run lint` → builds clean, 8 routes, zero lint
-  errors/warnings.
+Wrote an independent real-browser Playwright script from scratch (not a re-run of dev's script) —
+`next build && next start` (port 4174/4175), Supabase REST+RPC mocked at `context.route()` with an
+in-memory fixture store, a `@supabase/ssr`-shaped auth cookie built via the real installed
+`stringToBase64URL` codec, pre-installed Chromium (`/opt/pw-browsers/chromium-1194`), no `playwright
+install` run. Three scenarios, 24 checks, all passed:
+- **Scenario A (combined edit — the exact reported bug)**: AAPL held, changed Market US→TSX, Type
+  Stock→ETF, Status Held→Watch-only, Save, Confirm. 12/12 checks passed: exactly one `watchlist` PATCH
+  fired carrying the EDITED values (`market: "TSX"`, `type: "ETF"`), fired strictly before the single
+  `set_ticker_holding_status` RPC (`p_status: "watch-only"`), no error, modal closed cleanly, and the
+  in-memory store reflects the edited market/type/status plus holdings row removed.
+- **Scenario B (plain-edit-only, status unchanged, held)**: changed Market only, left Status as `held`.
+  6/6 checks passed: exactly one `watchlist` PATCH with the edited value, **zero** RPC calls (confirms the
+  fix didn't introduce an RPC call on the no-status-change path), holdings untouched.
+- **Scenario C (pure-status-switch-only, no field edit, held→watch-only)**: 6/6 checks passed: RPC fires
+  once with `p_status: "watch-only"`, no error, store reflects unchanged market/type (proving no field
+  corruption) and the status flip. Noted (informational, not a failure) that `applyMarketTypeEdit()` now
+  fires unconditionally on this path too, writing back unchanged values — harmless by design, mirrors
+  `doSave()`'s own unconditional pattern, not a functional regression.
 
-### 3. `static_source_checks.test.ts`'s flagged regex — investigated, not waved through
+**Discriminating-power sanity check (own test, not dev's):** re-ran Scenario A's script against the
+pre-fix `TickerEditModal.tsx` (`git show d6e6ad7:...`, temporarily swapped in, rebuilt) — **6/12 checks
+failed** exactly as expected (zero `watchlist` PATCH fired, edited market/type never reached the store),
+confirming the script actually exercises the reported defect rather than trivially passing. Restored the
+fixed file afterward (confirmed byte-identical to the committed version via diff).
 
-Dev flagged the `insert()`/`update()`-payload-shape regex
-(`/\.(insert|update)\(\s*\{?\[?\{?([\s\S]*?)\}\]?\)/g`) as "fragile to unrelated function ordering." Traced
-this directly rather than trusting the characterization:
+**RESOLVED.**
 
-- **Root cause confirmed:** the regex's suffix is `\}\]?\)` — a **mandatory** literal `}` (only the `]` is
-  optional), which must appear with **zero intervening characters** before the closing `)`. The
-  `insert([{...},])` call's own object literal closes as `},\n    ])` (comma + whitespace between `}` and
-  `]`), which never satisfies that suffix — so the lazy capture skips straight past it and keeps scanning
-  until it finds the next place in the file where a literal `}` is immediately followed by (optional `]`
-  then) `)`. That happens to be `setEditForm({...})` inside `openEditModal` (a `})`-shaped call with no gap)
-  — an unrelated function dev deliberately kept positioned between `handleAdd`/`handleUpdate` specifically
-  to keep this incidental match shape intact (documented in dev's own code comment and handoff).
-- **Empirically confirmed fragile, not currently broken:** removing `openEditModal` from between the two
-  write calls in a scratch copy of the file (simulating a future, purely-presentational refactor with zero
-  behavioral change) drops the regex's match count from 2 to 1, which would fail the
-  `assert.ok(writeCalls.length >= 2, ...)` line — even though nothing about the currency-payload contract
-  changed. **Confirmed with dev's actual shipped code (not the scratch copy): the test passes today (14/14
-  in that file)** — INC-14 did not break it; dev's positioning of `openEditModal` (unchanged in intent,
-  preserved from pre-INC-14) keeps the incidental match shape alive.
-- **Verdict: fragile-but-passing, not a failure caused by INC-14.** No bug filed against dev — this is a
-  test-quality issue in a file qa owns. Fixed directly (permitted — qa may fix its own tests): replaced the
-  regex with a paren/bracket/brace-depth-counting extractor
-  (`extractCallArgs`) that finds each call's true matching closing paren regardless of what other code
-  exists elsewhere in the file. Re-ran: 14/14 still passing in `static_source_checks.test.ts`, same
-  assertions, same currency-absence property enforced — now structurally robust to future unrelated
-  refactors instead of accidentally-correct.
+### New regression tests in `tests/admin_portal/static_source_checks.test.ts` — meaningful, verified independently
 
-### 4. Structural no-regression grep (AC4)
+Confirmed both of dev's 2 new tests are genuine regression guards, not tautologies, by checking them against
+`d6e6ad7` (pre-fix) content directly:
+- `tickers_screen_rpc.sql: both RPCs have revoke execute ... (REV-151)` — regex requires the revoke line
+  immediately before each grant line; against `d6e6ad7`'s SQL (no revoke lines at all) this fails.
+- `edit modal: held->watch-only confirm path applies any pending market/type edit ... (REV-152)` — extracts
+  `confirmSwitchToWatchOnly()`'s body and asserts `applyMarketTypeEdit()` appears at a lower index than the
+  RPC call; against `d6e6ad7`'s version (no `applyMarketTypeEdit()` call exists in that function at all)
+  this fails on the `assert.ok(editCallIdx >= 0, ...)` line.
+
+Both tests fail against the exact pre-fix code they guard against and pass against the fix — meaningful.
+
+### Automated suites — full re-run
 
 ```
-git diff -U0 main..inc-14-admin-portal-visual-fidelity-fix -- admin-portal/ \
-  | grep -E "supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short                 # 287 passed, 0 failed
+node --experimental-strip-types --test tests/admin_portal/*.test.ts      # 84 passed, 0 failed (was 82; +2 new)
+cd admin-portal && npm run build && npm run lint                          # 7 routes, clean build, zero lint errors/warnings
 ```
-**Zero matches** (exit 1) — confirmed independently. Note: a default-context (`-U0` omitted) grep pass
-first turned up one apparent hit (`const supabase = createClient();`), but that line carries a leading
-space in the diff — i.e. unmodified **context**, not an added/removed line. Re-running with `-U0` (zero
-context, the exact form the brief specifies and dev used) returns genuinely zero matches. `git diff
---name-only main..inc-14-admin-portal-visual-fidelity-fix` shows only `admin-portal/app/globals.css`,
-`admin-portal/app/(app)/watchlist/page.tsx`, `admin-portal/app/(app)/holdings/page.tsx`, and
-`docs/handoff.md` — matches the increment's allow-list exactly.
+Both counts match the expected baseline exactly (287 Python, 84 TypeScript = 82 + 2 new).
 
-### 5. Scope boundary (AC6)
+### Structural no-regression check — re-run against the FULL branch diff (`main..inc-15-tickers-merge-nav-fix`)
 
-`git diff --name-only main..inc-14-admin-portal-visual-fidelity-fix -- 'admin-portal/app/(app)/tunables/*'
-'admin-portal/app/(app)/track-record/*'` returns **empty** — confirmed tunables and track-record are
-untouched by this diff. Supplementary browser pass (§1) also directly re-confirmed both those screens still
-render with no regression (no horizontal scroll, 4-item nav, zero console errors) at all 3 widths, even
-though INC-14's own scope never claims to have changed them.
+`git diff --name-status main..inc-15-tickers-merge-nav-fix` shows the same file set as qa's original INC-15
+pass (no new files snuck in this fix cycle beyond the 2 named + the test file + docs). Re-ran the
+call-site-tracing content grep (`supabase\.|validateHoldingsRow|validateTunableValue|validateWatchlistRow|
+is_admin|set_kill_switch|\.rpc\(|createClient|revoke execute|grant execute`, `-U0`, full diff not just the
+fix commit) — same matches as qa's original pass (§1 of the archived original entry) plus the two new
+`revoke execute`/`grant execute` line pairs. No new call site, no new RPC, no new validation logic —
+confirms nothing beyond what's already accounted for.
 
-### 6. Open finding — flagged for tech-lead, not filed as a bug against dev
+### Spot-check of original 14 ACs + original 31 supplementary checks — quick re-run (only 2 files changed)
 
-**AC1's literal wording vs. the holdings entity's actual data model.** AC1 says "**Watchlist and holdings**
-cards render... (b) the type value... inside `<span class="pill type">`... (c) the status value... inside
-`<span class="pill held">`/`<span class="pill watch">`." Independently confirmed: the **holdings** page
-renders `.mkt` correctly but renders **zero** `.pill.type`/`.pill.held`/`.pill.watch` elements — only the
-**watchlist** page shows those three pill classes. Investigated before flagging:
-- The `holdings` table (`sql/schema.sql`) has no `type` or `status` column — only `ticker`/`shares`/
-  `cost_basis`/`currency`. Those two fields exist only on `watchlist`.
-- The two-page split (`/watchlist` showing type+status, `/holdings` showing shares+cost+currency) predates
-  INC-13/INC-14 entirely — confirmed via `git log` that `holdings/page.tsx`'s `HoldingsRow` interface
-  (no type/status fields) is unchanged back through the INC-10 fix round.
-- `docs/ux-spec.md` §2.2 ("Shared UX contract," describing behavior identical across all directions,
-  claimed unchanged from the functional design) describes "**one combined screen**: a table of watchlist
-  entries; holdings fields... appear inline for rows where `status = held`" — this does **not** match the
-  actual, longstanding two-table/two-page architecture, and appears to be stale/aspirational wording in the
-  designer's spec rather than a description of what INC-5 actually built or what INC-13/14 were ever asked
-  to change (both are explicitly presentation-layer-only, no functional/data-model change permitted).
-- Given the "no functional change" boundary NFR8/INC-13/INC-14 all state explicitly, and that "status" is
-  trivially always "held" for every row that exists in the `holdings` table at all (a status pill there
-  would be redundant, not missing information), dev's interpretation (pills only where the underlying
-  entity has that data) is a defensible reading of a genuinely ambiguous AC — **not** waved through
-  silently, but also not filed as a BUG against dev, since resolving it either way is a
-  tech-lead/documentation call (fix the stale `ux-spec.md` §2.2 wording, or clarify AC1's intent), not a
-  code defect qa can adjudicate unilaterally. Routed to tech-lead for a decision; not blocking this
-  increment's sign-off given the schema/architecture constraints above.
+Since only `sql/tickers_screen_rpc.sql` and `TickerEditModal.tsx` changed this cycle, re-ran only the AC
+paths that share the changed file rather than a full from-scratch redo:
+- **AC7 (watch-only→held)** — 2/2 checks passed: exactly one `set_ticker_holding_status` RPC fires with
+  the correct `p_shares`/`p_cost_basis`, holdings row created, status flips to `held`.
+- **AC9 (delete)** — 2/2 checks passed: exactly one `delete_ticker` RPC fires, both `watchlist` and
+  `holdings` rows removed.
+- **AC8 (held→watch-only) and AC10 (plain field edit, zero RPC calls)** — re-covered directly by Scenarios A
+  and B above (same assertions, stronger since they also probe the combined-edit case AC8's original text
+  never tested).
+- Nav/breakpoint/card-layout/AC1–6/11–14 checks are untouched by this fix cycle's diff (no nav, CSS, or
+  `tickers/page.tsx` changes) — not re-run from scratch; confirmed via `git diff --name-only d6e6ad7..HEAD`
+  that neither file is in this cycle's changed set.
 
-### Verdict — INC-14
+### Verdict — INC-15 fix cycle 1
 
-**PASS.** 287/0 Python, 82/0 TypeScript (one test hardened by qa, same pass count, more robust), admin-portal
-build/lint clean, 162/162 independent real-browser checks (watchlist + holdings + full 4-screen regression)
-at 375/768/1280px, structural no-regression grep zero matches, scope boundary (tunables/track-record)
-confirmed untouched. Zero new bugs filed. One documentation-ambiguity finding routed to tech-lead (§6, not
-blocking).
-
-**Is the live mismatch Arjun reported genuinely fixed?** Yes, based on this independent verification, not
-just dev's self-report: pill/badge markup for type/status now renders with the exact mockup colors
-(confirmed via `getComputedStyle`, not source-reading), market renders as the mockup's plain `.mkt` label
-(not over-built into a pill), the Add/Edit interaction is now a real modal verified via actual clicks
-(open/close/cancel/scrim/pre-fill, not CSS-class presence), and desktop-width (1280px) card elevation is
-directly measured and visually distinct from the page background — the exact three gaps the orchestrator's
-diagnosis named as missing from the merged INC-13 code are now independently confirmed present and working.
+**PASS.** REV-151 and REV-152 both confirmed fixed by independent re-verification (not re-running dev's own
+checks): REV-151 by direct SQL diff against the established pattern, REV-152 by an independently-authored
+24-check Playwright script (plus a discriminating-power sanity check proving the script would have caught
+the original bug) covering the reported combined-edit case and both edge cases (plain-edit-only,
+pure-status-switch-only) — neither edge case broke. Both of dev's new regression tests verified meaningful.
+287/0 Python, 84/0 TypeScript (matches expected 287 + 82+2 exactly). Structural diff re-check against the
+full branch (not just the fix commit) shows nothing new beyond what's already accounted for. Zero new bugs
+filed. **This clears qa's side — recommend routing back to reviewer next**, per the pipeline (reviewer's
+Pass 37 was the source of REV-151/152/153; REV-153 was tech-lead's doc-only fix, out of qa's scope to
+re-verify beyond confirming it doesn't touch `tests/` — not re-checked here).
 
 ---
 
