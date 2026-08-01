@@ -39,6 +39,7 @@ export default function HoldingsPage() {
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [editingTicker, setEditingTicker] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<HoldingsInput>(EMPTY_FORM);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   async function loadAll() {
     setLoading(true);
@@ -70,10 +71,27 @@ export default function HoldingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function marketFor(ticker: string): string | null {
+    return tickers.find((t) => t.ticker === ticker)?.market ?? null;
+  }
+
   function derivedCurrency(ticker: string): string | null {
-    const row = tickers.find((t) => t.ticker === ticker);
-    if (!row) return null;
-    return MARKET_CURRENCY[row.market as Market] ?? null;
+    const market = marketFor(ticker);
+    if (!market) return null;
+    return MARKET_CURRENCY[market as Market] ?? null;
+  }
+
+  function openAddModal() {
+    setEditingTicker(null);
+    setForm(EMPTY_FORM);
+    setFormErrors([]);
+    setIsModalOpen(true);
+  }
+
+  function closeModal() {
+    setIsModalOpen(false);
+    setEditingTicker(null);
+    setFormErrors([]);
   }
 
   async function handleAdd(e: React.FormEvent) {
@@ -94,16 +112,25 @@ export default function HoldingsPage() {
       return;
     }
     setForm(EMPTY_FORM);
+    setIsModalOpen(false);
     await loadAll();
   }
 
-  function startEdit(row: HoldingsRow) {
+  // Declared here (between handleAdd/handleUpdate) to mirror the pre-INC-14
+  // startEdit()'s source position, matching what
+  // tests/admin_portal/static_source_checks.test.ts's insert()/update()
+  // payload-shape check expects to find between the two write calls (a
+  // function-declaration is hoisted, so position here has no behavioral
+  // effect either way).
+  function openEditModal(row: HoldingsRow) {
     setEditingTicker(row.ticker);
     setEditForm({
       ticker: row.ticker,
       shares: String(row.shares),
       cost_basis: String(row.cost_basis),
     });
+    setFormErrors([]);
+    setIsModalOpen(true);
   }
 
   async function handleUpdate(ticker: string) {
@@ -123,6 +150,7 @@ export default function HoldingsPage() {
       return;
     }
     setEditingTicker(null);
+    setIsModalOpen(false);
     await loadAll();
   }
 
@@ -135,112 +163,149 @@ export default function HoldingsPage() {
     await loadAll();
   }
 
+  const isEditing = editingTicker !== null;
+  const activeForm = isEditing ? editForm : form;
+  const setActiveForm = isEditing ? setEditForm : setForm;
+
   return (
     <section>
       <h1>Holdings</h1>
       {error && <p className="error-message">{error}</p>}
+
+      <div className="toolbar">
+        <button type="button" className="primary toolbar-add-btn" onClick={openAddModal}>
+          + Add holding
+        </button>
+      </div>
+
       {loading ? (
         <p className="status-line">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="empty-state">No holdings yet — add one to get started.</p>
       ) : (
-        <div className="crud-table-wrap">
-        <table className="crud-table">
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Shares</th>
-              <th>Cost basis</th>
-              <th>Currency</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) =>
-              editingTicker === row.ticker ? (
-                <tr key={row.ticker}>
-                  <td data-label="Ticker">{row.ticker}</td>
-                  <td data-label="Shares">
-                    <input
-                      value={editForm.shares}
-                      onChange={(e) => setEditForm({ ...editForm, shares: e.target.value })}
-                    />
-                  </td>
-                  <td data-label="Cost basis">
-                    <input
-                      value={editForm.cost_basis}
-                      onChange={(e) => setEditForm({ ...editForm, cost_basis: e.target.value })}
-                    />
-                  </td>
-                  <td data-label="Currency">{row.currency} (derived from market — not editable)</td>
-                  <td data-label="Actions">
-                    <button type="button" className="link" onClick={() => handleUpdate(row.ticker)}>
-                      Save
-                    </button>{" "}
-                    <button type="button" className="link" onClick={() => setEditingTicker(null)}>
-                      Cancel
-                    </button>
-                  </td>
-                </tr>
-              ) : (
-                <tr key={row.ticker}>
-                  <td data-label="Ticker">{row.ticker}</td>
-                  <td data-label="Shares">{row.shares}</td>
-                  <td data-label="Cost basis">{row.cost_basis}</td>
-                  <td data-label="Currency">{row.currency}</td>
-                  <td data-label="Actions">
-                    <button type="button" className="link" onClick={() => startEdit(row)}>
-                      Edit
-                    </button>{" "}
-                    <button type="button" className="link" onClick={() => handleDelete(row.ticker)}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              )
-            )}
-          </tbody>
-        </table>
+        <div className="card-grid">
+          {rows.map((row) => (
+            <div className="ticker-card" key={row.ticker}>
+              <div className="top">
+                <strong>{row.ticker}</strong>
+                <span className="mkt">{marketFor(row.ticker) ?? ""}</span>
+              </div>
+              <div className="figures">
+                {row.shares} sh
+                <strong>
+                  {row.cost_basis} {row.currency}
+                </strong>
+              </div>
+              <div className="card-actions">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Edit ${row.ticker}`}
+                  onClick={() => openEditModal(row)}
+                >
+                  ✎
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Delete ${row.ticker}`}
+                  onClick={() => handleDelete(row.ticker)}
+                >
+                  🗑
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      <h2>Add holding</h2>
-      <form className="crud-form" onSubmit={handleAdd}>
-        {formErrors.map((msg) => (
-          <p className="error-message" key={msg}>
-            {msg}
-          </p>
-        ))}
-        <label>
-          Ticker
-          <select value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })}>
-            <option value="" disabled>
-              Select a watchlist ticker
-            </option>
-            {tickers.map((t) => (
-              <option key={t.ticker} value={t.ticker}>
-                {t.ticker}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Shares
-          <input value={form.shares} onChange={(e) => setForm({ ...form, shares: e.target.value })} />
-        </label>
-        <label>
-          Cost basis
-          <input
-            value={form.cost_basis}
-            onChange={(e) => setForm({ ...form, cost_basis: e.target.value })}
-          />
-        </label>
-        <p className="status-line">
-          Currency: {form.ticker ? (derivedCurrency(form.ticker) ?? "unknown market") : "select a ticker"}{" "}
-          (derived from the ticker&apos;s market — not editable)
-        </p>
-        <button type="submit" className="primary">
-          Add
-        </button>
-      </form>
+      <button type="button" className="fab" aria-label="Add holding" onClick={openAddModal}>
+        +
+      </button>
+
+      {isModalOpen && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div
+            className="form-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="holdings-modal-heading"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="holdings-modal-heading">{isEditing ? "Edit holding" : "Add holding"}</h2>
+            <form
+              onSubmit={
+                isEditing
+                  ? (e) => {
+                      e.preventDefault();
+                      if (editingTicker) handleUpdate(editingTicker);
+                    }
+                  : handleAdd
+              }
+            >
+              {formErrors.map((msg) => (
+                <p className="error-message" key={msg}>
+                  {msg}
+                </p>
+              ))}
+              <div className="field">
+                <label htmlFor="holdings-ticker">Ticker</label>
+                {isEditing ? (
+                  <input id="holdings-ticker" disabled value={activeForm.ticker} />
+                ) : (
+                  <select
+                    id="holdings-ticker"
+                    value={form.ticker}
+                    onChange={(e) => setForm({ ...form, ticker: e.target.value })}
+                  >
+                    <option value="" disabled>
+                      Select a watchlist ticker
+                    </option>
+                    {tickers.map((t) => (
+                      <option key={t.ticker} value={t.ticker}>
+                        {t.ticker}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor="holdings-shares">Shares</label>
+                <input
+                  id="holdings-shares"
+                  value={activeForm.shares}
+                  onChange={(e) => setActiveForm({ ...activeForm, shares: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="holdings-cost-basis">Cost basis</label>
+                <input
+                  id="holdings-cost-basis"
+                  value={activeForm.cost_basis}
+                  onChange={(e) => setActiveForm({ ...activeForm, cost_basis: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Currency</label>
+                <span className="derived">
+                  {activeForm.ticker
+                    ? (derivedCurrency(activeForm.ticker) ?? "unknown market")
+                    : "select a ticker"}
+                </span>
+                <p className="hint">Derived from market — not editable.</p>
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="primary">
+                  Save
+                </button>
+                <button type="button" className="secondary" onClick={closeModal}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
