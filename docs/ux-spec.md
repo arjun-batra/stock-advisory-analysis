@@ -22,6 +22,11 @@ alternates, kept for historical/traceability record only — they are not candid
 | Track-record view | FR31 | Read-only `call_log` / `latest_call_per_ticker` data, pagination/sort/filter only, no new aggregation (`admin-portal.md` §16.5) |
 | Kill-switch toggle | FR32 | Reads/writes `kill_switch_state.paused` via `set_kill_switch()` RPC (`admin-portal.md` §16.6) |
 
+> **2026-08-01 change request (FR36–FR38, Decision #40):** the Watchlist and Holdings rows above are
+> merged into a single **"Tickers"** screen, the portal renamed to **"Sentinel Portal,"** and the nav
+> redesigned — see **§11** for the full spec and `docs/ux-mockups/direction-g-tickers-merge.html` for the
+> mockup. The table above is left as-is for historical/traceability context on the pre-merge NFR8 scope.
+
 ---
 
 ## 1. Constraints (from NFR8, `docs/requirements.md` §6)
@@ -718,6 +723,17 @@ F — see §7.3.2's density table, which applies unchanged. Responsive breakpoin
 600–1023px / desktop ≥1024px) match §1's illustrative pixels throughout, identical to every other
 direction's mockup. Mockup: `docs/ux-mockups/direction-g-compact-toggle.html`.
 
+#### 7.4.3 Extension (2026-08-01 change request; FR36–FR38; Decision #40)
+
+Direction G is extended, not replaced, to cover the Tickers-merge, click-to-modal, and nav-redesign
+change request. All of §7.4/§7.4.1/§7.4.2 above remains true and unchanged (tokens, kill-switch toggle
+component, every other screen's density). The delta is specified in full in **§11** below, and rendered
+in a new mockup file, `docs/ux-mockups/direction-g-tickers-merge.html`, which shares §7.3.1's exact token
+set (no new palette) and layers only the FR36–FR38 changes on top of the existing canonical
+`direction-g-compact-toggle.html`. §11 is the canonical reference for the merged Tickers screen and the
+redesigned nav going forward; `direction-g-compact-toggle.html` remains the canonical reference for
+Login, Tunables, Track-record, and the kill-switch component, which are untouched by this change request.
+
 ---
 
 ## 8. Mockup files
@@ -734,10 +750,14 @@ Resize the browser window to see the phone/tablet/desktop behavior described abo
 | E — Minimal / Card Hybrid (baseline: A + C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-e-hybrid.html` |
 | F — Compact Cards (baseline: C) | non-selected alternate (historical record) | `docs/ux-mockups/direction-f-compact-cards.html` |
 | G — Compact Toggle (baseline: F density + E's kill-switch toggle) | **SELECTED / APPROVED by Arjun (2026-07-31) — dev implements this for INC-13** | `docs/ux-mockups/direction-g-compact-toggle.html` |
+| G — Tickers merge extension (FR36–FR38, 2026-08-01 CR; baseline: G, §7.4.3/§11) | **Extends the selected/approved direction — canonical for the merged Tickers screen + nav redesign** | `docs/ux-mockups/direction-g-tickers-merge.html` |
 
 Each file includes: Login, Watchlist & Holdings CRUD (with an open Add/Edit form example), Tunables
 editor, Track-record view, and the kill-switch toggle in its header — all five FR27–FR32 screens, with
-sample data matching the rows used in the wireframes above (AAPL, VOO, TD, MSFT, RELIANCE).
+sample data matching the rows used in the wireframes above (AAPL, VOO, TD, MSFT, RELIANCE). The exception
+is `direction-g-tickers-merge.html`, which per §11 shows the merged Tickers screen (superseding the
+Watchlist/Holdings screens) and the redesigned nav, and does not re-render Login/Tunables/Track-record
+(unchanged — see `direction-g-compact-toggle.html` for those).
 
 ---
 
@@ -771,3 +791,202 @@ Next steps now that the gate is cleared:
 | FR30 | Tunables editor | §2.3, §4.3/§5.3/§6.3/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
 | FR31 | Track-record view | §2.4, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2/§7.4 (unchanged from F) |
 | FR32 | Kill-switch toggle | §2.5, §4.4/§5.4/§6.4/§7.1.2/§7.2.2/§7.3.2, §7.4.2 (Direction G's toggle-treatment delta) |
+| FR28 (amended 2026-08-01) | Tickers screen (relocated from standalone Watchlist) | §11.2/§11.3 — CRUD/validation unchanged, screen/nav surface only |
+| FR29 (amended 2026-08-01) | Tickers screen/modal (relocated from standalone Holdings) | §11.2/§11.3/§11.4/§11.5 — CRUD/validation unchanged; status-transition gating added per FR37 |
+| FR36 | Tickers screen (merged) | §11.2, §11.3 |
+| FR37 | Tickers modal — status-transition sub-flows | §11.4 (watch-only→held), §11.5 (held→watch-only) |
+| FR38 | Rebrand — "Sentinel Portal" | §11.6 |
+| NFR8 (amended 2026-08-01) | Nav mechanism + merged Tickers screen | §11.1 (nav row-fix + horizontal-scroll variant), §11.2 (1-per-row cards, all breakpoints) |
+
+---
+
+## 11. Extension — FR36–FR38 Tickers merge, click-to-modal, nav redesign (2026-08-01 change request; Decision #40)
+
+**Status: this section documents an approved change request against the already-SELECTED Direction G
+(§7.4/§7.4.3).** It is an extension of Direction G, not a new direction and not a re-opening of the NFR8
+direction gate — no other direction (A–F) is affected or a candidate again. Every token referenced below
+is Direction F/G's existing set (§7.3.1) — **no new color, spacing, type, radius, or shadow token is
+introduced by this change request.**
+
+### 11.0 What's unchanged
+
+Login (FR27, §2.1), the Tunables editor (FR30, §2.3/§7.3.2), the Track-record view (FR31, §2.4/§7.3.2),
+and the kill-switch component (FR32, §2.5/§7.4.2) are **untouched** by this change request — their
+existing Direction G spec and `direction-g-compact-toggle.html` markup remain canonical. Only the
+Watchlist/Holdings screens (now merged into "Tickers") and the shared header/nav are affected.
+
+### 11.1 Nav — rebrand, item-count, and redesign (FR38; NFR8 amended)
+
+- **Brand:** every occurrence of "Admin Portal" (header brand label, browser `<title>`) changes to
+  **"Sentinel Portal."** This is a string swap only — no layout, token, or component change follows from
+  it.
+- **Item count:** nav goes from four items to three — **Tickers / Tunables / Track record.** "Holdings"
+  is removed as a separate nav item; its capability folds into the Tickers screen (§11.2).
+- **Desktop — defect fix (not new design):** at desktop width, the nav renders as a single literal
+  horizontal row, never a vertically stacked list. This corrects the shipped INC-13/14 defect
+  (`nav-panel`'s `flex-direction: row` override under `@media (min-width: 1024px)` in
+  `admin-portal/app/globals.css` failing to take effect in practice) — tech-lead root-causes and fixes
+  the CSS; this spec's job is only to confirm the intended visual result: nav items laid out left-to-right,
+  inline with (or immediately after) the brand label, no wrapping, no per-item block/stacked layout, using
+  Direction G's existing nav-link typography (`--font-size-sm`, `--color-text-secondary`, active item in
+  `--color-accent` on the existing tinted-pill active background) — same visual treatment already
+  specified for the (buggy) implementation, just actually laid out horizontally.
+- **New — horizontally-scrollable nav at a mid-width tier:** where three nav items plus the brand, the
+  kill-switch control, and the user chip don't comfortably fit in one un-scrolled row but the viewport is
+  still wide enough that collapsing behind the burger menu (`.nav-toggle-btn`/`.nav-panel`) would be a
+  regression from "nav visible at a glance," the nav item strip becomes **horizontally scrollable**
+  instead of wrapping or crowding:
+  - Visual pattern: the three nav items render as a `.nav-strip` — a single-row flex/inline container with
+    `overflow-x: auto`, `white-space: nowrap` (or equivalent), each item styled as a small pill/tab
+    (reusing Direction G's existing pill shape — `border-radius: 999px`, `padding: 3px var(--space-3)`,
+    `font-size: var(--font-size-xs)` — the same shape as the status/type pills elsewhere, applied here to
+    nav items instead of introducing a new tab-strip visual language).
+  - **Scroll-edge indicator:** a subtle fade/scroll-shadow overlay signals there's more content to reveal
+    off-screen — implemented as a `::after` (and, once scrolled, a mirrored `::before`) pseudo-element on
+    `.nav-strip`'s container: a ~24px-wide gradient from transparent to `var(--color-surface)` (the
+    header's own background token, so the fade blends into the header rather than introducing a new
+    color), positioned absolutely over the trailing (and, once scrolled past the start, leading) edge.
+    No visible scrollbar chrome — a thin/auto-hiding scrollbar is acceptable, but the strip must remain
+    genuinely draggable/swipeable, never a trap.
+  - This is an **explicit, narrow carve-out** to the portal's general no-horizontal-scroll rule (NFR8,
+    §1), scoped only to this nav container — nothing else on any screen scrolls horizontally.
+  - Exact pixel boundaries for "mid-width tier" are tech-lead's call (per NFR8's amendment); this spec's
+    illustrative mockup demonstrates the pattern at an illustrative **700–899px** band, between the
+    illustrative phone/tablet/desktop breakpoints already used throughout this document (§1).
+  - **Below** the horizontal-scroll tier (illustrative ≤699px in the mockup), the existing hamburger
+    (`.nav-toggle-btn` / `.nav-panel.open`) fallback is unchanged — this redesign adds a middle tier, it
+    does not remove the narrowest-tier fallback.
+
+### 11.2 Tickers screen (FR36) — merges Watchlist + Holdings
+
+- **Title:** "Tickers" (replaces "Watchlist" / "Watchlist & Holdings").
+- **Toolbar:** unchanged from Direction G — search field + "+ Add ticker" primary action. Add opens the
+  same modal described in §11.3, in "add" mode: Status defaults to Watch-only; Shares/Price-per-share
+  fields are not shown until Status = Held (§11.4).
+- **Card layout — one card per row, at phone, tablet, and desktop alike.** This supersedes the 4-col/3-col/
+  2-col watchlist card-grid density specified for Direction F/G (§7.3.2's Watchlist row) and every earlier
+  direction's watchlist grid (§4.2/§5.2/§6.2/§7.1.2/§7.2.2) — those remain accurate only for the
+  non-selected alternate directions' own (pre-merge) watchlist screens, kept for historical record. The
+  Tunables grid and the Track-record card grid are **unaffected** — still per §7.3.2/§2.3/§2.4.
+- **Card content (top to bottom):**
+  1. Header row: ticker (bold), market badge (`US`/`TSX`/`NSE`), type pill (Stock/ETF), status pill
+     (`● Held` / `○ Watch-only`) — identical markup/tokens to the existing `.pill.held`/`.pill.watch`
+     styling already shipped (`admin-portal/app/globals.css`).
+  2. **If held:** shares owned + price per share on one line, e.g. `10 sh · $150.00 USD per share`. "Price
+     per share" is a **UI relabel of the existing `holdings.cost_basis` field** — same value, same
+     validation, only the on-screen copy changes (the standalone Holdings screen's "Cost basis" label is
+     retired along with that screen). **If watch-only:** this line is omitted entirely — no placeholder
+     dash, no empty row — consistent with the shared UX contract's "no placeholder, no empty cells"
+     convention (§2.2, and FR21's dashboard precedent).
+  3. Verdict row: latest verdict rendered with the existing `.verdict-pill.buy`/`.sell`/`.hold` styling
+     (reused verbatim from the Track-record screen's convention, §2.4/§7.3.1 — same color tokens, same
+     class names, no new verdict-color scheme for this screen) + the verdict's timestamp + its
+     **confidence level**, shown as **plain inline text** (e.g. `Confidence: high`), matching
+     `track-record/page.tsx`'s existing convention of extracting `confidence` from
+     `call_log.data_snapshot->>confidence` and rendering it as bare text (not a colored badge — confidence
+     is not a status the way verdict is). Timestamp format follows FR23's client-render rule (device tz
+     primary + IST secondary, e.g. `10:30 AM ET (8:00 PM IST)`; a relative-time nicety, e.g. "2 hours ago,"
+     may sit alongside it the way the dashboard already does, per FR21/FR23, but never replaces the actual
+     timestamp). **If no check has completed yet for this ticker, this entire row is omitted** — same
+     "hidden until at least one check exists, no placeholder" rule as FR21/§2.2.
+  4. Rationale: the latest verdict's full rationale text, wrapped in full (not truncated with an ellipsis
+     the way the denser 3-col Track-record cards may — a 1-col full-width Tickers card has room for the
+     complete sentence).
+  5. **No inline edit/delete icon buttons on the card** — the small-icon affordance (`✎`/`🗑` buttons in
+     the card's `.card-actions` corner) is removed entirely. The card has no other interactive child; the
+     whole card is the click target (§11.3).
+- **Card states:**
+
+  | State | Behavior / copy |
+  |---|---|
+  | Loading | Skeleton, 3–5 placeholder rows (unchanged shape from §2.2). |
+  | Empty | **"No tickers yet."** / **"Add your first ticker to start tracking a stock or ETF."** + prominent **"Add ticker"** action (copy updated from "watchlist entry" to "ticker" to match the merged screen's vocabulary; no other change from §2.2's empty-state pattern). |
+  | Error — fetch | **"Couldn't load your tickers."** + **"Retry."** Covers a failure of either the underlying `watchlist` or `holdings` query — one error surface for what is now one screen, never two separate error strings stacked. |
+  | Success | Cards render 1-per-row; clicking any card opens the modal (§11.3). |
+
+- **Hover/click affordance:** the whole `.ticker-card` gets `cursor: pointer` and a subtle hover elevation
+  (existing `--shadow-card` token, bumped to a slightly stronger inline hover value — no new shadow token
+  — e.g. `box-shadow: 0 2px 6px rgba(20,20,43,0.12)` on `:hover`) so the click affordance reads clearly now
+  that the per-row icon buttons are gone.
+
+### 11.3 Click-to-modal interaction (FR36)
+
+Clicking/tapping anywhere on a `.ticker-card` opens a single modal — the sole edit surface for this
+screen, replacing both the old watchlist-only and holdings-only edit modals.
+
+- **Modal header:** ticker, market, type, status — read-only identifying labels, matching the card's own
+  header row.
+- **Combined edit form**, single scroll if needed, one Save/Cancel/Delete action set:
+  - Market (select), Type (select), Status (select: Held / Watch-only) — the existing watchlist fields,
+    unchanged behavior/validation from §2.2.
+  - **If Status = Held:** Shares (number), Price per share (number — the relabeled `cost_basis`), and the
+    existing read-only derived-Currency label (unchanged, Decision #35) appear in the form.
+  - **Delete** (destructive-styled, visually separated from Save/Cancel) removes the ticker entirely —
+    same confirmation copy/pattern as §2.2's existing ticker-delete flow (naming the ticker, "This can't be
+    undone").
+- FR28/FR29's existing validation rules (CHECK constraints, currency derivation) apply unchanged to
+  whichever underlying table (`watchlist` and/or `holdings`) the edit touches — this modal is a UI
+  consolidation of two forms, not a new validation surface.
+
+### 11.4 Watch-only → Held transition (FR37)
+
+- Triggered inside the modal (§11.3) by changing Status from Watch-only to Held.
+- The instant Status = Held is selected — before Save is clicked — the Shares and Price-per-share fields
+  appear inline in the form, both marked required (`*` after the label, matching the portal's existing
+  required-field convention).
+- **Save is blocked** until both fields are populated and pass FR29's existing validation (`shares > 0`,
+  `cost_basis > 0`); attempting to Save with either field empty or invalid surfaces the existing inline
+  per-field error copy from §2.2 ("Shares must be greater than 0." / a parallel "Price per share must be
+  greater than 0." for the relabeled field) directly under the offending field — never a single top-of-
+  form banner.
+- **On successful Save:** modal closes; the card immediately reflects the held state (the shares/price
+  line from §11.2 now appears); toast/inline confirmation **"Saved."** (unchanged from §2.2).
+
+### 11.5 Held → Watch-only transition (FR37) — delete-with-confirmation
+
+- Triggered inside the modal (§11.3) by changing Status from Held to Watch-only.
+- Clicking Save with this transition pending does **not** save silently — it surfaces a confirmation step
+  first (an in-modal confirm panel, replacing the form momentarily, consistent with §2.2's existing
+  delete-confirmation pattern rather than a new dialog type), naming the ticker and the data about to be
+  discarded, e.g.:
+
+  > **"Switch AAPL to watch-only?**
+  > This deletes the recorded 10 sh @ $150.00 USD holding — this can't be undone."
+
+  Actions: **Cancel** (returns to the form; Status reverts to Held, no data touched) / **Confirm — remove
+  holding** (destructive-styled, proceeds).
+- **On confirm:** the ticker's `holdings` row is deleted, `watchlist.status` updates to `watch-only`, modal
+  closes, the card reflects the watch-only state (shares/price line disappears per §11.2), toast/inline
+  confirmation **"Removed holding — AAPL is now watch-only."**
+- **On cancel:** modal returns to the edit form with Status reset to Held, nothing is written.
+- **Designer's flag (non-blocking):** pm's stated default for this transition is delete-with-confirmation,
+  and that is what this spec and the mockup build to. A "hide, don't delete" alternative (soft-archiving
+  the `holdings` row — e.g. leaving it in place, unlinked, restorable if the ticker flips back to Held)
+  would avoid discarding previously-entered shares/price data on what could be an accidental status flip,
+  and may read as a friendlier default. This is flagged here for visibility only, per the brief's request
+  — it does not gate or alter FR37 without a separate change request through pm.
+
+### 11.6 Rebrand (FR38)
+
+- Header brand label (`.app-header-brand` in the live implementation; the mockup's `<h1>`/login-card
+  heading) and the browser `<title>`: **"Sentinel Portal"** everywhere "Admin Portal" previously appeared.
+- No token, layout, or component change follows from the rebrand — string swap only.
+
+### 11.7 Mockup
+
+`docs/ux-mockups/direction-g-tickers-merge.html` — new, self-contained file extending Direction G's exact
+token set (§7.3.1, unchanged). Demonstrates:
+- The 3-item nav ("Tickers / Tunables / Track record"), "Sentinel Portal" brand, with the corrected
+  horizontal-row layout at desktop width and the horizontally-scrollable pill-strip variant (with
+  scroll-shadow edge fade) demonstrable at the illustrative 700–899px mid-tier via real CSS media queries
+  — resize the browser to inspect all three nav tiers (hamburger / horizontal-scroll / horizontal-row).
+- The merged Tickers screen, 1-per-row cards, showing watch-only status, held status with shares/price per
+  share, verdict + timestamp + confidence, and rationale, using the same sample tickers as every other
+  mockup (AAPL, VOO, TD, MSFT, RELIANCE).
+- The click-to-modal interaction in two states: (a) a watch-only→held transition in progress (mandatory
+  Shares/Price-per-share fields visible, Save blocked with a validation message shown), and (b) a normal
+  held-ticker edit/delete state, with the held→watch-only delete-confirmation sub-flow (§11.5) shown as an
+  inline confirm panel.
+
+Login, Tunables, and Track-record are **not** re-rendered in this file (unchanged — see
+`direction-g-compact-toggle.html`).
