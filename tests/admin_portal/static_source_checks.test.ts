@@ -127,14 +127,26 @@ test("both admin_write_watchlist and admin_write_holdings policies gate on publi
 });
 
 // --- DEEP-006/INC-10 (FR11/FR29, Decision #35): holdings.currency is derived, not admin-entered ----
+//
+// INC-15 (docs/design/admin-portal.md §16.11) deleted the separate holdings/page.tsx
+// and merged its edit form into TickerEditModal.tsx, with the "+ Add ticker" insert
+// call now living in tickers/page.tsx. Repointed 2026-08-01 (qa) at the new files —
+// same behavioral guarantee as before (currency is never an admin-entered field, never
+// sent in a write payload, and displayed only as a read-only derived chip), just
+// against the post-merge markup/call sites. Confirmed manually against
+// docs/ux-mockups/direction-g-tickers-merge.html's `.field .derived` chip, which is the
+// same mechanism, carried over unchanged (§16.11.4).
 
-const HOLDINGS_PAGE = path.join(PORTAL_DIR, "app", "(app)", "holdings", "page.tsx");
+const TICKERS_PAGE = path.join(PORTAL_DIR, "app", "(app)", "tickers", "page.tsx");
+const TICKER_EDIT_MODAL = path.join(PORTAL_DIR, "components", "TickerEditModal.tsx");
 const HOLDINGS_CURRENCY_SQL = path.join(REPO_ROOT, "sql", "holdings_currency_derivation.sql");
 
-test("holdings page: no currency <select>/<input> in the add or edit form", () => {
-  const src = readFileSync(HOLDINGS_PAGE, "utf8");
-  assert.doesNotMatch(src, /name=["']currency["']/);
-  assert.doesNotMatch(src, /CURRENCIES\.map/);
+test("tickers page + edit modal: no currency <select>/<input> anywhere in the add or edit form", () => {
+  for (const file of [TICKERS_PAGE, TICKER_EDIT_MODAL]) {
+    const src = readFileSync(file, "utf8");
+    assert.doesNotMatch(src, /name=["']currency["']/, `unexpected currency form control in ${file}`);
+    assert.doesNotMatch(src, /CURRENCIES\.map/, `unexpected currency <select> options in ${file}`);
+  }
 });
 
 // Extracts the literal argument text of every `.insert(...)`/`.update(...)` call by
@@ -164,19 +176,37 @@ function extractCallArgs(src: string, methodNames: string[]): { method: string; 
   return results;
 }
 
-test("holdings page: insert()/update() payloads never send `currency` (server derives it unconditionally)", () => {
-  const src = readFileSync(HOLDINGS_PAGE, "utf8");
-  const writeCalls = extractCallArgs(src, ["insert", "update"]);
-  assert.ok(writeCalls.length >= 2, "expected both an insert() and an update() call in holdings page.tsx");
+test("tickers page + edit modal: insert()/update()/rpc() payloads never send `currency` (server derives it unconditionally)", () => {
+  // tickers/page.tsx: the "+ Add ticker" insert() (creates a watch-only watchlist
+  // row, no holdings row -- see AC12). TickerEditModal.tsx: the plain
+  // market/type update(), the plain shares/cost_basis update() (status unchanged,
+  // already held), and the two set_ticker_holding_status/delete_ticker rpc() calls
+  // (the two FR37 RPCs, §16.11.5) -- none of these payloads may carry a raw
+  // `currency` key; the server (holdings_derive_currency trigger, unconditional)
+  // is the sole place currency is set, both pre- and post-merge.
+  const pageWrites = extractCallArgs(readFileSync(TICKERS_PAGE, "utf8"), ["insert", "update", "rpc"]);
+  const modalWrites = extractCallArgs(readFileSync(TICKER_EDIT_MODAL, "utf8"), ["insert", "update", "rpc"]);
+  const writeCalls = [...pageWrites, ...modalWrites];
+  assert.ok(
+    writeCalls.length >= 4,
+    "expected at least an insert() (tickers/page.tsx), a plain update(), and both rpc() calls (TickerEditModal.tsx)"
+  );
   for (const call of writeCalls) {
     assert.doesNotMatch(call.args, /currency\s*:/, `${call.method}() payload must not send currency: ${call.args}`);
   }
 });
 
-test("holdings page: displays a read-only derived currency (via MARKET_CURRENCY), not an editable field", () => {
-  const src = readFileSync(HOLDINGS_PAGE, "utf8");
+test("edit modal: displays a read-only derived currency (via MARKET_CURRENCY), not an editable field", () => {
+  const src = readFileSync(TICKER_EDIT_MODAL, "utf8");
   assert.match(src, /MARKET_CURRENCY/);
-  assert.match(src, /derived from market/i);
+  // Post-merge markup (docs/ux-mockups/direction-g-tickers-merge.html's `.field
+  // .derived` chip) drops the old page's literal "Derived from market — not
+  // editable." hint sentence, but keeps the same read-only-chip mechanism: a
+  // <span className="derived"> showing the MARKET_CURRENCY-looked-up value
+  // followed by "(from {market})" -- never an <input>/<select> for currency
+  // (already asserted by the no-currency-form-control test above).
+  assert.match(src, /className="derived"/);
+  assert.match(src, /\(from\s*\{form\.market\}\)/);
 });
 
 test("holdings_currency_derivation.sql: trigger fires on BEFORE INSERT OR UPDATE and unconditionally sets new.currency", () => {
