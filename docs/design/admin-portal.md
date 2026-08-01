@@ -741,6 +741,7 @@ begin
   end if;
 end; $$;
 
+revoke execute on function public.set_ticker_holding_status(text, text, numeric, numeric) from public, anon, authenticated;
 grant execute on function public.set_ticker_holding_status(text, text, numeric, numeric) to authenticated;
 
 create or replace function public.delete_ticker(p_ticker text) returns void
@@ -753,11 +754,16 @@ begin
   delete from public.watchlist where ticker = p_ticker;
 end; $$;
 
+revoke execute on function public.delete_ticker(text) from public, anon, authenticated;
 grant execute on function public.delete_ticker(text) to authenticated;
 ```
 
-Both mirror `set_kill_switch`'s exact shape (`operational-controls.md` §13, `admin-portal.md` §16.6):
-`SECURITY DEFINER`, `is_admin()`-gated, `grant execute ... to authenticated` only (no anon grant). **Plain
+Both mirror `set_kill_switch`'s exact shape (`operational-controls.md` §13.3, `admin-portal.md` §16.6):
+`SECURITY DEFINER`, `is_admin()`-gated, `revoke execute ... from public, anon, authenticated` (removing
+Postgres's default `PUBLIC` grant on function creation) immediately followed by `grant execute ...
+to authenticated` — the same belt-and-suspenders pair `sql/kill_switch.sql:115`/`scheduler_pgcron.sql`/
+`phase5_monitoring.sql` use for every other `SECURITY DEFINER` RPC in this codebase, so `anon` (no session)
+can never reach either function even before `is_admin()`'s runtime check runs. **Plain
 field edits that do not change `status`** (e.g. editing `market`/`type` on an already-watch-only ticker, or
 editing `shares`/`cost_basis` on an already-held ticker without flipping status) are **not** routed through
 these RPCs — they remain direct `supabase.from("watchlist").update(...)` / `.from("holdings").update(...)`
@@ -787,13 +793,14 @@ Not fixed here; flagged for a future increment if Arjun wants it closed.
   watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx` (both deleted). No redirect needed —
   single-user tool, no external links to the old routes to preserve.
 - **Files INC-15 may touch (allow-list):** `admin-portal/components/NavToggle.tsx`,
-  `admin-portal/components/AuthGuard.tsx`, `admin-portal/app/globals.css`, `admin-portal/app/(app)/
-  tickers/page.tsx` (new), and one new modal component (e.g. `admin-portal/components/
-  TickerEditModal.tsx`) if the combined form needs local state beyond what the page file can hold cleanly;
-  deletions of `admin-portal/app/(app)/watchlist/page.tsx` and `admin-portal/app/(app)/holdings/page.tsx`;
-  `sql/tickers_screen_rpc.sql` (new, §16.11.5). No other file, in any directory, is in scope — `app/
-  (app)/tunables/page.tsx`, `app/(app)/track-record/page.tsx`, `components/KillSwitchToggle.tsx`, and every
-  `scripts/*.py`/`lib/*.ts` file outside the two RPC call sites are untouched.
+  `admin-portal/components/AuthGuard.tsx`, `admin-portal/app/globals.css`, `admin-portal/app/layout.tsx`
+  (FR38's branding-rename `<title>` string), `admin-portal/app/(app)/tickers/page.tsx` (new), and one new
+  modal component (e.g. `admin-portal/components/TickerEditModal.tsx`) if the combined form needs local
+  state beyond what the page file can hold cleanly; deletions of `admin-portal/app/(app)/watchlist/page.tsx`
+  and `admin-portal/app/(app)/holdings/page.tsx`; `sql/tickers_screen_rpc.sql` (new, §16.11.5). No other
+  file, in any directory, is in scope — `app/(app)/tunables/page.tsx`, `app/(app)/track-record/page.tsx`,
+  `components/KillSwitchToggle.tsx`, and every `scripts/*.py`/`lib/*.ts` file outside the two RPC call
+  sites are untouched.
 - **Requirement coverage:** FR36 → §16.11.3/§16.11.4; FR37 → §16.11.4/§16.11.5; FR38 (branding rename) →
   dev/designer directly, no design content needed (trivial string change, per the orchestrator's brief);
   NFR8's navigation-mechanism bullet → §16.11.1 (defect fix)/§16.11.2 (new mechanism).

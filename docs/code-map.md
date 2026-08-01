@@ -3,8 +3,10 @@
 **Owner:** tech-lead. Backfilled 2026-07-29; refreshed 2026-07-30 (REV-118, Pass 28 — `sql/` list was
 stale); refreshed again 2026-07-31 (REV-122/REV-126 — the `run_hourly.py` REV-116 caveat and
 `kill_switch_abort_log.sql`'s apply-status were stale); refreshed again 2026-07-31 (REV-145, Pass 34 —
-`admin-portal/components/` inventory was missing INC-13's new `NavToggle.tsx`). Map for "does the code
-still match this" — for rationale read `docs/design.md` / `docs/design/*.md`.
+`admin-portal/components/` inventory was missing INC-13's new `NavToggle.tsx`); refreshed again 2026-08-01
+(REV-153, Pass 37 — INC-15's `watchlist`/`holdings`→`tickers` merge had left the `app/`/`components/`/
+`sql/` inventories pointing at deleted files). Map for "does the code still match this" — for rationale
+read `docs/design.md` / `docs/design/*.md`.
 Refresh whenever a merged increment changes structure.
 
 ## Modules
@@ -21,10 +23,13 @@ Refresh whenever a merged increment changes structure.
   tunables cache back, after its own boundary check (REV-116 fixed, reviewer-CLEAR Pass 29).
 
 **`admin-portal/`** (Next.js/Vercel; the one write-capable, human-authenticated surface)
-- `app/` — `login/`, `auth/callback/` (only server route, no secret), `(app)/watchlist|holdings|
-  tunables|track-record/`. `components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`, `NavToggle.tsx`
-  (INC-13, presentational-only collapsible mobile/tablet nav; local open/closed state, no data/Supabase
-  calls; CSS forces the panel open at desktop widths regardless of its state).
+- `app/` — `login/`, `auth/callback/` (only server route, no secret), `(app)/tickers|tunables|
+  track-record/` (INC-15: `tickers/page.tsx` replaces the deleted `watchlist/`+`holdings/` pages — one
+  merged card-per-row screen, click-to-modal edit). `components/` — `AuthGuard.tsx`, `KillSwitchToggle.tsx`,
+  `NavToggle.tsx` (INC-13, presentational-only collapsible mobile/tablet nav; local open/closed state, no
+  data/Supabase calls; CSS forces the panel open at desktop widths regardless of its state),
+  `TickerEditModal.tsx` (INC-15, combined watch-only/held edit form + FR37's mandatory-field and
+  delete/status-change confirmation workflow, calls the two new transactional RPCs below).
 - `lib/supabase-client.ts` (the only Supabase client — browser, anon key + session), `lib/admin-guard.ts`
   (UI-layer allowlist check, UX only, not the security boundary), `lib/validation.ts` (form validation
   mirroring `sql/schema.sql` CHECKs, no new rules invented).
@@ -38,7 +43,9 @@ dispatch), `phase5_monitoring.sql`/`enable_monitor_alerts_rls.sql` (dead-man's-s
 `is_admin()`), `admin_portal_tunables.sql` (`tunables` table + policy + seed), `kill_switch_portal_
 grant.sql` (portal admin-check on kill-switch), `kill_switch_abort_log.sql` (INC-12, FR35's abort log —
 applied and live, REV-117 fixed), `call_log_authenticated_read_fix.sql` (authenticated-read RLS fix for
-`call_log`, restores admin portal's track-record view, FR31, REV-143 fixed). INC-10 fix-round, each additive: `tunables_validate_
+`call_log`, restores admin portal's track-record view, FR31, REV-143 fixed), `tickers_screen_rpc.sql`
+(INC-15, FR36/FR37: `set_ticker_holding_status()`/`delete_ticker()`, two `SECURITY DEFINER` transactional
+RPCs backing the merged Tickers screen's status-flip and delete). INC-10 fix-round, each additive: `tunables_validate_
 trigger.sql` (write-time validation), `holdings_currency_derivation.sql` (currency derivation, FR29),
 `admin_portal_tunables_alerts_enabled_description_fix.sql` (seed-description fix). Historical/superseded/
 **not applied** markers: `drop_shadow_tables_migration.sql`, `dedup_watchlist_health_check.sql`,
