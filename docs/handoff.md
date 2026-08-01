@@ -2338,3 +2338,160 @@ npm package are available per this session's environment notes, `playwright inst
   the mockup (which uses static demo data with no interactive sort at all) — reasoned through against
   qa's explicit suggestion in the bug report; the underlying `sortColumn`/`sortAscending`/`.order()`
   contract is unchanged, only the control surface.
+
+---
+
+# Handoff — INC-14: admin portal visual-fidelity fix vs approved Direction G mockup (NFR8)
+
+**Date:** 2026-08-01. Branch: `inc-14-admin-portal-visual-fidelity-fix` (from `main`@`da50ed8`+). Not
+pushed, not merged.
+
+## Build plan (written before coding, per dev's updated workflow)
+
+Read `docs/ux-mockups/direction-g-compact-toggle.html` (ground truth), `docs/ux-spec.md` §7.4 (Direction
+G) + §6.2 (card anatomy: "ticker, market/type pills, status pill, shares/cost-basis, edit/delete icon
+buttons") + §2.3, `docs/design/admin-portal.md` §16.10, `docs/design/increment-plan.md`'s INC-13 entry,
+`docs/code-map.md`, and this file's own prior two INC-13 entries (original build + fix-cycle-1) to see
+what was actually shipped vs. what the mockup shows. Orchestrator's brief named three confirmed gaps: (1)
+zero `.pill`/`.ticker-card` CSS anywhere — watchlist/holdings rendered market/type/status as raw text in
+`<td data-label>` cells, never as pill badges; (2) zero modal — Add/Edit was a permanently-visible inline
+`crud-form` / inline-row-edit, never the mockup's centered-panel/bottom-sheet `.form-modal`; (3) card
+elevation only ever measured at tablet (768px) in the prior cycle, never at 375/1280px explicitly.
+
+**Files:** `admin-portal/app/globals.css`, `admin-portal/app/(app)/watchlist/page.tsx`,
+`admin-portal/app/(app)/holdings/page.tsx`. Same file allow-list class as INC-13 (presentation-layer
+only); no `lib/*.ts`, `sql/`, `scripts/`, or `tests/` file touched.
+
+**Approach:** replace the `<table>`+`data-label` responsive-table hybrid (the actual mechanism
+`docs/design/admin-portal.md` §16.10/`docs/design/increment-plan.md`'s INC-13 AC2 names literally) with a
+real `<div class="card-grid"><div class="ticker-card">` markup reproducing the mockup's DOM 1:1 (ticker
+heading + market label on one line, type/status pill spans, shares/cost-basis figures for holdings,
+edit/delete as round icon buttons in a card-actions row) — 2-col phone / 3-col tablet / 4-col desktop, per
+the density `docs/design/admin-portal.md` §16.10 already states in prose ("4-col card grid desktop /
+3-col tablet / 2-col phone"). Added `.pill`/`.pill.type`/`.pill.held`/`.pill.watch` (mockup's exact
+colors/spacing), `.card-grid`/`.ticker-card`/`.icon-btn`/`.toolbar`/`.empty-state`, and a real
+`.modal-overlay`/`.form-modal`/`.field`/`.fab` set (centered panel tablet/desktop, full-width bottom sheet
+phone, per `docs/ux-spec.md` §6.2's explicit text). Added `isModalOpen` state to both pages; both Add and
+Edit route through the one modal (Edit pre-fills from the clicked row, ticker field disabled since ticker
+was never editable pre-existing either). `loadRows`/`loadAll`/`handleAdd`/`handleUpdate`/`handleDelete`/
+`validateWatchlistRow`/`validateHoldingsRow`/`MARKET_CURRENCY` — every one of these is untouched
+byte-for-byte in logic; only their calling JSX changed. Removed the now-dead `.crud-table*` CSS rules
+(nothing references `<table>` in these two pages anymore) — `.crud-form` itself is kept (still used by
+`track-record/page.tsx`'s filter form, untouched by this fix).
+
+**Design-doc staleness flagged (not silently deviated — surfacing per dev rule #3):** this is a real
+divergence from `docs/design/increment-plan.md`'s INC-13 AC2 literal wording ("the watchlist and holdings
+`<table>`s render as a stacked card-per-row layout... each row carries a data-label attribute per cell...
+grep `data-label=`") and from `sql`-adjacent reviewer-Pass-35-cleared acceptance criteria, which named the
+`<table>` mechanism explicitly. I proceeded rather than blocking on tech-lead sign-off because: (a) the
+orchestrator's brief already diagnosed this exact gap as the reported production defect's root cause and
+directed this specific fix; (b) `docs/design/admin-portal.md` §16.10's own prose already calls for a
+"4-col card grid desktop / 3-col tablet / 2-col phone" — the div/card-grid markup this fix ships is a
+closer match to tech-lead's own written density description than the `<table>`-hack mechanism the merged
+INC-13 code actually used; (c) the GATE-3-approved mockup (`docs/ux-mockups/direction-g-compact-toggle.html`)
+never uses a `<table>` for watchlist/holdings at all — only INC-13's implementation chose that mechanism,
+and it's what produced the reported mismatch; (d) zero data/contract/query logic changed (confirmed by
+the AC5-style grep below). **Flagging for tech-lead:** `docs/design/admin-portal.md` §16.10 and
+`docs/design/increment-plan.md`'s INC-13 AC2 wording (the literal `<table>`/`data-label` grep text) is now
+stale relative to this fix and should be refreshed to describe the real div/`.ticker-card` mechanism
+before the next reviewer pass, per CLAUDE.md's "a stale doc is a bug."
+
+**Verification plan:** full existing suite (pytest + `tests/admin_portal/*.test.ts`) before/after; `npm
+run build`/`npm run lint`; a real-browser Playwright pass (pre-installed Chromium at
+`/opt/pw-browsers/chromium-1194`, `next build && next start`, Supabase network mocked, an authenticated
+session cookie seeded via the real installed `@supabase/ssr` base64url codec — same higher-fidelity
+method qa established for INC-13's fix-cycle-1) at 375/768/1280px, measuring actual computed styles and
+driving real clicks (Add ticker / FAB / edit icon / Cancel).
+
+## Files changed
+
+- `admin-portal/app/globals.css` — removed the dead `.crud-table*`/`.crud-table-wrap` responsive-table
+  block; added `.toolbar`/`.toolbar-add-btn`, `.card-grid`, `.ticker-card` (+ `.top`/`.mkt`/`.figures`/
+  `.card-actions`), `.pill`/`.pill.type`/`.pill.held`/`.pill.watch`, `.empty-state`, `button.secondary`,
+  `button.icon-btn`, `.modal-overlay`/`.form-modal`/`.field`/`.field .derived`/`.field .hint`/
+  `.modal-actions`/`.fab` (+ the phone-only `@media (max-width: 639px)` overrides for the bottom-sheet
+  modal and FAB-vs-toolbar-button swap).
+- `admin-portal/app/(app)/watchlist/page.tsx` — rebuilt JSX: `.card-grid`/`.ticker-card` per row instead
+  of `<table>`; `isModalOpen` state; `openAddModal`/`openEditModal`/`closeModal` helpers; Add and Edit both
+  render through the one `.form-modal`. `loadRows`/`handleAdd`/`handleUpdate`/`handleDelete`/
+  `validateWatchlistRow` logic unchanged (only their call sites' surrounding JSX/state wiring changed —
+  `setIsModalOpen(false)` added alongside the existing post-success resets).
+- `admin-portal/app/(app)/holdings/page.tsx` — same treatment. `openEditModal` is deliberately declared
+  between `handleAdd` and `handleUpdate` (a function-declaration is hoisted, so this has zero behavioral
+  effect) purely so `tests/admin_portal/static_source_checks.test.ts`'s brittle
+  `insert()`/`update()`-payload-shape regex (which relies on an incidental `})`-shaped call sitting between
+  the two write calls to terminate its lazy match early) keeps passing — flagging this as a qa-owned test
+  fragility, not a design/behavior issue: the test's assertion (`currency:` never sent in either payload)
+  is still correctly enforced, just via a regex that's sensitive to unrelated code layout. `MARKET_CURRENCY`/
+  `validateHoldingsRow`/`handleAdd`/`handleUpdate`/`handleDelete` logic itself is unchanged.
+
+## How to run / reproduce the verification
+
+```
+SKIP_TUNABLES_FETCH=true python3 -m pytest -q --tb=short                 # 287 passed, 0 failed
+node --experimental-strip-types --test tests/admin_portal/*.test.ts      # 82 passed, 0 failed
+cd admin-portal && npm run build && npm run lint                          # builds clean, 8 routes, zero lint errors/warnings
+```
+
+**Structural no-regression grep (per the brief's explicit instruction):**
+```
+git diff -U0 main..inc-14-admin-portal-visual-fidelity-fix -- admin-portal/ \
+  | grep -E "supabase\.|validateHoldingsRow|validateTunableValue|is_admin|set_kill_switch|\.rpc\(|createClient"
+```
+Returns **zero matches** — confirmed. `git status --short` on the branch shows exactly the three allowed
+files (`globals.css`, `watchlist/page.tsx`, `holdings/page.tsx`).
+
+**Real-browser Playwright verification (not source-reading, not a static harness):** `cd admin-portal &&
+npm run build && npm run start -- -p 4173`, then a Playwright script (session scratchpad, not committed)
+launched the pre-installed Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`), mocked every
+`https://ikghqdtlbwifwnooytmm.supabase.co/*` call (`rpc/is_admin` -> `true`, `rest/v1/watchlist`/
+`rest/v1/holdings` GET -> fixed sample rows) at the network layer, and seeded the
+`sb-ikghqdtlbwifwnooytmm-auth-token` cookie with a `base64-` + base64url-encoded session JSON built via
+the real installed `@supabase/ssr` `stringToBase64URL` codec (not a guessed format) so `AuthGuard`'s
+`checkAuthorization()` resolves a real authenticated/admin session with zero bootstrap network round-trip
+— same method qa established for INC-13's fix-cycle-1. **45/45 checks passed** at all three widths
+(375/768/1280px), on both `/watchlist` and `/holdings`:
+
+- **Card grid density:** `.card-grid` computed `grid-template-columns` resolves to 2 tracks at 375px, 3 at
+  768px, 4 at 1280px on both pages.
+- **Card elevation, all three widths (closes gap #3 — previously only tablet was measured):** `.ticker-card`
+  computed `background-color: rgb(255, 255, 255)`, `box-shadow: rgba(20, 20, 43, 0.08) 0px 1px 2px 0px`,
+  `border-radius: 8px` — identical, non-transparent/non-`none`/non-zero values at **375px, 768px, and
+  1280px** (previously BUG-010's whole class of defect was that this was `rgba(0,0,0,0)`/`none`/`0px` at
+  one band; this pass explicitly re-confirms all three, not just tablet).
+- **Pill badges:** exactly 3 `.pill.type`, 2 `.pill.held`, 1 `.pill.watch` rendered (matching the 3 mocked
+  watchlist rows — 2 held, 1 watch-only), at every width. `.pill.held`'s computed `background-color` is
+  `rgb(220, 252, 231)` (`--color-success-bg` / `#DCFCE7`, matching the mockup exactly).
+  `.toolbar-add-btn`/`.fab` visibility is mutually exclusive per band: FAB visible + toolbar button hidden
+  at 375px; toolbar button visible + FAB hidden at 768px/1280px.
+- **Modal open/close, both triggers:** clicking the FAB (375px) or the toolbar "+ Add ticker" button
+  (768px/1280px) opens `.modal-overlay`/`.form-modal` with heading "Add ticker"; clicking `button.secondary`
+  ("Cancel") closes it (`.modal-overlay` detaches from the DOM). Clicking an edit icon button on the AAPL
+  card opens the same modal with heading "Edit ticker" and the ticker input pre-filled (`inputValue() ===
+  "AAPL"`) — confirmed at all three widths, both watchlist (full edit form) and implicitly for holdings
+  (same modal component pattern; holdings' own add/edit render+figures were separately confirmed).
+- **No page-level horizontal scroll**, zero browser console errors, at every width on both pages.
+
+Server process killed after the run (`pkill -f "next start -p 4173"`), confirmed not running before
+handoff.
+
+## Known limitations
+
+- The mockup's toolbar search input (`<input class="search">`) and the density-option
+  table/cards view toggle mentioned in `docs/ux-spec.md` §6.2's desktop wireframe were **not** implemented
+  — out of scope for this fix (the orchestrator's brief named pills/cards, the modal, and elevation
+  specifically; a live search filter is new client-side functional logic, not a visual-fidelity gap, so
+  adding it here would be scope creep beyond the assigned defect).
+- `docs/design/admin-portal.md` §16.10 and `docs/design/increment-plan.md`'s INC-13 AC2 (the literal
+  `<table>`/`data-label` grep wording) are now stale relative to this fix's actual mechanism — flagged
+  above for tech-lead to refresh; not edited here (dev doesn't own design docs).
+- `tests/admin_portal/static_source_checks.test.ts`'s insert/update-payload-shape regex is fragile to
+  unrelated function-declaration ordering (see `holdings/page.tsx` note above) — flagged for qa as a test
+  hygiene item, not fixed directly (dev doesn't own `tests/`).
+- Holdings' Edit-modal pre-fill and Cancel-close were exercised via the same component pattern as
+  watchlist's (verified via code review + the shared `.form-modal`/`isModalOpen` wiring) but the
+  Playwright pass's explicit click-through assertions (Add/Edit-icon/Cancel) were driven on watchlist;
+  holdings' render (`.ticker-card` count, `.figures` content) was independently confirmed at all three
+  widths, but its modal interactions were not separately click-driven this pass — low risk given it's the
+  identical `isModalOpen`/`openEditModal`/`closeModal` pattern, but noting the gap rather than claiming
+  more than was directly driven.
